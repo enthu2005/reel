@@ -97,6 +97,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _start() async {
     final np = _player.platform;
+    app.watching.value = true;
     if (np is NativePlayer) {
       // A big read-ahead cache for weak connections, and patient network timeouts.
       await np.setProperty('cache', 'yes');
@@ -286,6 +287,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   void dispose() {
+    app.watching.value = false;
     final it = _item;
     if (it != null && !_reportedEnd) {
       _reportProgress('stopped');
@@ -502,7 +504,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (!mounted) return;
       final url = got == null ? null : Plex.raw(got.key);
       if (url != null) {
-        await _player.setSubtitleTrack(SubtitleTrack.uri(url, title: got!.label, language: got.languageCode));
+        await _pickSub(SubtitleTrack.uri(url, title: got!.label, language: got.languageCode));
       }
       if (wasPlaying) await _player.play();
       if (!mounted) return;
@@ -520,6 +522,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _findNote = "Couldn't download that one: $e";
       });
     }
+  }
+
+  /// Picks a subtitle track and makes sure the player will actually draw it. Choosing a track can
+  /// switch its own drawing back off, which is why picture subtitles came out blank.
+  Future<void> _pickSub(SubtitleTrack t) async {
+    await _player.setSubtitleTrack(t);
+    final np = _player.platform;
+    if (np is NativePlayer) {
+      try {
+        await np.setProperty('sub-visibility', 'yes');
+      } catch (_) {}
+    }
+    if (mounted) setState(() {});
   }
 
   static const _fitNames = ['Fit to screen', 'Fill screen', 'Stretch'];
@@ -949,19 +964,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
             first: i == 0));
       }
     } else {
-      rows.add(_panelRow('Off', _current.subtitle.id == 'no', () => _player.setSubtitleTrack(SubtitleTrack.no()), h,
+      rows.add(_panelRow('Off', _current.subtitle.id == 'no', () => _pickSub(SubtitleTrack.no()), h,
           first: true));
       final list = _realSubs;
       for (var i = 0; i < list.length; i++) {
         final t = list[i];
-        rows.add(_panelRow(_subLabel(t, i), _current.subtitle.id == t.id, () => _player.setSubtitleTrack(t), h));
+        rows.add(_panelRow(_subLabel(t, i), _current.subtitle.id == t.id, () => _pickSub(t), h));
       }
       // Subtitle files that sit next to the video on the server
       for (final s in (_item?.streamsOf(3) ?? const <PlexStream>[]).where((s) => s.key != null)) {
         final url = Plex.raw(s.key);
         if (url == null) continue;
         rows.add(_panelRow('${s.label} · file', _current.subtitle.id == url,
-            () => _player.setSubtitleTrack(SubtitleTrack.uri(url, title: s.label, language: s.languageCode)), h));
+            () => _pickSub(SubtitleTrack.uri(url, title: s.label, language: s.languageCode)), h));
       }
       rows.add(SizedBox(height: h * 0.02));
       rows.add(_panelRow('Find subtitles online…', false, _findSubs, h));

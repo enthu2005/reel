@@ -41,6 +41,9 @@ class Preview {
   /// Bumped when the video's own size becomes known, so the picture is laid out again with it.
   static final ValueNotifier<int> sizeTick = ValueNotifier(0);
 
+  /// One loudness for every preview and trailer alike.
+  static const double _level = 40;
+
   static VideoController? get video => _video;
 
   static String? _desired;
@@ -76,10 +79,17 @@ class Preview {
     p.stream.width.listen((_) => sizeTick.value++);
     p.stream.height.listen((_) => sizeTick.value++);
     p.setPlaylistMode(PlaylistMode.single); // loop a short trailer
-    // Even out the loudness, so every trailer and scene plays at about the same level.
-    try {
-      (p.platform as dynamic).setProperty('af', 'loudnorm=I=-20:LRA=9:TP=-2');
-    } catch (_) {}
+    // Even out the loudness as it plays, so one trailer isn't a shock after the last one, and none
+    // of them jump out against the film you were watching.
+    final np = p.platform;
+    if (np is NativePlayer) {
+      () async {
+        try {
+          await np.setProperty('af', 'dynaudnorm=f=200:g=15:p=0.85:m=8:r=0.9');
+          await np.setProperty('volume-max', '100');
+        } catch (_) {}
+      }();
+    }
     return p;
   }
 
@@ -152,7 +162,7 @@ class Preview {
       if (gen != _gen || src == null) return;
       final p = _ensure();
       Log.w('PREVIEW opening  ${it.displayTitle}');
-      await p.setVolume(35);
+      await p.setVolume(_level); // the same for every preview, whatever it is
       await p.open(Media(src), play: true);
       // Only show it once frames are actually moving, so the card never goes black.
       await p.stream.position

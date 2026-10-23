@@ -18,6 +18,9 @@ final GlobalKey<NavigatorState> navKey = GlobalKey<NavigatorState>();
 /// Whether there's a page to go back to, so the mouse gets a back button (the keyboard has Esc).
 final ValueNotifier<bool> canGoBack = ValueNotifier(false);
 
+/// Set while a film is playing: the player has its own controls, so the back button stays out of it.
+final ValueNotifier<bool> watching = ValueNotifier(false);
+
 class _PageWatcher extends NavigatorObserver {
   void _check() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -122,23 +125,29 @@ class ReelApp extends StatelessWidget {
       // Sizes already follow the window, so ignore Windows text scaling (it made cards overflow).
       builder: (c, child) => MediaQuery(
         data: MediaQuery.of(c).copyWith(textScaler: TextScaler.noScaling),
-        child: Stack(children: [
+        child: Stack(fit: StackFit.expand, children: [
           child!,
           // Back, for the mouse. Esc does the same thing from the keyboard.
+          // No tooltip here: this sits above the pages, where there is nowhere to hang one.
           Positioned(
             left: MediaQuery.sizeOf(c).height * 0.03,
             top: MediaQuery.sizeOf(c).height * 0.03,
-            child: ValueListenableBuilder<bool>(
-              valueListenable: canGoBack,
-              builder: (c2, show, _) => AnimatedOpacity(
+            width: MediaQuery.sizeOf(c).height * 0.055,
+            height: MediaQuery.sizeOf(c).height * 0.055,
+            child: AnimatedBuilder(
+              animation: Listenable.merge([canGoBack, watching]),
+              builder: (c2, _) {
+                final show = canGoBack.value && !watching.value;
+                return AnimatedOpacity(
                 opacity: show ? 1 : 0,
                 duration: const Duration(milliseconds: 180),
                 child: IgnorePointer(
                   ignoring: !show,
                   child: HoverButton(Icons.arrow_back_rounded,
-                      size: MediaQuery.sizeOf(c).height * 0.055, tooltip: 'Back (Esc)', onPressed: goBack),
+                      size: MediaQuery.sizeOf(c).height * 0.055, onPressed: goBack),
                 ),
-              ),
+                );
+              },
             ),
           ),
         ]),
