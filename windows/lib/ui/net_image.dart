@@ -25,8 +25,8 @@ class ImageLoader {
   static final LinkedHashMap<String, Uint8List> _mem = LinkedHashMap();
   static int _memBytes = 0;
   static const int _maxMemBytes = 80 * 1024 * 1024;
-  static const int _parallel = 12;
-  static const int _parallelLow = 6; // background fetching never takes every slot
+  static const int _parallel = 16;
+  static const int _parallelLow = 3; // background fetching stays small so what's on screen is never stuck behind it
 
   // How it's going, shown in Settings so we can see where the time goes.
   static int fromDisk = 0, fromServer = 0, failed = 0, _ms = 0, _bytes = 0, slowest = 0;

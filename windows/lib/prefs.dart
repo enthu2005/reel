@@ -70,6 +70,10 @@ class Prefs {
   static String? get seerrCookie => _p.getString('seerrCookie');
   static set seerrCookie(String? v) => v == null ? _p.remove('seerrCookie') : _p.setString('seerrCookie', v);
 
+  /// How the picture fills the screen: 0 fit (black bars), 1 fill (crop black bars and edges), 2 stretch
+  static int get fitMode => _p.getInt('fitMode') ?? 0;
+  static set fitMode(int v) => _p.setInt('fitMode', v);
+
   static bool get autoPlayNext => _p.getBool('autoPlay') ?? true;
   static set autoPlayNext(bool v) => _p.setBool('autoPlay', v);
 }

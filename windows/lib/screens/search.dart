@@ -57,7 +57,12 @@ class _SearchScreenState extends State<SearchScreen> {
       try {
         final r = await Plex.search(query);
         if (!mounted || mine != _token) return;
-        ImageLoader.prefetch(r.map((it) => PosterCard.imageUrl(it, 0, 0, true, 1.0)));
+        final urls = r.map((it) => PosterCard.imageUrl(it, 0, 0, true, 1.0)).toList();
+        // the first screenfuls load straight away, the rest quietly behind them
+        for (final u in urls.take(20)) {
+          if (u != null) ImageLoader.load(u);
+        }
+        ImageLoader.prefetch(urls.skip(20));
         setState(() {
           _results = r;
           _message = r.isEmpty ? 'No results for “$query”' : '';
@@ -105,6 +110,7 @@ class _SearchScreenState extends State<SearchScreen> {
           Expanded(
             child: GridView.builder(
               clipBehavior: Clip.none,
+              cacheExtent: h * 4, // build the cards well ahead so their pictures are ready before you get there
               padding: EdgeInsets.only(top: h * 0.02, bottom: h * 0.06),
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: cols,

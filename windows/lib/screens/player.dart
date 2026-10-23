@@ -56,7 +56,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Duration? _scrubTo;
   Timer? _commit;
   bool _panel = false;
-  int _panelTab = 0; // 0 audio, 1 subtitles
+  int _panelTab = 0; // 0 audio, 1 subtitles, 2 picture
+  int _fit = Prefs.fitMode; // 0 fit, 1 fill (crop black bars), 2 stretch
+  Rect? _bars; // black bars found in the picture, for "fill"
+  bool _probed = false;
+  final _panelScope = FocusScopeNode();
   Timer? _report;
   bool _reportedEnd = false;
 
@@ -111,6 +115,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _subs.add(_player.stream.buffer.listen((b) => setState(() => _buf = b)));
     _subs.add(_player.stream.playing.listen((p) {
       setState(() => _playing = p);
+      if (p && _fit == 1 && !_probed) _probeBars();
       if (!p) _showOsd(stay: true);
     }));
     _subs.add(_player.stream.buffering.listen((b) => setState(() => _buffering = b)));
@@ -265,6 +270,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       final d = _dur.inMilliseconds > 0 ? _dur.inMilliseconds : it.duration;
       if (d > 0 && _pos.inMilliseconds > d * 0.92) Plex.setWatched(it.key, true);
     }
+    _panelScope.dispose();
     _infoTimer?.cancel();
     if (_session != null) Plex.stopTranscode(_session!);
     _report?.cancel();
@@ -408,6 +414,53 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   // ------------------------------------------------------------ keys
 
+  /// Opens the Audio / Subtitles / Picture panel and moves the selection into it, so the arrow keys
+  /// and Enter work straight away.
+  void _openPanel(int tab) {
+    setState(() {
+      _panel = true;
+      _panelTab = tab;
+    });
+    _showOsd(stay: true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _panel) _panelScope.requestFocus();
+    });
+  }
+
+  static const _fitNames = ['Fit to screen', 'Fill screen', 'Stretch'];
+
+  void _setFit(int m, {bool flash = false}) {
+    setState(() => _fit = m);
+    Prefs.fitMode = m;
+    if (m == 1) _probeBars();
+    if (flash) {
+      final s = _fitNames[m];
+      setState(() => _status = s);
+      Timer(const Duration(milliseconds: 1200), () {
+        if (mounted && _status == s) setState(() => _status = '');
+      });
+    }
+  }
+
+  Future<void> _probeBars() async {
+    _probed = true;
+    final r = await Preview.probeBars(_player, cancelled: () => !mounted);
+    if (mounted) setState(() => _bars = r);
+  }
+
+  /// The picture itself, shaped by the Fit / Fill / Stretch choice.
+  Widget _picture() {
+    const subs = SubtitleViewConfiguration(visible: false);
+    if (_fit == 1) return PreviewVideo.cover(_video, _bars, subtitles: subs);
+    return Video(
+      controller: _video,
+      controls: NoVideoControls,
+      fill: Colors.black,
+      fit: _fit == 2 ? BoxFit.fill : BoxFit.contain,
+      subtitleViewConfiguration: subs,
+    );
+  }
+
   KeyEventResult _onKey(FocusNode n, KeyEvent e) {
     final k = e.logicalKey;
     if (_info) {
@@ -481,11 +534,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.arrowUp || k == LogicalKeyboardKey.keyA || k == LogicalKeyboardKey.keyS) {
-      setState(() {
-        _panel = true;
-        _panelTab = k == LogicalKeyboardKey.keyS ? 1 : 0;
-      });
-      _showOsd(stay: true);
+      _openPanel(k == LogicalKeyboardKey.keyS ? 1 : 0);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.keyZ) {
+      if (e is KeyDownEvent) _setFit((_fit + 1) % 3, flash: true);
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.keyI || (k == LogicalKeyboardKey.arrowDown && _osd && e is KeyDownEvent)) {
@@ -545,12 +598,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         onKeyEvent: _onKey,
         child: Stack(children: [
               Positioned.fill(
-                child: Video(
-                  controller: _video,
-                  controls: NoVideoControls,
-                  fill: Colors.black,
-                  subtitleViewConfiguration: const SubtitleViewConfiguration(visible: false),
-                ),
+                child: _picture(),
               ),
               if (_buffering && _status.isEmpty)
                 const Center(child: SizedBox(width: 48, height: 48, child: CircularProgressIndicator(color: Colors.white70))),
@@ -762,6 +810,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
         final t = list[i];
         rows.add(_panelRow(_audioLabel(t, i), _current.audio.id == t.id, () => _player.setAudioTrack(t), h, first: i == 0));
       }
+    } else if (_panelTab == 2) {
+      for (var i = 0; i < 3; i++) {
+        rows.add(_panelRow(
+            i == 1 ? 'Fill screen (crops black bars and edges)' : (i == 0 ? 'Fit to screen (whole picture)' : 'Stretch'),
+            _fit == i,
+            () => _setFit(i),
+            h,
+            first: i == 0));
+      }
     } else {
       rows.add(_panelRow('Off', _current.subtitle.id == 'no', () => _player.setSubtitleTrack(SubtitleTrack.no()), h,
           first: true));
@@ -783,12 +840,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
       top: 0,
       bottom: 0,
       width: w * 0.32,
-      child: Container(
+      child: FocusScope(
+        node: _panelScope,
+        child: Container(
         color: const Color(0xF2141414),
         padding: EdgeInsets.fromLTRB(h * 0.03, h * 0.06, h * 0.03, h * 0.04),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            for (var i = 0; i < 2; i++)
+            for (var i = 0; i < 3; i++)
               Padding(
                 padding: EdgeInsets.only(right: h * 0.01),
                 child: Pressable(
@@ -801,7 +860,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       color: f ? Colors.white : (i == _panelTab ? const Color(0x40FFFFFF) : Colors.transparent),
                       borderRadius: BorderRadius.circular(h),
                     ),
-                    child: Text(i == 0 ? 'Audio' : 'Subtitles',
+                    child: Text(i == 0 ? 'Audio' : (i == 1 ? 'Subtitles' : 'Picture'),
                         style: reelText(h * 0.024, weight: FontWeight.w600, color: f ? Colors.black : Colors.white)),
                   ),
                 ),
@@ -812,6 +871,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           Text(Prefs.passthrough ? 'Dolby / DTS go straight to your receiver (passthrough on)' : 'Sound decoded by the PC',
               style: reelText(h * 0.017, color: Reel.text3)),
         ]),
+      ),
       ),
     );
   }

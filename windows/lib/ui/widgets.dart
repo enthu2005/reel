@@ -35,6 +35,7 @@ class Pressable extends StatefulWidget {
 class _PressableState extends State<Pressable> {
   late FocusNode _node = widget.focusNode ?? FocusNode();
   bool _focused = false;
+  bool _byMouse = false;
   DateTime? _downAt;
 
   @override
@@ -50,6 +51,8 @@ class _PressableState extends State<Pressable> {
   }
 
   KeyEventResult _onKey(FocusNode n, KeyEvent e) {
+    // Alt+Enter is full screen (handled by the app), not a press
+    if (HardwareKeyboard.instance.isAltPressed) return KeyEventResult.ignored;
     final enter = e.logicalKey == LogicalKeyboardKey.enter ||
         e.logicalKey == LogicalKeyboardKey.numpadEnter ||
         e.logicalKey == LogicalKeyboardKey.select ||
@@ -79,14 +82,14 @@ class _PressableState extends State<Pressable> {
 
   @override
   Widget build(BuildContext context) {
-    return Focus(
+    final focus = Focus(
       focusNode: _node,
       autofocus: widget.autofocus,
       onKeyEvent: _onKey,
       onFocusChange: (f) {
         setState(() => _focused = f);
         widget.onFocusChange?.call(f);
-        if (f) {
+        if (f && widget.scrollAlignment >= 0 && !_byMouse) {
           Scrollable.ensureVisible(context,
               alignment: widget.scrollAlignment,
               alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
@@ -95,6 +98,29 @@ class _PressableState extends State<Pressable> {
         }
       },
       child: widget.builder(context, _focused),
+    );
+    // The mouse works too: moving over something selects it, a click presses it, holding clicks
+    // and holds it. (Hover only counts when the mouse actually moves, so a list sliding under a
+    // still mouse never steals the selection.)
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onHover: (e) {
+        if (e.delta == Offset.zero || _node.hasFocus) return; // only when the mouse really moves
+        _byMouse = true; // the list stays where it is; only keys scroll to what's selected
+        _node.requestFocus();
+        Future.delayed(const Duration(milliseconds: 80), () => _byMouse = false);
+      },
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          _byMouse = true;
+          _node.requestFocus();
+          Future.delayed(const Duration(milliseconds: 80), () => _byMouse = false);
+          widget.onPressed?.call();
+        },
+        onLongPress: widget.onLongPress,
+        child: focus,
+      ),
     );
   }
 }
@@ -139,6 +165,7 @@ class PillButton extends StatelessWidget {
   final bool autofocus;
   final FocusNode? focusNode;
   final ValueChanged<bool>? onFocusChange;
+  final double scrollAlignment;
 
   const PillButton(this.label,
       {super.key,
@@ -147,6 +174,7 @@ class PillButton extends StatelessWidget {
       this.primary = false,
       this.autofocus = false,
       this.focusNode,
+      this.scrollAlignment = 0.0,
       this.onFocusChange});
 
   @override
@@ -157,7 +185,7 @@ class PillButton extends StatelessWidget {
       focusNode: focusNode,
       onPressed: onPressed,
       onFocusChange: onFocusChange,
-      scrollAlignment: 0.0,
+      scrollAlignment: scrollAlignment,
       builder: (c, f) => AnimatedScale(
         scale: f ? 1.08 : 1,
         duration: const Duration(milliseconds: 160),
@@ -189,8 +217,11 @@ class IconPill extends StatelessWidget {
   final IconData icon;
   final VoidCallback onPressed;
   final FocusNode? focusNode;
+  final ValueChanged<bool>? onFocusChange;
+  final double scrollAlignment;
 
-  const IconPill(this.icon, {super.key, required this.onPressed, this.focusNode});
+  const IconPill(this.icon,
+      {super.key, required this.onPressed, this.focusNode, this.onFocusChange, this.scrollAlignment = 0.0});
 
   @override
   Widget build(BuildContext context) {
@@ -199,7 +230,8 @@ class IconPill extends StatelessWidget {
     return Pressable(
       focusNode: focusNode,
       onPressed: onPressed,
-      scrollAlignment: 0.0,
+      onFocusChange: onFocusChange,
+      scrollAlignment: scrollAlignment,
       builder: (c, f) => AnimatedScale(
         scale: f ? 1.08 : 1,
         duration: const Duration(milliseconds: 160),
@@ -264,6 +296,7 @@ class PosterCard extends StatelessWidget {
   static String? imageUrl(PlexItem item, double width, double height, bool landscape, double dpr) {
     // One fixed size per kind of card, whatever the window size, so every poster is saved once and
     // found again (and can be saved ahead of time by Warmup).
+    if (landscape && width > 520) return Plex.img(_imageOf(item, true), 1280, 720); // big spotlight cards
     return landscape ? Plex.img(_imageOf(item, true), 560, 315) : Plex.img(_imageOf(item, false), 400, 600);
   }
 
@@ -437,6 +470,7 @@ class CardRow extends StatelessWidget {
   final void Function(PlexItem)? onLongPress;
   final bool previews;
   final bool autofocusFirst;
+  final bool big;
   final Duration previewDelay;
 
   static final Expando<bool> _warmed = Expando();
@@ -450,6 +484,7 @@ class CardRow extends StatelessWidget {
     this.onLongPress,
     this.previews = true,
     this.autofocusFirst = false,
+    this.big = false,
     this.previewDelay = const Duration(milliseconds: 900),
     this.landscape = false,
     this.titles = false,
@@ -459,7 +494,7 @@ class CardRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final h = Reel.h(context);
     final w = Reel.w(context);
-    final ch = landscape ? h * 0.185 : h * 0.28;
+    final ch = big ? h * 0.40 : (landscape ? h * 0.185 : h * 0.28);
     final cw = landscape ? ch * 16 / 9 : ch * 2 / 3;
     final textH = (landscape || titles) ? PosterCard.textBlock(h) : 0.0;
     final padV = ch * 0.07; // room above and below for the 1.1x grow and its shadow

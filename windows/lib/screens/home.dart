@@ -2,14 +2,17 @@ import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../main.dart' show isFullscreen, toggleFullscreen;
 import '../plex.dart';
 import '../ui/net_image.dart';
+import '../ui/preview.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 import 'detail.dart';
 import 'discover.dart';
+import 'libraries.dart';
 import '../seerr.dart';
 import '../ui/net_image.dart' show ImageLoader;
 import 'player.dart';
@@ -22,10 +25,12 @@ class _Row {
   final bool landscape;
   final bool titles;
   final bool previews;
+  final bool big;
   final Duration previewDelay;
 
   _Row(this.title, this.items,
       {this.landscape = false,
+      this.big = false,
       this.titles = false,
       this.previews = true,
       this.previewDelay = const Duration(milliseconds: 900)});
@@ -40,7 +45,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  static const _tabs = ['Home', 'Movies', 'TV Shows', 'Discover', 'Search', 'Settings'];
+  static const _tabs = ['Home', 'Movies', 'TV Shows', 'Libraries', 'Discover', 'Search', 'Settings'];
   bool get _discover => _tabs[_tab] == 'Discover';
   bool _needSeerr = false;
   int _tab = 0;
@@ -59,6 +64,11 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _heroTimer;
   final _scroll = ScrollController();
   int _loadToken = 0;
+  List<PlexSection> _secs = [];
+  final _spotIdx = ValueNotifier<int>(0);
+  final _playNode = FocusNode();
+  final _infoNode = FocusNode();
+  bool get _spot => _rows.isNotEmpty && _rows.first.big;
   final Map<String, PlexItem?> _meta = {}; // full details: logo, picture and sound badges
 
   @override
@@ -76,6 +86,9 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _heroTimer?.cancel();
     _scroll.dispose();
+    _spotIdx.dispose();
+    _playNode.dispose();
+    _infoNode.dispose();
     super.dispose();
   }
 
@@ -113,9 +126,7 @@ class _HomeScreenState extends State<HomeScreen> {
           for (final p in parts) {
             rows.addAll(p);
           }
-          try {
-            await _addSpotlight(rows, sections.where((s) => s.type == 'movie' || s.type == 'show').toList());
-          } catch (_) {} // the extras are a bonus: never stop Home from loading
+          _secs = sections.where((s) => s.type == 'movie' || s.type == 'show').toList();
         } else {
           final want = _tab == 1 ? 'movie' : 'show';
           final parts = await Future.wait<List<_Row>>([
@@ -137,14 +148,14 @@ class _HomeScreenState extends State<HomeScreen> {
         final dpr = MediaQuery.devicePixelRatioOf(context);
         final first = <Future<Object?>>[];
         for (final r in rows.take(4)) {
-          final ch = r.landscape ? h * 0.185 : h * 0.28;
+          final ch = r.big ? h * 0.40 : (r.landscape ? h * 0.185 : h * 0.28);
           final cw = r.landscape ? ch * 16 / 9 : ch * 2 / 3;
           for (final it in r.items.take(8)) {
             final u = PosterCard.imageUrl(it, cw, ch, r.landscape, dpr);
             if (u != null) first.add(ImageLoader.load(u));
           }
         }
-        await Future.wait(first).timeout(const Duration(seconds: 6), onTimeout: () => const []);
+        await Future.wait(first).timeout(const Duration(seconds: 3), onTimeout: () => const []);
         if (mine != _loadToken || !mounted) return;
       }
       setState(() {
@@ -154,6 +165,8 @@ class _HomeScreenState extends State<HomeScreen> {
       });
       if (_hero != null) _fetchLogo(_hero!);
       _prefetch(rows);
+      // Featured and "Because you watched" come in a moment later, so they never hold Home up
+      if (_tab == 0 && !_discover) unawaited(_spotlight(mine));
     } catch (e) {
       if (mine != _loadToken || !mounted) return;
       setState(() {
@@ -161,6 +174,17 @@ class _HomeScreenState extends State<HomeScreen> {
         _error = _discover ? "Can't reach Seerr.\n$e" : "Can't reach your Plex server.\n$e";
       });
     }
+  }
+
+  Future<void> _spotlight(int token) async {
+    final copy = List<_Row>.of(_rows);
+    try {
+      await _addSpotlight(copy, _secs).timeout(const Duration(seconds: 30));
+    } catch (_) {
+      return; // just carry on without them
+    }
+    if (!mounted || token != _loadToken || _tab != 0) return;
+    setState(() => _rows = copy);
   }
 
   /// A "Featured" row at the very top (newly released, recently added and recommended, with a video
@@ -214,7 +238,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     if (featured.length >= 3) {
       rows.insert(0, _Row('Featured', featured,
-          landscape: true, titles: true, previewDelay: const Duration(seconds: 3)));
+          landscape: true, big: true, titles: true, previewDelay: const Duration(seconds: 3)));
     }
     rows.addAll(because);
   }
@@ -254,7 +278,7 @@ class _HomeScreenState extends State<HomeScreen> {
     for (var i = 0; i < longest && i < 400; i++) {
       for (final r in rows) {
         if (i >= r.items.length) continue;
-        final ch = r.landscape ? h * 0.185 : h * 0.28;
+        final ch = r.big ? h * 0.40 : (r.landscape ? h * 0.185 : h * 0.28);
         final cw = r.landscape ? ch * 16 / 9 : ch * 2 / 3;
         urls.add(PosterCard.imageUrl(r.items[i], cw, ch, r.landscape, dpr));
       }
@@ -279,7 +303,7 @@ class _HomeScreenState extends State<HomeScreen> {
         if (i >= 0) {
           _rows[i] = _Row('Up Next', deck, landscape: true);
         } else if (deck.isNotEmpty) {
-          _rows.insert(0, _Row('Up Next', deck, landscape: true));
+          _rows.insert(_rows.isNotEmpty && _rows.first.big ? 1 : 0, _Row('Up Next', deck, landscape: true));
         }
       });
     } catch (_) {}
@@ -372,6 +396,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _selectTab(int i) async {
+    if (_tabs[i] == 'Libraries') {
+      await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const LibrariesScreen()));
+      return;
+    }
     if (_tabs[i] == 'Search') {
       await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SearchScreen()));
       return;
@@ -396,7 +424,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final w = Reel.w(context);
     return Scaffold(
       body: Stack(children: [
-        // Backdrop of whatever you're on
+        // Backdrop of whatever you're on (the Featured spotlight draws its own)
+        if (!_spot) ...[
         Positioned.fill(
           child: RepaintBoundary(
             child: ValueListenableBuilder<PlexItem?>(
@@ -439,6 +468,8 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
 
+        ],
+
         // The focused title, top left (fades as the rows slide up)
         Positioned(
           left: w * 0.05,
@@ -449,7 +480,8 @@ class _HomeScreenState extends State<HomeScreen> {
               animation: Listenable.merge([_heroN, _fadeN, _metaTick]),
               builder: (c, _) {
                 final hero = _hero;
-                if (hero == null) return const SizedBox.shrink();
+                // the big Featured cards at the top carry their own titles
+                if (hero == null || (_rows.isNotEmpty && _rows.first.big)) return const SizedBox.shrink();
                 return Opacity(opacity: _fadeN.value, child: _heroInfo(hero, h));
               },
             ),
@@ -460,7 +492,7 @@ class _HomeScreenState extends State<HomeScreen> {
         Positioned(
           left: 0,
           right: 0,
-          top: h * 0.13,
+          top: _spot ? 0 : h * 0.13,
           bottom: 0,
           child: ClipRect(
             child: _loading
@@ -480,14 +512,16 @@ class _HomeScreenState extends State<HomeScreen> {
                     : SingleChildScrollView(
                         controller: _scroll,
                         clipBehavior: Clip.none,
-                        padding: EdgeInsets.only(top: h * 0.45, bottom: h * 0.1),
+                        padding: EdgeInsets.only(top: _spot ? 0 : h * 0.45, bottom: h * 0.1),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            for (var ri = 0; ri < _rows.length; ri++)
+                            if (_spot) _spotlightView(w, h),
+                            for (var ri = _spot ? 1 : 0; ri < _rows.length; ri++)
                               RepaintBoundary(child: CardRow(
                                 key: ValueKey('${_tab}_${_rows[ri].title}'),
-                                autofocusFirst: ri == 0,
+                                autofocusFirst: !_spot && ri == 0,
+                                big: _rows[ri].big,
                                 previewDelay: _rows[ri].previewDelay,
                                 title: _rows[ri].title,
                                 items: _rows[ri].items,
@@ -540,6 +574,185 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ]),
     );
+  }
+
+  void _spotMove(int d) {
+    final items = _rows.first.items;
+    final n = items.length;
+    final i = (_spotIdx.value + d + n) % n;
+    _spotIdx.value = i;
+    Preview.focus(items[i], delay: const Duration(seconds: 3));
+  }
+
+  void _spotFocus(bool f) {
+    if (!_spot) return;
+    final items = _rows.first.items;
+    final it = items[_spotIdx.value % items.length];
+    if (f) {
+      if (_scroll.hasClients && _scroll.offset > 0) {
+        _scroll.animateTo(0, duration: const Duration(milliseconds: 320), curve: Curves.easeOutCubic);
+      }
+      Preview.focus(it, delay: const Duration(seconds: 3));
+    } else {
+      Future.microtask(() {
+        if (!mounted || !_spot) return;
+        if (!_playNode.hasFocus && !_infoNode.hasFocus) Preview.blur(it);
+      });
+    }
+  }
+
+  /// The big banner at the top of Home, like the Apple TV app: the title's picture fills the
+  /// screen, its logo, details and Play button sit on the left, and the dots show how many there are.
+  /// Left on Play (or Right on the i button) flips to the previous / next one; a preview plays
+  /// after a few seconds.
+  Widget _spotlightView(double w, double h) {
+    final items = _rows.first.items;
+    final bh = h * 0.84;
+    return SizedBox(
+      height: bh,
+      width: w,
+      child: Focus(
+        canRequestFocus: false,
+        skipTraversal: true,
+        onKeyEvent: (n, e) {
+          if (e is KeyUpEvent) return KeyEventResult.ignored;
+          if (e.logicalKey == LogicalKeyboardKey.arrowLeft && _playNode.hasFocus) {
+            _spotMove(-1);
+            return KeyEventResult.handled;
+          }
+          if (e.logicalKey == LogicalKeyboardKey.arrowRight && _infoNode.hasFocus) {
+            _spotMove(1);
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: ValueListenableBuilder<int>(
+          valueListenable: _spotIdx,
+          builder: (c, idx0, _) {
+            final idx = idx0 % items.length;
+            final it = items[idx];
+            _fetchLogo(it);
+            final bd = _backdrop(it);
+            return Stack(fit: StackFit.expand, children: [
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 500),
+                child: bd == null
+                    ? const SizedBox.expand(key: ValueKey('none'))
+                    : SizedBox(key: ValueKey(bd), width: w, height: bh, child: NetImage(bd)),
+              ),
+              Positioned.fill(child: PreviewVideo.hero(it.key)),
+              const Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Color(0xE6000000), Color(0x80000000), Color(0x00000000)],
+                      stops: [0, 0.45, 0.8],
+                    ),
+                  ),
+                ),
+              ),
+              const Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Color(0x00000000), Color(0x00000000), Color(0xFF000000)],
+                      stops: [0, 0.6, 1],
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: w * 0.05,
+                bottom: h * 0.12,
+                width: w * 0.42,
+                child: AnimatedBuilder(animation: _metaTick, builder: (c, _) => _spotInfo(it, h)),
+              ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: h * 0.06,
+                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  for (var i = 0; i < items.length; i++)
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      margin: EdgeInsets.symmetric(horizontal: h * 0.005),
+                      width: i == idx ? h * 0.024 : h * 0.008,
+                      height: h * 0.008,
+                      decoration: BoxDecoration(
+                        color: i == idx ? Colors.white : const Color(0x66FFFFFF),
+                        borderRadius: BorderRadius.circular(h),
+                      ),
+                    ),
+                ]),
+              ),
+            ]);
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _spotInfo(PlexItem it, double h) {
+    final logoKey = it.type == 'episode' && it.gpKey != null ? it.gpKey! : it.key;
+    final logo = _meta[logoKey]?.logo;
+    final genres = (_meta[it.key] ?? it).genres;
+    final kind = it.type == 'movie' ? 'Movie' : (it.type == 'show' ? 'TV Show' : (it.type == 'episode' ? 'Episode' : ''));
+    final meta = [kind, ...genres.take(2), if (it.year > 0) '${it.year}'].where((s) => s.isNotEmpty).join(' · ');
+    final titleStyle = reelText(h * 0.08, weight: FontWeight.w800, height: 1.0).copyWith(letterSpacing: h * 0.012);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+      SizedBox(
+        height: h * 0.17,
+        child: Align(
+          alignment: Alignment.bottomLeft,
+          child: logo != null
+              ? Image.network(Plex.raw(logo)!,
+                  fit: BoxFit.contain,
+                  alignment: Alignment.bottomLeft,
+                  errorBuilder: (_, __, ___) => Text(it.displayTitle.toUpperCase(), maxLines: 2, overflow: TextOverflow.ellipsis, style: titleStyle))
+              : Text(it.displayTitle.toUpperCase(), maxLines: 2, overflow: TextOverflow.ellipsis, style: titleStyle),
+        ),
+      ),
+      SizedBox(height: h * 0.02),
+      Row(mainAxisSize: MainAxisSize.min, children: [
+        Flexible(
+          child: Text(meta,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: reelText(h * 0.021, weight: FontWeight.w500, color: Colors.white)),
+        ),
+        if (it.contentRating.isNotEmpty) ...[SizedBox(width: h * 0.012), Badges([it.contentRating])],
+      ]),
+      SizedBox(height: h * 0.012),
+      Text(it.summary,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: reelText(h * 0.021, color: const Color(0xCCFFFFFF), height: 1.4)),
+      SizedBox(height: h * 0.025),
+      Row(children: [
+        PillButton(it.isPlayable ? (it.viewOffset > 0 ? 'Resume' : 'Play') : 'Open',
+            icon: Icons.play_arrow_rounded,
+            primary: true,
+            autofocus: true,
+            focusNode: _playNode,
+            scrollAlignment: -1,
+            onFocusChange: _spotFocus,
+            onPressed: () {
+              Preview.stop();
+              _play(it);
+            }),
+        SizedBox(width: h * 0.014),
+        IconPill(Icons.info_outline_rounded,
+            focusNode: _infoNode,
+            scrollAlignment: -1,
+            onFocusChange: _spotFocus,
+            onPressed: () {
+              Preview.handOff();
+              _open(it);
+            }),
+      ]),
+    ]);
   }
 
   Widget _heroInfo(PlexItem it, double h) {

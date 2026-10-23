@@ -296,8 +296,16 @@ class PlexSection {
   final String key;
   final String type;
   final String title;
+  final List<String> paths; // the folders on the server this library reads from
 
-  PlexSection(this.key, this.type, this.title);
+  PlexSection(this.key, this.type, this.title, [this.paths = const []]);
+}
+
+/// A quick look at a library: how many titles, and the newest one (for its picture).
+class SectionPeek {
+  final int count;
+  final PlexItem? latest;
+  SectionPeek(this.count, this.latest);
 }
 
 int _int(dynamic v) {
@@ -478,8 +486,18 @@ class Plex {
     final d = mc['Directory'] as List? ?? const [];
     return d.map((e) {
       final o = e as Map;
-      return PlexSection((o['key'] ?? '').toString(), (o['type'] ?? '').toString(), (o['title'] ?? '').toString());
+      final paths = [
+        for (final l in (o['Location'] as List? ?? const [])) (l as Map)['path'].toString(),
+      ];
+      return PlexSection((o['key'] ?? '').toString(), (o['type'] ?? '').toString(), (o['title'] ?? '').toString(), paths);
     }).toList();
+  }
+
+  static Future<SectionPeek> sectionPeek(String key) async {
+    final mc = (await _get(paged('/library/sections/$key/all?sort=addedAt:desc', 1)))['MediaContainer'] as Map;
+    final list = mc['Metadata'] as List?;
+    final latest = (list == null || list.isEmpty) ? null : PlexItem.fromJson(Map<String, dynamic>.from(list.first as Map));
+    return SectionPeek(int.tryParse('${mc['totalSize'] ?? mc['size'] ?? 0}') ?? 0, latest);
   }
 
   static Future<List<PlexItem>> onDeck() => items(paged('/library/onDeck', 20));
@@ -614,7 +632,7 @@ class Plex {
         '?path=${e('/library/metadata/$ratingKey')}'
         '&mediaIndex=0&partIndex=0&protocol=hls&fastSeek=1'
         '&directPlay=0&directStream=1&directStreamAudio=0&audioChannelCount=2'
-        '&maxVideoBitrate=6000&videoQuality=100&videoResolution=1920x1080'
+        '&maxVideoBitrate=4000&videoQuality=100&videoResolution=1280x720'
         '&subtitleStreamID=0&subtitles=none'
         '&offset=${offsetMs ~/ 1000}&session=$session'
         '&X-Plex-Client-Profile-Extra=${e(profile)}'
@@ -657,8 +675,18 @@ class Plex {
   static String? img(String? path, int w, int h) {
     if (path == null || server == null) return null;
     if (path.startsWith('http')) return path;
+    // On your own network take the original picture: the server's resizing is slow (a NAS is weak at it)
+    // and the local network is quick, so this is much faster than asking it to resize every poster.
+    if (Prefs.serverKind == 'local') return raw(path);
     return '$server/photo/:/transcode?width=$w&height=$h&minSize=1&upscale=1'
         '&url=${Uri.encodeQueryComponent(path)}&X-Plex-Token=$token';
+  }
+
+  /// Posters on your own network: the server just hands over the picture file, instead of resizing
+  /// each one first (the resizing is what made them slow). Away from home they're still resized.
+  static String? imgFast(String? path, int w, int h) {
+    if (path != null && !path.startsWith('http') && Prefs.serverKind == 'local') return raw(path);
+    return img(path, w, h);
   }
 
   /// The original file (logos keep their transparency; video files play directly).

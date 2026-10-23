@@ -10,6 +10,8 @@ class Warmup {
   static bool _ran = false;
 
   static Future<void> run() async {
+    // let the pages you're looking at load first; the server is busy enough at start-up
+    await Future.delayed(const Duration(seconds: 25));
     if (_ran || Plex.server == null) return;
     _ran = true;
     try {
