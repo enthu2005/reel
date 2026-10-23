@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -57,10 +58,26 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Timer? _commit;
   bool _panel = false;
   int _panelTab = 0; // 0 audio, 1 subtitles, 2 picture
-  int _fit = Prefs.fitMode; // 0 fit, 1 fill (crop black bars), 2 stretch
+  int _fit = 0; // 0 fit, 1 fill (crop black bars), 2 stretch - just for this film, not remembered
   Rect? _bars; // black bars found in the picture, for "fill"
+  int _subPos = 100; // where the subtitles sit in the picture, so filling the screen never cuts them off
   bool _probed = false;
   final _panelScope = FocusScopeNode();
+  // Finding subtitles online (the server fetches them from OpenSubtitles)
+  List<SubtitleFind>? _found;
+  bool _finding = false;
+  String _findNote = '';
+  int _lang = 0;
+  static const _langs = [
+    ['en', 'English'],
+    ['ta', 'Tamil'],
+    ['hi', 'Hindi'],
+    ['te', 'Telugu'],
+    ['ml', 'Malayalam'],
+    ['fr', 'French'],
+    ['es', 'Spanish'],
+    ['de', 'German'],
+  ];
   Timer? _report;
   bool _reportedEnd = false;
 
@@ -93,6 +110,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
       await np.setProperty('hdr-compute-peak', 'yes');
       await np.setProperty('target-colorspace-hint', 'no');
       await np.setProperty('sub-scale', ['0.8', '1.0', '1.25', '1.5'][Prefs.subSize.clamp(0, 3)]);
+      // Draw subtitles into the picture. Blu-ray subtitles (PGS) are pictures, not text, so nothing
+      // shows at all unless the player itself draws them.
+      await np.setProperty('sub-visibility', 'yes');
+      await np.setProperty('sub-auto', 'fuzzy'); // pick up a matching .srt sitting next to the file
+      await np.setProperty('blend-subtitles', 'no');
       // Without passthrough, mix any surround sound (7.1, DTS-HD, TrueHD) down to 2 channels here on the PC.
       if (!Prefs.passthrough) await np.setProperty('audio-channels', 'stereo');
       if (Prefs.passthrough) {
@@ -427,11 +449,83 @@ class _PlayerScreenState extends State<PlayerScreen> {
     });
   }
 
+  Future<void> _findSubs() async {
+    final key = widget.ratingKey;
+    if (key == null) return;
+    setState(() {
+      _finding = true;
+      _findNote = 'Looking for ${_langs[_lang][1]} subtitles…';
+      _found = const [];
+    });
+    try {
+      final r = await Plex.searchSubtitles(key, _langs[_lang][0]);
+      if (!mounted) return;
+      setState(() {
+        _found = r;
+        _finding = false;
+        _findNote = r.isEmpty ? 'Nothing found in ${_langs[_lang][1]}.' : '';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _finding = false;
+        _findNote = "The search didn't work: $e";
+      });
+    }
+  }
+
+  Future<void> _getSub(SubtitleFind f) async {
+    final key = widget.ratingKey;
+    if (key == null) return;
+    final wasPlaying = _playing;
+    if (wasPlaying) await _player.pause(); // hold the film while the server fetches them
+    setState(() {
+      _finding = true;
+      _findNote = 'Paused. Downloading “${f.title}”…';
+    });
+    try {
+      await Plex.downloadSubtitle(key, f.key);
+      // The server fetches them in the background, so wait for the new file to turn up.
+      PlexStream? got;
+      final had = (_item?.streamsOf(3) ?? const <PlexStream>[]).map((s) => s.id).toSet();
+      for (var i = 0; i < 20 && got == null; i++) {
+        await Future.delayed(const Duration(milliseconds: 600));
+        if (!mounted) return;
+        try {
+          final it = await Plex.metadata(key);
+          _item = it;
+          for (final s in it.streamsOf(3)) {
+            if (s.key != null && !had.contains(s.id)) got = s;
+          }
+        } catch (_) {}
+      }
+      if (!mounted) return;
+      final url = got == null ? null : Plex.raw(got.key);
+      if (url != null) {
+        await _player.setSubtitleTrack(SubtitleTrack.uri(url, title: got!.label, language: got.languageCode));
+      }
+      if (wasPlaying) await _player.play();
+      if (!mounted) return;
+      setState(() {
+        _finding = false;
+        _found = null;
+        _panel = url != null ? false : _panel;
+        _findNote = url == null ? "Downloaded, but the server hasn't attached it yet. Try again in a moment." : '';
+      });
+    } catch (e) {
+      if (wasPlaying) await _player.play();
+      if (!mounted) return;
+      setState(() {
+        _finding = false;
+        _findNote = "Couldn't download that one: $e";
+      });
+    }
+  }
+
   static const _fitNames = ['Fit to screen', 'Fill screen', 'Stretch'];
 
   void _setFit(int m, {bool flash = false}) {
     setState(() => _fit = m);
-    Prefs.fitMode = m;
     if (m == 1) _probeBars();
     if (flash) {
       final s = _fitNames[m];
@@ -446,6 +540,29 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _probed = true;
     final r = await Preview.probeBars(_player, cancelled: () => !mounted);
     if (mounted) setState(() => _bars = r);
+  }
+
+  /// Filling the screen crops the edges of the picture, and the subtitles sit right at the bottom of
+  /// it, so they'd be cropped away too. This lifts them to just inside whatever is still on screen.
+  void _keepSubsOnScreen(double w, double h) {
+    var want = 100;
+    if (_fit == 1 && w > 0 && h > 0) {
+      final st = _player.state;
+      final vw = (st.width ?? 0) > 0 ? st.width!.toDouble() : 1920.0;
+      final vh = (st.height ?? 0) > 0 ? st.height!.toDouble() : 1080.0;
+      final cr = _bars ?? const Rect.fromLTRB(0, 0, 1, 1);
+      final s = math.max(w / (vw * cr.width), h / (vh * cr.height));
+      final onScreen = (h / (vh * s)).clamp(0.05, 1.0);
+      final bottom = (cr.top + cr.height / 2) + onScreen / 2;
+      want = (bottom * 100 - 3).clamp(5.0, 100.0).round();
+    }
+    if (want == _subPos) return;
+    _subPos = want;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        await (_player.platform as dynamic).setProperty('sub-pos', '$want');
+      } catch (_) {}
+    });
   }
 
   /// The picture itself, shaped by the Fit / Fill / Stretch choice.
@@ -589,6 +706,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final title = widget.title ?? it?.displayTitle ?? '';
     final sub = it?.type == 'episode' ? 'S${it!.parentIndex} · E${it.index}  ${it.title}' : null;
     final skip = _skipRange;
+    _keepSubsOnScreen(w, h);
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -804,7 +922,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Widget _trackPanel(double h, double w) {
     final rows = <Widget>[];
-    if (_panelTab == 0) {
+    if (_panelTab == 1 && _found != null) {
+      rows.add(_panelRow('← Back to subtitles', false, () => setState(() => _found = null), h, first: true));
+      rows.add(_panelRow('Language: ${_langs[_lang][1]}', false, () {
+        setState(() => _lang = (_lang + 1) % _langs.length);
+        _findSubs();
+      }, h));
+      rows.add(SizedBox(height: h * 0.015));
+      for (final f in _found!) {
+        final sub = [f.provider, if (f.score > 0) '${f.score.round()}%'].where((s) => s.isNotEmpty).join(' · ');
+        rows.add(_panelRow(sub.isEmpty ? f.title : '${f.title}  ·  $sub', false, () => _getSub(f), h));
+      }
+    } else if (_panelTab == 0) {
       final list = _realAudio;
       for (var i = 0; i < list.length; i++) {
         final t = list[i];
@@ -834,6 +963,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
         rows.add(_panelRow('${s.label} · file', _current.subtitle.id == url,
             () => _player.setSubtitleTrack(SubtitleTrack.uri(url, title: s.label, language: s.languageCode)), h));
       }
+      rows.add(SizedBox(height: h * 0.02));
+      rows.add(_panelRow('Find subtitles online…', false, _findSubs, h));
     }
     return Positioned(
       right: 0,
@@ -868,6 +999,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
           ]),
           SizedBox(height: h * 0.025),
           Expanded(child: ListView(children: rows)),
+          if (_finding || _findNote.isNotEmpty)
+            Padding(
+              padding: EdgeInsets.only(bottom: h * 0.01),
+              child: Text(_finding ? _findNote : _findNote, style: reelText(h * 0.019, color: Reel.text2)),
+            ),
           Text(Prefs.passthrough ? 'Dolby / DTS go straight to your receiver (passthrough on)' : 'Sound decoded by the PC',
               style: reelText(h * 0.017, color: Reel.text3)),
         ]),

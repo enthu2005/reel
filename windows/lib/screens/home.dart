@@ -68,6 +68,9 @@ class _HomeScreenState extends State<HomeScreen> {
   final _spotIdx = ValueNotifier<int>(0);
   final _playNode = FocusNode();
   final _infoNode = FocusNode();
+  Timer? _spotTimer;
+  String? _spotShown;
+  bool _spotAway = false;
   bool get _spot => _rows.isNotEmpty && _rows.first.big;
   final Map<String, PlexItem?> _meta = {}; // full details: logo, picture and sound badges
 
@@ -78,6 +81,19 @@ class _HomeScreenState extends State<HomeScreen> {
       final h = Reel.h(context);
       final a = (1 - _scroll.offset / (h * 0.25)).clamp(0.0, 1.0);
       if ((a - _fadeN.value).abs() > 0.02) _fadeN.value = a;
+      if (!_spot) return;
+      // A full-screen video playing behind rows you're scrolling through is what made going back up
+      // stutter, so it stops as soon as the banner is out of the way and comes back when you return.
+      final away = _scroll.offset > h * 0.35;
+      if (away != _spotAway) {
+        _spotAway = away;
+        _spotShown = null;
+        if (away) {
+          Preview.stop();
+        } else if (_playNode.hasFocus || _infoNode.hasFocus) {
+          _spotPreview(_rows.first.items[_spotIdx.value % _rows.first.items.length]);
+        }
+      }
     });
     _load();
   }
@@ -86,6 +102,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _heroTimer?.cancel();
     _scroll.dispose();
+    _spotTimer?.cancel();
     _spotIdx.dispose();
     _playNode.dispose();
     _infoNode.dispose();
@@ -127,10 +144,17 @@ class _HomeScreenState extends State<HomeScreen> {
             rows.addAll(p);
           }
           _secs = sections.where((s) => s.type == 'movie' || s.type == 'show').toList();
+          _addFeatured(rows);
         } else {
           final want = _tab == 1 ? 'movie' : 'show';
+          final mine2 = sections.where((s) => s.type == want).toList();
+          _secs = mine2;
           final parts = await Future.wait<List<_Row>>([
-            for (final s in sections.where((s) => s.type == want))
+            Plex.onDeck().then((d) {
+              final keep = d.where((x) => want == 'movie' ? x.type == 'movie' : x.type == 'episode').toList();
+              return keep.isEmpty ? <_Row>[] : [_Row('Continue Watching', keep, landscape: true)];
+            }).catchError((_) => <_Row>[]),
+            for (final s in mine2)
               Future.wait([Plex.recentlyAdded(s.key), Plex.all(s.key)]).then((l) => [
                     if (l[0].isNotEmpty) _Row('Recently Added · ${s.title}', l[0], titles: true),
                     if (l[1].isNotEmpty) _Row('All ${s.title}', l[1], titles: true),
@@ -166,7 +190,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (_hero != null) _fetchLogo(_hero!);
       _prefetch(rows);
       // Featured and "Because you watched" come in a moment later, so they never hold Home up
-      if (_tab == 0 && !_discover) unawaited(_spotlight(mine));
+      if (!_discover) unawaited(_spotlight(mine));
     } catch (e) {
       if (mine != _loadToken || !mounted) return;
       setState(() {
@@ -179,16 +203,86 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _spotlight(int token) async {
     final copy = List<_Row>.of(_rows);
     try {
-      await _addSpotlight(copy, _secs).timeout(const Duration(seconds: 30));
+      if (_tab == 0) {
+        await _addSpotlight(copy, _secs).timeout(const Duration(seconds: 30));
+      } else {
+        await _addExtras(copy, _secs).timeout(const Duration(seconds: 40));
+      }
     } catch (_) {
       return; // just carry on without them
     }
-    if (!mounted || token != _loadToken || _tab != 0) return;
+    if (!mounted || token != _loadToken) return;
+    // The banner fills the screen, so have its first pictures in hand before it appears.
+    if (copy.isNotEmpty && copy.first.big) {
+      final art = copy.first.items.take(4).map(_backdrop).whereType<String>().toList();
+      if (art.isNotEmpty) {
+        await Future.wait([for (final u in art) ImageLoader.load(u)])
+            .timeout(const Duration(seconds: 6), onTimeout: () => const []);
+      }
+      if (!mounted || token != _loadToken) return;
+    }
     setState(() => _rows = copy);
   }
 
-  /// A "Featured" row at the very top (newly released, recently added and recommended, with a video
-  /// preview after a few seconds) and "Because you watched…" rows at the bottom.
+  /// Movies / TV Shows: "Because you watched…" and a row per genre, added after the page is up.
+  Future<void> _addExtras(List<_Row> rows, List<PlexSection> secs) async {
+    Future<List<PlexItem>> safe(Future<List<PlexItem>> f) => f.catchError((_) => <PlexItem>[]);
+    final seeds = <MapEntry<String, String>>[];
+    for (final s in secs) {
+      for (final m in await safe(Plex.recentlyWatched(s.key, count: 2))) {
+        seeds.add(MapEntry(m.key, m.title));
+      }
+    }
+    final related = await Future.wait([for (final s in seeds.take(3)) safe(Plex.related(s.key))]);
+    final because = <_Row>[];
+    for (var i = 0; i < related.length; i++) {
+      final fresh = related[i].where((x) => x.viewCount == 0).take(20).toList();
+      if (fresh.length >= 4) because.add(_Row('Because you watched ${seeds[i].value}', fresh, titles: true));
+    }
+    // genres, biggest libraries first
+    final genreRows = <_Row>[];
+    for (final s in secs) {
+      List<List<String>> gs;
+      try {
+        gs = await Plex.genresOf(s.key);
+      } catch (_) {
+        continue;
+      }
+      final picked = gs.take(10).toList();
+      final lists = await Future.wait([for (final g in picked) safe(Plex.byGenre(g[0]))]);
+      for (var i = 0; i < picked.length; i++) {
+        if (lists[i].length >= 4) genreRows.add(_Row(picked[i][1], lists[i], titles: true));
+      }
+    }
+    // "All …" stays last, after the browsing rows
+    final allAt = rows.indexWhere((r) => r.title.startsWith('All '));
+    final at = allAt < 0 ? rows.length : allAt;
+    rows.insertAll(at, [...because, ...genreRows]);
+  }
+
+  /// The banner across the top, made from what Home has already fetched (newest in each library and
+  /// what you're partway through), so it is there as soon as the page is, with nothing extra to wait for.
+  void _addFeatured(List<_Row> rows) {
+    final pools = <List<PlexItem>>[
+      for (final r in rows)
+        if (r.title.startsWith('Recently Added')) r.items,
+      for (final r in rows)
+        if (r.title == 'Up Next') r.items,
+    ];
+    final seen = <String>{};
+    final featured = <PlexItem>[];
+    for (var i = 0; featured.length < 12 && i < 12; i++) {
+      for (final pool in pools) {
+        if (i < pool.length && featured.length < 12 && seen.add(pool[i].key)) featured.add(pool[i]);
+      }
+    }
+    if (featured.length >= 3) {
+      rows.insert(0, _Row('Featured', featured,
+          landscape: true, big: true, titles: true, previewDelay: const Duration(seconds: 3)));
+    }
+  }
+
+  /// "Because you watched…" rows, added once the page is already up.
   Future<void> _addSpotlight(List<_Row> rows, List<PlexSection> secs) async {
     Future<List<PlexItem>> safe(Future<List<PlexItem>> f) => f.catchError((_) => <PlexItem>[]);
 
@@ -207,14 +301,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     final seedsUsed = seeds.take(4).toList();
 
-    final results = await Future.wait([
-      Future.wait([for (final s in secs) safe(Plex.recentlyAdded(s.key, count: 6))]),
-      Future.wait([for (final s in secs) safe(Plex.recentlyReleased(s.key, count: 6))]),
-      Future.wait([for (final s in seedsUsed) safe(Plex.related(s.key))]),
-    ]);
-    final added = results[0] as List<List<PlexItem>>;
-    final released = results[1] as List<List<PlexItem>>;
-    final related = results[2] as List<List<PlexItem>>;
+    final related = await Future.wait([for (final s in seedsUsed) safe(Plex.related(s.key))]);
 
     // Because you watched … (only things you haven't seen yet)
     final because = <_Row>[];
@@ -223,23 +310,6 @@ class _HomeScreenState extends State<HomeScreen> {
       if (fresh.length >= 4) because.add(_Row('Because you watched ${seedsUsed[i].value}', fresh, titles: true));
     }
 
-    // Featured: take turns between the three kinds so it's a mix
-    final seen = <String>{};
-    final featured = <PlexItem>[];
-    final pools = <List<PlexItem>>[
-      [for (final l in released) ...l.take(4)],
-      [for (final l in added) ...l.take(4)],
-      [for (final r in because.take(2)) ...r.items.take(3)],
-    ];
-    for (var i = 0; featured.length < 12 && i < 12; i++) {
-      for (final pool in pools) {
-        if (i < pool.length && featured.length < 12 && seen.add(pool[i].key)) featured.add(pool[i]);
-      }
-    }
-    if (featured.length >= 3) {
-      rows.insert(0, _Row('Featured', featured,
-          landscape: true, big: true, titles: true, previewDelay: const Duration(seconds: 3)));
-    }
     rows.addAll(because);
   }
 
@@ -268,23 +338,22 @@ class _HomeScreenState extends State<HomeScreen> {
     return out;
   }
 
-  /// Fetch every row's pictures in the background, a column at a time across all rows (the first
-  /// few cards of every row, then the next few…), so they're ready before you scroll to them.
+  /// Fetch a little way ahead of what's on screen, a column at a time across the rows, so moving
+  /// right or down finds the next pictures ready. Deliberately small: asking for hundreds at once
+  /// is what made the ones you're looking at slow.
   void _prefetch(List<_Row> rows) {
     final h = Reel.h(context);
     final dpr = MediaQuery.devicePixelRatioOf(context);
     final urls = <String?>[];
-    final longest = rows.fold<int>(0, (m, r) => r.items.length > m ? r.items.length : m);
-    for (var i = 0; i < longest && i < 400; i++) {
+    for (var i = 0; i < 14; i++) {
       for (final r in rows) {
         if (i >= r.items.length) continue;
         final ch = r.big ? h * 0.40 : (r.landscape ? h * 0.185 : h * 0.28);
         final cw = r.landscape ? ch * 16 / 9 : ch * 2 / 3;
         urls.add(PosterCard.imageUrl(r.items[i], cw, ch, r.landscape, dpr));
       }
-      // the big background picture too, for the first few of each row
-      if (i < 6) {
-        for (final r in rows) {
+      if (i < 3) {
+        for (final r in rows.take(3)) {
           if (i < r.items.length) urls.add(_backdrop(r.items[i]));
         }
       }
@@ -436,7 +505,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   duration: const Duration(milliseconds: 600),
                   child: backdrop == null
                       ? const SizedBox.expand()
-                      : SizedBox(key: ValueKey(backdrop), width: w, height: h, child: NetImage(backdrop)),
+                      : SizedBox(key: ValueKey(backdrop), width: w, height: h, child: NetImage(backdrop, decodeWidth: 1000)),
                 );
               },
             ),
@@ -509,31 +578,34 @@ class _HomeScreenState extends State<HomeScreen> {
                               : PillButton('Try again', autofocus: true, onPressed: _load),
                         ]),
                       )
-                    : SingleChildScrollView(
+                    // Built as you reach them: with a full-screen banner and a dozen rows, building
+                    // them all at once is what made scrolling back up stutter.
+                    : ListView.builder(
                         controller: _scroll,
                         clipBehavior: Clip.none,
+                        cacheExtent: h * 3,
                         padding: EdgeInsets.only(top: _spot ? 0 : h * 0.45, bottom: h * 0.1),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (_spot) _spotlightView(w, h),
-                            for (var ri = _spot ? 1 : 0; ri < _rows.length; ri++)
-                              RepaintBoundary(child: CardRow(
-                                key: ValueKey('${_tab}_${_rows[ri].title}'),
-                                autofocusFirst: !_spot && ri == 0,
-                                big: _rows[ri].big,
-                                previewDelay: _rows[ri].previewDelay,
-                                title: _rows[ri].title,
-                                items: _rows[ri].items,
-                                landscape: _rows[ri].landscape,
-                                titles: _rows[ri].titles,
-                                previews: _rows[ri].previews,
-                                onPressed: _open,
-                                onFocused: _focused,
-                                onLongPress: _expand,
-                              )),
-                          ],
-                        ),
+                        itemCount: _rows.length,
+                        itemBuilder: (c, ri) {
+                          if (_spot && ri == 0) return RepaintBoundary(child: _spotlightView(w, h));
+                          final r = _rows[ri];
+                          return RepaintBoundary(
+                            child: CardRow(
+                              key: ValueKey('${_tab}_${r.title}'),
+                              autofocusFirst: !_spot && ri == 0,
+                              big: r.big,
+                              previewDelay: r.previewDelay,
+                              title: r.title,
+                              items: r.items,
+                              landscape: r.landscape,
+                              titles: r.titles,
+                              previews: r.previews,
+                              onPressed: _open,
+                              onFocused: _focused,
+                              onLongPress: _expand,
+                            ),
+                          );
+                        },
                       ),
           ),
         ),
@@ -576,12 +648,22 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Rest on the banner for a few seconds and its trailer (or a scene) starts playing behind it.
+  void _spotPreview(PlexItem it) {
+    if (_spotShown == it.key) return;
+    _spotShown = it.key;
+    _spotTimer?.cancel();
+    // looks up the trailer (or best scene) now, and starts playing after the rest
+    Preview.focus(it, delay: const Duration(seconds: 3));
+  }
+
   void _spotMove(int d) {
     final items = _rows.first.items;
     final n = items.length;
     final i = (_spotIdx.value + d + n) % n;
+    Preview.stop();
+    _spotShown = null;
     _spotIdx.value = i;
-    Preview.focus(items[i], delay: const Duration(seconds: 3));
   }
 
   void _spotFocus(bool f) {
@@ -592,11 +674,16 @@ class _HomeScreenState extends State<HomeScreen> {
       if (_scroll.hasClients && _scroll.offset > 0) {
         _scroll.animateTo(0, duration: const Duration(milliseconds: 320), curve: Curves.easeOutCubic);
       }
-      Preview.focus(it, delay: const Duration(seconds: 3));
+      _spotShown = null;
+      _spotPreview(it);
     } else {
       Future.microtask(() {
         if (!mounted || !_spot) return;
-        if (!_playNode.hasFocus && !_infoNode.hasFocus) Preview.blur(it);
+        if (!_playNode.hasFocus) {
+          _spotTimer?.cancel();
+          _spotShown = null;
+          Preview.blur(it);
+        }
       });
     }
   }
@@ -620,7 +707,7 @@ class _HomeScreenState extends State<HomeScreen> {
             _spotMove(-1);
             return KeyEventResult.handled;
           }
-          if (e.logicalKey == LogicalKeyboardKey.arrowRight && _infoNode.hasFocus) {
+          if (e.logicalKey == LogicalKeyboardKey.arrowRight && _playNode.hasFocus) {
             _spotMove(1);
             return KeyEventResult.handled;
           }
@@ -632,13 +719,17 @@ class _HomeScreenState extends State<HomeScreen> {
             final idx = idx0 % items.length;
             final it = items[idx];
             _fetchLogo(it);
+            _spotPreview(it);
             final bd = _backdrop(it);
+            // keep the next one's picture ready so flicking along is instant
+            final next = _backdrop(items[(idx + 1) % items.length]);
+            if (next != null) ImageLoader.load(next);
             return Stack(fit: StackFit.expand, children: [
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 500),
                 child: bd == null
                     ? const SizedBox.expand(key: ValueKey('none'))
-                    : SizedBox(key: ValueKey(bd), width: w, height: bh, child: NetImage(bd)),
+                    : SizedBox(key: ValueKey(bd), width: w, height: bh, child: NetImage(bd, decodeWidth: 1000)),
               ),
               Positioned.fill(child: PreviewVideo.hero(it.key)),
               const Positioned.fill(
@@ -668,6 +759,25 @@ class _HomeScreenState extends State<HomeScreen> {
                 bottom: h * 0.12,
                 width: w * 0.42,
                 child: AnimatedBuilder(animation: _metaTick, builder: (c, _) => _spotInfo(it, h)),
+              ),
+              // Arrows for the mouse
+              Positioned(
+                left: w * 0.015,
+                top: 0,
+                bottom: 0,
+                child: Center(
+                  child: HoverButton(Icons.chevron_left_rounded,
+                      size: h * 0.07, tooltip: 'Previous', onPressed: () => _spotMove(-1)),
+                ),
+              ),
+              Positioned(
+                right: w * 0.015,
+                top: 0,
+                bottom: 0,
+                child: Center(
+                  child: HoverButton(Icons.chevron_right_rounded,
+                      size: h * 0.07, tooltip: 'Next', onPressed: () => _spotMove(1)),
+                ),
               ),
               Positioned(
                 left: 0,
@@ -731,20 +841,14 @@ class _HomeScreenState extends State<HomeScreen> {
           style: reelText(h * 0.021, color: const Color(0xCCFFFFFF), height: 1.4)),
       SizedBox(height: h * 0.025),
       Row(children: [
-        PillButton(it.isPlayable ? (it.viewOffset > 0 ? 'Resume' : 'Play') : 'Open',
-            icon: Icons.play_arrow_rounded,
+        PillButton(
+            it.type == 'show'
+                ? 'Go to show'
+                : (it.type == 'episode' ? 'Go to episode' : 'Go to movie'),
+            icon: Icons.arrow_forward_rounded,
             primary: true,
             autofocus: true,
             focusNode: _playNode,
-            scrollAlignment: -1,
-            onFocusChange: _spotFocus,
-            onPressed: () {
-              Preview.stop();
-              _play(it);
-            }),
-        SizedBox(width: h * 0.014),
-        IconPill(Icons.info_outline_rounded,
-            focusNode: _infoNode,
             scrollAlignment: -1,
             onFocusChange: _spotFocus,
             onPressed: () {

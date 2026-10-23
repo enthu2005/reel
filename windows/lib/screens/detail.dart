@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+
+import 'person.dart';
 import 'package:flutter/services.dart';
 
 import '../plex.dart';
@@ -238,7 +240,7 @@ class _DetailScreenState extends State<DetailScreen> {
         onKeyEvent: _onKey,
         child: Stack(children: [
         if (art != null)
-          Positioned.fill(child: NetImage(art)),
+          Positioned.fill(child: NetImage(art, decodeWidth: 1000)),
         Positioned.fill(child: PreviewVideo.hero(widget.ratingKey)),
         // the shading lightens while the preview plays, so you can see it
         Positioned.fill(
@@ -431,7 +433,10 @@ class _DetailScreenState extends State<DetailScreen> {
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: h * 0.01),
       child: Pressable(
-        onPressed: () {},
+        onPressed: () {
+          Preview.handOff();
+          Navigator.of(context).push(fadeRoute(PersonScreen(name: c.name, filter: c.filter)));
+        },
         builder: (ctx, f) => SizedBox(
           width: h * 0.17,
           child: Column(children: [
@@ -446,7 +451,7 @@ class _DetailScreenState extends State<DetailScreen> {
                   color: Reel.card,
                   boxShadow: f ? [BoxShadow(color: Colors.black.withOpacity(0.6), blurRadius: h * 0.03)] : null,
                 ),
-                child: url == null ? null : ClipOval(child: NetImage(url)),
+                child: url == null ? null : ClipOval(child: NetImage(url, decodeWidth: (h * 0.14).round())),
               ),
             ),
             SizedBox(height: h * 0.012),

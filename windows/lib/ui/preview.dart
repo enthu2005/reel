@@ -7,6 +7,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../log.dart';
 import '../plex.dart';
 import '../prefs.dart';
 
@@ -28,10 +29,17 @@ class Preview {
   static int _gen = 0;
   static final Map<String, String?> _trailers = {};
   static final Map<String, int> _offsets = {};
+  static final Map<String, PlexItem> _episodeOf = {}; // a show's first episode, for its preview
+
+  /// What the server transcodes a scene preview to, so we know where the black bars are.
+  static const double _streamAspect = 1280 / 720;
 
   /// The part of the picture that isn't black bars, as fractions (left, top, right, bottom), measured
   /// for film scenes so they can be scaled to fill the screen. Null = use the whole picture.
   static final ValueNotifier<Rect?> crop = ValueNotifier(null);
+
+  /// Bumped when the video's own size becomes known, so the picture is laid out again with it.
+  static final ValueNotifier<int> sizeTick = ValueNotifier(0);
 
   static VideoController? get video => _video;
 
@@ -65,6 +73,8 @@ class Preview {
     final p = Player(configuration: const PlayerConfiguration(title: 'Reel preview', bufferSize: 48 * 1024 * 1024));
     _player = p;
     _video = VideoController(p);
+    p.stream.width.listen((_) => sizeTick.value++);
+    p.stream.height.listen((_) => sizeTick.value++);
     p.setPlaylistMode(PlaylistMode.single); // loop a short trailer
     // Even out the loudness, so every trailer and scene plays at about the same level.
     try {
@@ -119,8 +129,14 @@ class Preview {
         if (!_trailers.containsKey(it.key)) _trailers[it.key] = await Plex.trailerUrl(it.key);
         if (_trailers[it.key] != null) return;
       }
-      if (it.type == 'movie' || it.type == 'episode') {
-        _offsets[it.key] ??= await Plex.sceneOffset(it.key, it.duration);
+      var src = it;
+      if (it.type == 'show') {
+        final e = _episodeOf[it.key] ?? await Plex.firstEpisode(it.key);
+        if (e == null) return;
+        _episodeOf[it.key] = src = e;
+      }
+      if (src.type == 'movie' || src.type == 'episode') {
+        _offsets[src.key] ??= await Plex.sceneOffset(src.key, src.duration);
       }
     } catch (_) {}
   }
@@ -135,6 +151,7 @@ class Preview {
       final src = await _source(it);
       if (gen != _gen || src == null) return;
       final p = _ensure();
+      Log.w('PREVIEW opening  ${it.displayTitle}');
       await p.setVolume(35);
       await p.open(Media(src), play: true);
       // Only show it once frames are actually moving, so the card never goes black.
@@ -142,6 +159,7 @@ class Preview {
           .firstWhere((d) => d > const Duration(milliseconds: 300))
           .timeout(const Duration(seconds: 20));
       if (gen != _gen) return;
+      Log.w('PREVIEW playing  ${it.displayTitle}');
       _show(it.key);
       if (_session != null) unawaited(_probe(gen)); // a film scene (not a trailer): look for black bars
     } catch (_) {
@@ -154,19 +172,41 @@ class Preview {
       final t = _trailers.containsKey(it.key) ? _trailers[it.key] : (_trailers[it.key] = await Plex.trailerUrl(it.key));
       if (t != null) return t;
     }
-    if (it.type == 'movie' || it.type == 'episode') {
-      final off = _offsets[it.key] ??= await Plex.sceneOffset(it.key, it.duration);
+    // A show has no video of its own: play a scene from its first episode instead.
+    var src = it;
+    if (it.type == 'show') {
+      final e = _episodeOf[it.key] ?? await Plex.firstEpisode(it.key);
+      if (e == null) return null;
+      _episodeOf[it.key] = src = e;
+    }
+    if (src.type == 'movie' || src.type == 'episode') {
+      final off = _offsets[src.key] ??= await Plex.sceneOffset(src.key, src.duration);
       final s = 'reelprev${Random().nextInt(1 << 30)}';
       _session = s;
-      return Plex.previewUrl(it.key, off, s);
+      // The server letterboxes the scene into a 16:9 stream, so cut those bars off straight away.
+      crop.value = barsFor(src.aspect > 0 ? src.aspect : it.aspect, _streamAspect);
+      return Plex.previewUrl(src.key, off, s);
     }
     return null;
+  }
+
+  /// Where the real picture sits inside a stream that letterboxes a [content]-shaped film into a
+  /// [stream]-shaped video. Null when they match (or the shape isn't known).
+  static Rect? barsFor(double content, double stream) {
+    if (content <= 0 || stream <= 0) return null;
+    if ((content - stream).abs() < 0.03) return null;
+    if (content > stream) {
+      final f = stream / content; // bars top and bottom
+      return Rect.fromLTRB(0, (1 - f) / 2, 1, 1 - (1 - f) / 2);
+    }
+    final f = content / stream; // bars left and right
+    return Rect.fromLTRB((1 - f) / 2, 0, 1 - (1 - f) / 2, 1);
   }
 
   /// Looks at a few frames and works out how much black border the picture has, then scales to fill.
   static Future<void> _probe(int gen) async {
     final r = await probeBars(_player!, cancelled: () => gen != _gen);
-    if (gen != _gen) return;
+    if (gen != _gen || r == null) return; // nothing found: keep what the film's shape told us
     crop.value = r;
   }
 
@@ -243,6 +283,7 @@ class Preview {
   }
 
   static void stop() {
+    if (_want != null) Log.w('PREVIEW stopped');
     _timer?.cancel();
     _timer = null;
     _timerKey = null;
@@ -287,46 +328,51 @@ class PreviewVideo extends StatelessWidget {
   }
 
   /// The video scaled to cover the whole area (cropping the edges), after cutting off any black bars.
-  static Widget _filled(VideoController v) =>
-      ValueListenableBuilder<Rect?>(valueListenable: Preview.crop, builder: (c, r, _) => cover(v, r));
+  static Widget _filled(VideoController v) => AnimatedBuilder(
+        animation: Listenable.merge([Preview.crop, Preview.sizeTick]),
+        builder: (c, _) => cover(v, Preview.crop.value),
+      );
 
-  /// Scales the picture up until it covers the whole area (cropping the edges), after cutting off the
-  /// black bars [r] (fractions of the picture), so a letterboxed film fills the screen.
+  /// Fills the whole area with the picture, cropping what doesn't fit. [r] is the part of the video
+  /// that is real picture (the rest being black bars the stream has baked in): it is blown up until
+  /// that part covers the area, so a letterboxed film fills the screen instead of sitting in a box.
   static Widget cover(VideoController v, Rect? r, {SubtitleViewConfiguration? subtitles}) {
+    final subs = subtitles ?? const SubtitleViewConfiguration();
+    Widget plain(BoxFit fit) => Video(
+          controller: v,
+          controls: NoVideoControls,
+          fit: fit,
+          fill: Colors.transparent,
+          subtitleViewConfiguration: subs,
+        );
+    // Always laid out by hand: left to itself the video sometimes sits at its own size in a corner
+    // instead of filling the space it was given.
+    final cr0 = r ?? const Rect.fromLTRB(0, 0, 1, 1);
     final st = v.player.state;
     final vw = (st.width ?? 0) > 0 ? st.width!.toDouble() : 1920.0;
     final vh = (st.height ?? 0) > 0 ? st.height!.toDouble() : 1080.0;
-    final cr = r ?? const Rect.fromLTRB(0, 0, 1, 1);
-    final wf = cr.width.clamp(0.25, 1.0).toDouble();
-    final hf = cr.height.clamp(0.25, 1.0).toDouble();
-    final ax = wf >= 1 ? 0.0 : (cr.left / (1 - wf)) * 2 - 1;
-    final ay = hf >= 1 ? 0.0 : (cr.top / (1 - hf)) * 2 - 1;
     return ClipRect(
-      child: SizedBox.expand(
-        child: FittedBox(
-          fit: BoxFit.cover,
-          clipBehavior: Clip.hardEdge,
-          child: SizedBox(
-            width: vw * wf,
-            height: vh * hf,
-            child: ClipRect(
-              child: OverflowBox(
-                alignment: Alignment(ax.clamp(-1.0, 1.0).toDouble(), ay.clamp(-1.0, 1.0).toDouble()),
-                minWidth: vw,
-                maxWidth: vw,
-                minHeight: vh,
-                maxHeight: vh,
-                child: Video(
-                  controller: v,
-                  controls: NoVideoControls,
-                  fit: BoxFit.fill,
-                  fill: Colors.transparent,
-                  subtitleViewConfiguration: subtitles ?? const SubtitleViewConfiguration(),
-                ),
+      child: LayoutBuilder(
+        builder: (c, box) {
+          final w = box.maxWidth, h = box.maxHeight;
+          if (!w.isFinite || !h.isFinite || w <= 0 || h <= 0) return plain(BoxFit.cover);
+          // how much to blow the whole frame up so the real picture covers the area
+          final s = max(w / (vw * cr0.width), h / (vh * cr0.height));
+          final fw = vw * s, fh = vh * s;
+          return SizedBox(
+            width: w,
+            height: h,
+            child: Stack(clipBehavior: Clip.hardEdge, children: [
+              Positioned(
+                left: w / 2 - (cr0.left + cr0.width / 2) * fw,
+                top: h / 2 - (cr0.top + cr0.height / 2) * fh,
+                width: fw,
+                height: fh,
+                child: plain(BoxFit.fill),
               ),
-            ),
-          ),
-        ),
+            ]),
+          );
+        },
       ),
     );
   }

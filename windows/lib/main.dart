@@ -4,23 +4,47 @@ import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'log.dart';
 import 'plex.dart';
 import 'prefs.dart';
 import 'screens/home.dart';
 import 'screens/login.dart';
 import 'warmup.dart';
 import 'ui/theme.dart';
+import 'ui/widgets.dart';
 
 final GlobalKey<NavigatorState> navKey = GlobalKey<NavigatorState>();
 
+/// Whether there's a page to go back to, so the mouse gets a back button (the keyboard has Esc).
+final ValueNotifier<bool> canGoBack = ValueNotifier(false);
+
+class _PageWatcher extends NavigatorObserver {
+  void _check() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      canGoBack.value = navKey.currentState?.canPop() ?? false;
+    });
+  }
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previous) => _check();
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previous) => _check();
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previous) => _check();
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) => _check();
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  Log.start();
   // room for a whole library of posters, so scrolling back never shows blanks
   PaintingBinding.instance.imageCache.maximumSizeBytes = 160 << 20;
   PaintingBinding.instance.imageCache.maximumSize = 1200;
   MediaKit.ensureInitialized();
   await windowManager.ensureInitialized();
   await Prefs.load();
+  Log.w('posters: ${Prefs.imgOriginal ? 'original files' : 'resized by the server'}');
   await Plex.init();
   unawaited(Warmup.run());
 
@@ -74,6 +98,7 @@ class ReelApp extends StatelessWidget {
       title: 'Reel',
       debugShowCheckedModeBanner: false,
       navigatorKey: navKey,
+      navigatorObservers: [_PageWatcher()],
       theme: reelTheme(),
       shortcuts: {
         ...WidgetsApp.defaultShortcuts,
@@ -97,7 +122,26 @@ class ReelApp extends StatelessWidget {
       // Sizes already follow the window, so ignore Windows text scaling (it made cards overflow).
       builder: (c, child) => MediaQuery(
         data: MediaQuery.of(c).copyWith(textScaler: TextScaler.noScaling),
-        child: child!,
+        child: Stack(children: [
+          child!,
+          // Back, for the mouse. Esc does the same thing from the keyboard.
+          Positioned(
+            left: MediaQuery.sizeOf(c).height * 0.03,
+            top: MediaQuery.sizeOf(c).height * 0.03,
+            child: ValueListenableBuilder<bool>(
+              valueListenable: canGoBack,
+              builder: (c2, show, _) => AnimatedOpacity(
+                opacity: show ? 1 : 0,
+                duration: const Duration(milliseconds: 180),
+                child: IgnorePointer(
+                  ignoring: !show,
+                  child: HoverButton(Icons.arrow_back_rounded,
+                      size: MediaQuery.sizeOf(c).height * 0.055, tooltip: 'Back (Esc)', onPressed: goBack),
+                ),
+              ),
+            ),
+          ),
+        ]),
       ),
       home: Plex.isReady ? const HomeScreen() : const LoginScreen(),
     );

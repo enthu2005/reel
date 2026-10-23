@@ -119,7 +119,7 @@ class _LibrariesScreenState extends State<LibrariesScreen> {
                 : _error != null
                     ? Center(child: Text(_error!, textAlign: TextAlign.center, style: reelText(h * 0.026, color: Reel.text2)))
                     : GridView.builder(
-                        clipBehavior: Clip.none,
+                        clipBehavior: Clip.hardEdge,
                         padding: EdgeInsets.only(top: h * 0.01, bottom: h * 0.06),
                         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: cols,
@@ -157,7 +157,7 @@ class _LibrariesScreenState extends State<LibrariesScreen> {
           child: ClipRRect(
             borderRadius: BorderRadius.circular(h * 0.016),
             child: Stack(fit: StackFit.expand, children: [
-              if (art != null) NetImage(art, fade: false),
+              if (art != null) NetImage(art, fade: false, decodeWidth: 640),
               const DecoratedBox(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
@@ -289,9 +289,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 : _error != null
                     ? Center(child: Text(_error!, textAlign: TextAlign.center, style: reelText(h * 0.026, color: Reel.text2)))
                     : GridView.builder(
-                        clipBehavior: Clip.none,
+                        clipBehavior: Clip.hardEdge,
                         cacheExtent: h * 3,
-                        padding: EdgeInsets.only(top: h * 0.02, bottom: h * 0.06),
+                        padding: EdgeInsets.only(top: h * 0.03, bottom: h * 0.06),
                         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: cols,
                           childAspectRatio: cw / (ch + PosterCard.textBlock(h) + h * 0.03),

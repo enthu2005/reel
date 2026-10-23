@@ -101,6 +101,7 @@ class PlexItem {
   int viewCount = 0;
   int index = 0;
   int parentIndex = 0;
+  double aspect = 0; // the film's shape, e.g. 2.39 for a wide film (0 = unknown)
   String? partKey;
   String videoRes = '';
   String? note; // e.g. a Seerr status ("Requested", "Available") shown under the card
@@ -279,6 +280,11 @@ class PlexItem {
       i.mAudioCodec = (m0['audioCodec'] ?? '').toString();
       i.mAudioChannels = _int(m0['audioChannels']);
       i.mVideoProfile = (m0['videoProfile'] ?? '').toString();
+      i.aspect = double.tryParse('${m0['aspectRatio'] ?? ''}') ?? 0;
+      if (i.aspect <= 0) {
+        final vw = _int(m0['width']), vh = _int(m0['height']);
+        if (vw > 0 && vh > 0) i.aspect = vw / vh;
+      }
       final parts = m0['Part'] as List?;
       if (parts != null && parts.isNotEmpty) {
         final p0 = parts.first as Map;
@@ -290,6 +296,15 @@ class PlexItem {
     }
     return i;
   }
+}
+
+/// A subtitle Plex found online and can download.
+class SubtitleFind {
+  final String key;
+  final String title;
+  final String provider;
+  final double score;
+  SubtitleFind(this.key, this.title, this.provider, this.score);
 }
 
 class PlexSection {
@@ -383,7 +398,7 @@ class Plex {
   static Future<void> findServer() async {
     final body = await _send('GET', 'https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1');
     final res = jsonDecode(body) as List;
-    final candidates = <List<String>>[]; // [uri, name, kind]
+    final candidates = <List<String>>[]; // [uri, name, kind, 'mine'|'shared']
     for (final pass in [true, false]) {
       for (final r0 in res) {
         final r = r0 as Map;
@@ -410,14 +425,15 @@ class Plex {
             remote.add(uri);
           }
         }
+        final whose = pass ? 'mine' : 'shared';
         for (final u in local) {
-          candidates.add([u, name, 'local']);
+          candidates.add([u, name, 'local', whose]);
         }
         for (final u in remote) {
-          candidates.add([u, name, 'remote']);
+          candidates.add([u, name, 'remote', whose]);
         }
         for (final u in relay) {
-          candidates.add([u, name, 'relay']);
+          candidates.add([u, name, 'relay', whose]);
         }
       }
     }
@@ -440,13 +456,36 @@ class Plex {
         '${candidates[i][2]} ${candidates[i][0].startsWith('https://') ? (candidates[i][0].contains('plex.direct') ? 'name' : 'https') : 'http'} '
             '${ok[i] ? '✓ ${ms[i]} ms' : '✗'}'
     ].join('  ·  ');
+    // Your own server always wins, even if someone else's answers quicker: picking a friend's server
+    // would show their library and leave your own titles missing. If you've chosen one by hand in
+    // Settings, that one wins outright. After that it's your own network, then the internet, then
+    // Plex's relay, and only then speed.
+    const rank = {'local': 0, 'remote': 1, 'relay': 2};
+    var best = -1;
     for (var i = 0; i < candidates.length; i++) {
-      if (ok[i]) {
-        Prefs.server = candidates[i][0];
-        Prefs.serverName = candidates[i][1];
-        Prefs.serverKind = candidates[i][2];
-        return;
+      if (!ok[i]) continue;
+      final wanted = Prefs.serverPick;
+      if (wanted.isNotEmpty && candidates[i][1] != wanted) continue;
+      if (best < 0) {
+        best = i;
+        continue;
       }
+      final mineA = candidates[best][3] == 'mine', mineB = candidates[i][3] == 'mine';
+      if (mineA != mineB) {
+        if (mineB) best = i;
+        continue;
+      }
+      final a = rank[candidates[best][2]] ?? 3;
+      final b = rank[candidates[i][2]] ?? 3;
+      if (b < a || (b == a && ms[i] < ms[best])) best = i;
+    }
+    // Remember which servers were found, so Settings can offer the choice.
+    Prefs.serverList = {for (var i = 0; i < candidates.length; i++) if (ok[i]) candidates[i][1]}.join('|');
+    if (best >= 0) {
+      Prefs.server = candidates[best][0];
+      Prefs.serverName = candidates[best][1];
+      Prefs.serverKind = candidates[best][2];
+      return;
     }
     throw Exception('Found your server but none of its addresses answered');
   }
@@ -493,6 +532,52 @@ class Plex {
     }).toList();
   }
 
+  /// The genres in a library, biggest first-ish, as [key, title] pairs.
+  static Future<List<List<String>>> genresOf(String sectionKey) async {
+    final mc = (await _get('/library/sections/$sectionKey/genre'))['MediaContainer'] as Map;
+    final out = <List<String>>[];
+    for (final d in (mc['Directory'] as List? ?? const [])) {
+      final o = d as Map;
+      final title = (o['title'] ?? '').toString();
+      final fast = (o['fastKey'] ?? '').toString();
+      final key = (o['key'] ?? '').toString();
+      if (title.isEmpty || (fast.isEmpty && key.isEmpty)) continue;
+      out.add([fast.isNotEmpty ? fast : '/library/sections/$sectionKey/all?genre=$key', title]);
+    }
+    return out;
+  }
+
+  /// Everything in a library with a given person in it ([filter] is Plex's own, e.g. "actor=1234").
+  static Future<List<PlexItem>> withPerson(String sectionKey, String filter) =>
+      items(paged('/library/sections/$sectionKey/all?$filter', 200));
+
+  static Future<List<PlexItem>> byGenre(String path, {int count = 20}) =>
+      items(paged('$path&sort=audienceRating:desc', count));
+
+  /// Subtitles Plex can fetch from the internet for this title.
+  static Future<List<SubtitleFind>> searchSubtitles(String ratingKey, String language) async {
+    final mc = (await _get('/library/metadata/$ratingKey/subtitles'
+        '?language=$language&hearingImpaired=0&forced=0'))['MediaContainer'] as Map;
+    final out = <SubtitleFind>[];
+    for (final s in (mc['Stream'] as List? ?? const [])) {
+      final o = s as Map;
+      final key = (o['key'] ?? '').toString();
+      if (key.isEmpty) continue;
+      out.add(SubtitleFind(
+        key,
+        (o['title'] ?? o['displayTitle'] ?? 'Subtitles').toString(),
+        (o['providerTitle'] ?? o['sourceKey'] ?? '').toString(),
+        double.tryParse('${o['score'] ?? 0}') ?? 0,
+      ));
+    }
+    return out;
+  }
+
+  /// Tells the server to fetch one of those and attach it to the title.
+  static Future<void> downloadSubtitle(String ratingKey, String key) =>
+      _send('PUT', '$server/library/metadata/$ratingKey/subtitles?key=${Uri.encodeQueryComponent(key)}',
+          timeout: const Duration(seconds: 60));
+
   static Future<SectionPeek> sectionPeek(String key) async {
     final mc = (await _get(paged('/library/sections/$key/all?sort=addedAt:desc', 1)))['MediaContainer'] as Map;
     final list = mc['Metadata'] as List?;
@@ -534,6 +619,12 @@ class Plex {
       items(paged('/library/sections/$sectionKey/all?sort=$sort', 3000));
 
   static Future<List<PlexItem>> children(String ratingKey) => items('/library/metadata/$ratingKey/children');
+
+  /// The first episode of a show (used for a preview when the show has no trailer).
+  static Future<PlexItem?> firstEpisode(String showKey) async {
+    final l = await items(paged('/library/metadata/$showKey/allLeaves', 1));
+    return l.isEmpty ? null : l.first;
+  }
 
   static Future<List<PlexItem>> allEpisodes(String showKey) =>
       items(paged('/library/metadata/$showKey/allLeaves', 800));
@@ -675,18 +766,12 @@ class Plex {
   static String? img(String? path, int w, int h) {
     if (path == null || server == null) return null;
     if (path.startsWith('http')) return path;
-    // On your own network take the original picture: the server's resizing is slow (a NAS is weak at it)
-    // and the local network is quick, so this is much faster than asking it to resize every poster.
+    // Resizing is the slow part: the server has to decode and shrink every poster, and a NAS is weak
+    // at that. On your own network the picture as it is on disk arrives far quicker, so take that and
+    // let this PC shrink it (which it does while decoding, for free).
     if (Prefs.serverKind == 'local') return raw(path);
     return '$server/photo/:/transcode?width=$w&height=$h&minSize=1&upscale=1'
         '&url=${Uri.encodeQueryComponent(path)}&X-Plex-Token=$token';
-  }
-
-  /// Posters on your own network: the server just hands over the picture file, instead of resizing
-  /// each one first (the resizing is what made them slow). Away from home they're still resized.
-  static String? imgFast(String? path, int w, int h) {
-    if (path != null && !path.startsWith('http') && Prefs.serverKind == 'local') return raw(path);
-    return img(path, w, h);
   }
 
   /// The original file (logos keep their transparency; video files play directly).

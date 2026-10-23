@@ -100,7 +100,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
               padding: EdgeInsets.only(left: h * 0.035, bottom: h * 0.014),
               child: Text(_seerrNote!, style: reelText(h * 0.02, color: Reel.text2)),
             ),
-          _row(h, 'Picture loading', '', ImageLoader.summary, () => setState(() {})),
+          if (Prefs.serverList.split('|').where((x) => x.isNotEmpty).length > 1)
+            _row(h, 'Which server', Prefs.serverPick.isEmpty ? 'Choose for me' : Prefs.serverPick,
+                'Your account can see more than one Plex server: ${Prefs.serverList.replaceAll('|', ', ')}. '
+                    'Press Enter to move to the next one.', () async {
+              final all = Prefs.serverList.split('|').where((x) => x.isNotEmpty).toList();
+              final i = Prefs.serverPick.isEmpty ? 0 : all.indexOf(Prefs.serverPick) + 1;
+              Prefs.serverPick = i >= all.length ? '' : all[i];
+              try {
+                await Plex.findServer();
+              } catch (_) {}
+              if (mounted) setState(() {});
+            }),
+          _row(h, 'Posters come from', Prefs.imgOriginal ? 'The file on the server' : 'The server, resized',
+              'Resized is usually quicker: the server keeps its own copy after the first time, and the files are small. '
+                  'The file as it is skips that work but downloads more. Press Enter to swap and watch the line below.', () {
+            setState(() {
+              Prefs.imgOriginal = !Prefs.imgOriginal;
+              ImageLoader.resetCounts();
+            });
+          }),
+          _row(h, 'Picture loading', '', ImageLoader.summary, () => setState(() => ImageLoader.resetCounts())),
           _row(h, 'Sign out', '', 'Signs Reel out of your Plex account.', () {
             Plex.signOut();
             navKey.currentState?.pushAndRemoveUntil(

@@ -74,6 +74,20 @@ class Prefs {
   static int get fitMode => _p.getInt('fitMode') ?? 0;
   static set fitMode(int v) => _p.setInt('fitMode', v);
 
+  /// Where posters come from on your own network: true = the picture file as it is on the server
+  /// (no work for the server, bigger download), false = the server shrinks it first (its own cache
+  /// makes this quick after the first time).
+  static bool get imgOriginal => _p.getBool('imgOriginal') ?? true;
+  static set imgOriginal(bool v) => _p.setBool('imgOriginal', v);
+
+  /// The server you picked by hand in Settings (its name), or empty to choose for you.
+  static String get serverPick => _p.getString('serverPick') ?? '';
+  static set serverPick(String v) => _p.setString('serverPick', v);
+
+  /// The servers found last time we looked, separated by |, so Settings can offer them.
+  static String get serverList => _p.getString('serverList') ?? '';
+  static set serverList(String v) => _p.setString('serverList', v);
+
   static bool get autoPlayNext => _p.getBool('autoPlay') ?? true;
   static set autoPlayNext(bool v) => _p.setBool('autoPlay', v);
 }

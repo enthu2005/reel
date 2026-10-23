@@ -109,9 +109,9 @@ class _SearchScreenState extends State<SearchScreen> {
           if (_message.isNotEmpty) Text(_message, style: reelText(h * 0.026, color: Reel.text2)),
           Expanded(
             child: GridView.builder(
-              clipBehavior: Clip.none,
+              clipBehavior: Clip.hardEdge,
               cacheExtent: h * 4, // build the cards well ahead so their pictures are ready before you get there
-              padding: EdgeInsets.only(top: h * 0.02, bottom: h * 0.06),
+              padding: EdgeInsets.only(top: h * 0.03, bottom: h * 0.06),
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: cols,
                 childAspectRatio: cw / (cw * 9 / 16 + h * 0.1),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../log.dart';
 import '../plex.dart';
 import 'net_image.dart';
 import 'preview.dart';
@@ -122,6 +123,51 @@ class _PressableState extends State<Pressable> {
         child: focus,
       ),
     );
+  }
+}
+
+/// A round button for the mouse: arrows on a row, back, and so on. It deliberately never takes the
+/// keyboard selection, so clicking one doesn't move where the arrow keys are.
+class HoverButton extends StatefulWidget {
+  final IconData icon;
+  final VoidCallback onPressed;
+  final double size;
+  final String? tooltip;
+
+  const HoverButton(this.icon, {super.key, required this.onPressed, required this.size, this.tooltip});
+
+  @override
+  State<HoverButton> createState() => _HoverButtonState();
+}
+
+class _HoverButtonState extends State<HoverButton> {
+  bool _over = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final d = widget.size;
+    final button = MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _over = true),
+      onExit: (_) => setState(() => _over = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onPressed,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          width: d,
+          height: d,
+          decoration: BoxDecoration(
+            color: _over ? Colors.white : const Color(0x8C1C1C1E),
+            shape: BoxShape.circle,
+            border: Border.all(color: const Color(0x40FFFFFF), width: 1),
+            boxShadow: _over ? [BoxShadow(color: const Color(0x80000000), blurRadius: d * 0.35)] : null,
+          ),
+          child: Icon(widget.icon, size: d * 0.56, color: _over ? Colors.black : Colors.white),
+        ),
+      ),
+    );
+    return widget.tooltip == null ? button : Tooltip(message: widget.tooltip!, child: button);
   }
 }
 
@@ -327,6 +373,10 @@ class PosterCard extends StatelessWidget {
     final radius = BorderRadius.circular(h * 0.014);
     final dpr = MediaQuery.devicePixelRatioOf(context);
     final url = imageUrl(item, width, height, landscape, dpr);
+    if (url == null) {
+      ImageLoader.noPicture.add(item.displayTitle);
+      Log.w('NO POSTER for "${item.displayTitle}"  (thumb=${item.thumb} art=${item.art} gpThumb=${item.gpThumb})');
+    }
     final progress = item.viewOffset > 0 && item.duration > 0 ? item.viewOffset / item.duration : 0.0;
     final textOn = landscape || showTitle;
     final tb = textBlock(h);
@@ -376,6 +426,16 @@ class PosterCard extends StatelessWidget {
                 child: ClipRRect(
                   borderRadius: radius,
                   child: Stack(fit: StackFit.expand, children: [
+                    Padding(
+                      padding: EdgeInsets.all(width * 0.08),
+                      child: Center(
+                        child: Text(item.displayTitle,
+                            maxLines: 3,
+                            textAlign: TextAlign.center,
+                            overflow: TextOverflow.ellipsis,
+                            style: reelText(width * 0.1, weight: FontWeight.w600, color: Reel.text3)),
+                      ),
+                    ),
                     if (url != null) NetImage(url, fade: false, decodeWidth: step(width, dpr.clamp(1.0, 1.25).toDouble())),
                     if (live) PreviewVideo.hero(item.key, active: true),
                     if (progress > 0)
@@ -449,10 +509,12 @@ class PosterCard extends StatelessWidget {
         );
           }
 
-          return live
-              ? ValueListenableBuilder<String?>(
-                  valueListenable: Preview.showing, builder: (c2, playing, _) => card(playing))
-              : card(null);
+          // Always built the same way, whether or not this card has focus: swapping the shape of the
+          // widgets underneath threw away the picture that had already been fetched and started again.
+          return ValueListenableBuilder<String?>(
+            valueListenable: Preview.showing,
+            builder: (c2, playing, _) => card(live ? playing : null),
+          );
         },
       ),
     );
@@ -460,7 +522,7 @@ class PosterCard extends StatelessWidget {
 }
 
 /// A titled horizontal row of cards.
-class CardRow extends StatelessWidget {
+class CardRow extends StatefulWidget {
   final String title;
   final List<PlexItem> items;
   final bool landscape;
@@ -491,7 +553,39 @@ class CardRow extends StatelessWidget {
   });
 
   @override
+  State<CardRow> createState() => _CardRowState();
+}
+
+class _CardRowState extends State<CardRow> {
+  final _row = ScrollController();
+
+  @override
+  void dispose() {
+    _row.dispose();
+    super.dispose();
+  }
+
+  /// Click an arrow: slide the row along by most of a screen.
+  void _slide(int dir) {
+    if (!_row.hasClients) return;
+    final by = Reel.w(context) * 0.7 * dir;
+    final to = (_row.offset + by).clamp(0.0, _row.position.maxScrollExtent);
+    _row.animateTo(to, duration: const Duration(milliseconds: 320), curve: Curves.easeOutCubic);
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final title = widget.title;
+    final items = widget.items;
+    final landscape = widget.landscape;
+    final titles = widget.titles;
+    final previews = widget.previews;
+    final big = widget.big;
+    final autofocusFirst = widget.autofocusFirst;
+    final previewDelay = widget.previewDelay;
+    final onPressed = widget.onPressed;
+    final onFocused = widget.onFocused;
+    final onLongPress = widget.onLongPress;
     final h = Reel.h(context);
     final w = Reel.w(context);
     final ch = big ? h * 0.40 : (landscape ? h * 0.185 : h * 0.28);
@@ -499,11 +593,17 @@ class CardRow extends StatelessWidget {
     final textH = (landscape || titles) ? PosterCard.textBlock(h) : 0.0;
     final padV = ch * 0.07; // room above and below for the 1.1x grow and its shadow
     // Fetch the whole row's pictures quietly in the background (once per list).
-    if (_warmed[items] != true) {
-      _warmed[items] = true;
+    if (CardRow._warmed[items] != true) {
+      CardRow._warmed[items] = true;
       final dpr = MediaQuery.devicePixelRatioOf(context);
       // just the first couple of screens' worth: more would clog a slow connection
-      ImageLoader.prefetch(items.take(20).map((it) => PosterCard.imageUrl(it, cw, ch, landscape, dpr)));
+      final urls = items.take(40).map((it) => PosterCard.imageUrl(it, cw, ch, landscape, dpr)).toList();
+      // The first screenful of a row goes in the on-screen queue, not the background one, so a row
+      // never arrives with empty cards at its far end.
+      for (final u in urls.take(14)) {
+        if (u != null) ImageLoader.load(u);
+      }
+      ImageLoader.prefetch(urls.skip(14));
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Padding(
@@ -512,11 +612,14 @@ class CardRow extends StatelessWidget {
       ),
       SizedBox(
         height: ch + textH + h * 0.022 + padV * 2 + 2,
-        child: ListView.builder(
+        child: Stack(children: [
+          Positioned.fill(
+            child: ListView.builder(
+            controller: _row,
             scrollDirection: Axis.horizontal,
             clipBehavior: Clip.none,
             // build well ahead so moving right with the keys always finds the next card
-            cacheExtent: w * 1.5,
+            cacheExtent: w * 2.5,
             padding: EdgeInsets.symmetric(horizontal: w * 0.045, vertical: padV),
             itemCount: items.length,
             itemBuilder: (c, i) => Align(
@@ -551,6 +654,27 @@ class CardRow extends StatelessWidget {
               ),
             ),
           ),
+          ),
+          // Arrows for the mouse, at either end
+          Positioned(
+            left: w * 0.008,
+            top: 0,
+            bottom: textH,
+            child: Center(
+              child: HoverButton(Icons.chevron_left_rounded,
+                  size: h * 0.055, tooltip: 'Back', onPressed: () => _slide(-1)),
+            ),
+          ),
+          Positioned(
+            right: w * 0.008,
+            top: 0,
+            bottom: textH,
+            child: Center(
+              child: HoverButton(Icons.chevron_right_rounded,
+                  size: h * 0.055, tooltip: 'More', onPressed: () => _slide(1)),
+            ),
+          ),
+        ]),
       ),
     ]);
   }
