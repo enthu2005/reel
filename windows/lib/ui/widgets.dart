@@ -1,0 +1,522 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import '../plex.dart';
+import 'net_image.dart';
+import 'preview.dart';
+import 'theme.dart';
+
+/// Anything you can move to with the arrow keys (or a remote / controller) and press with Enter.
+/// Keyboard only for now: the mouse doesn't move focus or press anything.
+class Pressable extends StatefulWidget {
+  final Widget Function(BuildContext context, bool focused) builder;
+  final VoidCallback? onPressed;
+  final VoidCallback? onLongPress;
+  final ValueChanged<bool>? onFocusChange;
+  final bool autofocus;
+  final FocusNode? focusNode;
+  final double scrollAlignment;
+
+  const Pressable({
+    super.key,
+    required this.builder,
+    this.onPressed,
+    this.onLongPress,
+    this.onFocusChange,
+    this.autofocus = false,
+    this.focusNode,
+    this.scrollAlignment = 0.25,
+  });
+
+  @override
+  State<Pressable> createState() => _PressableState();
+}
+
+class _PressableState extends State<Pressable> {
+  late FocusNode _node = widget.focusNode ?? FocusNode();
+  bool _focused = false;
+  DateTime? _downAt;
+
+  @override
+  void didUpdateWidget(covariant Pressable old) {
+    super.didUpdateWidget(old);
+    if (widget.focusNode != null && widget.focusNode != _node) _node = widget.focusNode!;
+  }
+
+  @override
+  void dispose() {
+    if (widget.focusNode == null) _node.dispose();
+    super.dispose();
+  }
+
+  KeyEventResult _onKey(FocusNode n, KeyEvent e) {
+    final enter = e.logicalKey == LogicalKeyboardKey.enter ||
+        e.logicalKey == LogicalKeyboardKey.numpadEnter ||
+        e.logicalKey == LogicalKeyboardKey.select ||
+        e.logicalKey == LogicalKeyboardKey.gameButtonA ||
+        e.logicalKey == LogicalKeyboardKey.space;
+    if (!enter) return KeyEventResult.ignored;
+    // Holding Enter (about half a second) is a long press, like holding OK on the Fire TV remote.
+    if (e is KeyDownEvent) {
+      _downAt = DateTime.now();
+      return KeyEventResult.handled;
+    }
+    if (e is KeyRepeatEvent) {
+      if (_downAt != null && widget.onLongPress != null &&
+          DateTime.now().difference(_downAt!) > const Duration(milliseconds: 500)) {
+        _downAt = null;
+        widget.onLongPress!();
+      }
+      return KeyEventResult.handled;
+    }
+    if (e is KeyUpEvent) {
+      if (_downAt != null) widget.onPressed?.call();
+      _downAt = null;
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Focus(
+      focusNode: _node,
+      autofocus: widget.autofocus,
+      onKeyEvent: _onKey,
+      onFocusChange: (f) {
+        setState(() => _focused = f);
+        widget.onFocusChange?.call(f);
+        if (f) {
+          Scrollable.ensureVisible(context,
+              alignment: widget.scrollAlignment,
+              alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOutCubic);
+        }
+      },
+      child: widget.builder(context, _focused),
+    );
+  }
+}
+
+/// A gentle cross-fade between pages (the preview video grows out of the card through it).
+Route<T> fadeRoute<T>(Widget page) => PageRouteBuilder<T>(
+      transitionDuration: const Duration(milliseconds: 380),
+      reverseTransitionDuration: const Duration(milliseconds: 300),
+      pageBuilder: (_, __, ___) => page,
+      transitionsBuilder: (_, a, __, child) => FadeTransition(opacity: CurvedAnimation(parent: a, curve: Curves.easeOut), child: child),
+    );
+
+/// Picture and sound labels (4K, Dolby Vision, Dolby Atmos, DTS-HD MA, 5.1…) as small outlined tags.
+class Badges extends StatelessWidget {
+  final List<String> items;
+  const Badges(this.items, {super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final h = Reel.h(context);
+    if (items.isEmpty) return const SizedBox.shrink();
+    return Wrap(spacing: h * 0.008, runSpacing: h * 0.008, children: [
+      for (final b in items)
+        Container(
+          padding: EdgeInsets.symmetric(horizontal: h * 0.008, vertical: h * 0.002),
+          decoration: BoxDecoration(
+            border: Border.all(color: const Color(0xA6FFFFFF), width: 1.2),
+            borderRadius: BorderRadius.circular(h * 0.006),
+          ),
+          child: Text(b, style: reelText(h * 0.0165, weight: FontWeight.w700, color: const Color(0xE6FFFFFF), height: 1.3)),
+        ),
+    ]);
+  }
+}
+
+/// Apple TV pill button: see-through at rest, solid white with dark text when focused.
+class PillButton extends StatelessWidget {
+  final String label;
+  final IconData? icon;
+  final VoidCallback onPressed;
+  final bool primary;
+  final bool autofocus;
+  final FocusNode? focusNode;
+  final ValueChanged<bool>? onFocusChange;
+
+  const PillButton(this.label,
+      {super.key,
+      required this.onPressed,
+      this.icon,
+      this.primary = false,
+      this.autofocus = false,
+      this.focusNode,
+      this.onFocusChange});
+
+  @override
+  Widget build(BuildContext context) {
+    final h = Reel.h(context);
+    return Pressable(
+      autofocus: autofocus,
+      focusNode: focusNode,
+      onPressed: onPressed,
+      onFocusChange: onFocusChange,
+      scrollAlignment: 0.0,
+      builder: (c, f) => AnimatedScale(
+        scale: f ? 1.08 : 1,
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOut,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: EdgeInsets.symmetric(horizontal: h * 0.03, vertical: h * 0.016),
+          constraints: BoxConstraints(minWidth: primary ? h * 0.18 : 0),
+          decoration: BoxDecoration(
+            color: f ? Colors.white : (primary ? const Color(0x4DFFFFFF) : Reel.fill),
+            borderRadius: BorderRadius.circular(h),
+            boxShadow: f ? [BoxShadow(color: Colors.black.withOpacity(0.45), blurRadius: h * 0.03)] : null,
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, mainAxisAlignment: MainAxisAlignment.center, children: [
+            if (icon != null) ...[
+              Icon(icon, size: h * 0.03, color: f ? Colors.black : Colors.white),
+              SizedBox(width: h * 0.01),
+            ],
+            Text(label, style: reelText(h * 0.024, weight: FontWeight.w600, color: f ? Colors.black : Colors.white)),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+/// A round icon-only button that sits beside the pill buttons (same height).
+class IconPill extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onPressed;
+  final FocusNode? focusNode;
+
+  const IconPill(this.icon, {super.key, required this.onPressed, this.focusNode});
+
+  @override
+  Widget build(BuildContext context) {
+    final h = Reel.h(context);
+    final d = h * 0.03 + h * 0.016 * 2; // matches a PillButton's height
+    return Pressable(
+      focusNode: focusNode,
+      onPressed: onPressed,
+      scrollAlignment: 0.0,
+      builder: (c, f) => AnimatedScale(
+        scale: f ? 1.08 : 1,
+        duration: const Duration(milliseconds: 160),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          width: d,
+          height: d,
+          decoration: BoxDecoration(
+            color: f ? Colors.white : Reel.fill,
+            shape: BoxShape.circle,
+            boxShadow: f ? [BoxShadow(color: Colors.black.withOpacity(0.45), blurRadius: h * 0.03)] : null,
+          ),
+          child: Icon(icon, size: h * 0.028, color: f ? Colors.black : Colors.white),
+        ),
+      ),
+    );
+  }
+}
+
+/// A poster (or wide still) that lifts and catches the light when focused, with the title underneath.
+class PosterCard extends StatelessWidget {
+  final PlexItem item;
+  final double width;
+  final double height;
+  final bool landscape;
+  final bool showTitle;
+  final String? subtitle;
+  final VoidCallback onPressed;
+  final VoidCallback? onLongPress;
+  final ValueChanged<bool>? onFocusChange;
+  final bool autofocus;
+  final bool preview;
+
+  /// Height of the title + subtitle under a card. Fixed, so rows can be sized exactly.
+  static double textBlock(double h) => h * 0.064;
+
+  const PosterCard({
+    super.key,
+    required this.item,
+    required this.width,
+    required this.height,
+    required this.onPressed,
+    this.landscape = false,
+    this.showTitle = false,
+    this.subtitle,
+    this.onLongPress,
+    this.onFocusChange,
+    this.autofocus = false,
+    this.preview = true,
+  });
+
+  static String? _imageOf(PlexItem item, bool landscape) {
+    if (!landscape) return item.poster;
+    if ((item.type == 'movie' || item.type == 'show') && item.art != null) return item.art;
+    return item.thumb ?? item.poster;
+  }
+
+  /// Sizes rounded up to steps of 40 px, so the same picture in two rows is only fetched once.
+  static int step(double v, double dpr) => ((v * dpr) / 40).ceil() * 40;
+
+  /// Asks for at most 1.25x the on-screen size: sharp enough, and far fewer bytes on slow Wi-Fi.
+  static String? imageUrl(PlexItem item, double width, double height, bool landscape, double dpr) {
+    // One fixed size per kind of card, whatever the window size, so every poster is saved once and
+    // found again (and can be saved ahead of time by Warmup).
+    return landscape ? Plex.img(_imageOf(item, true), 560, 315) : Plex.img(_imageOf(item, false), 400, 600);
+  }
+
+  String get _sub {
+    if (subtitle != null) return subtitle!;
+    final parts = <String>[];
+    if (item.type == 'genre') return '';
+    if (item.isSeerr) {
+      if (item.year > 0) parts.add('${item.year}');
+      if (item.note != null) parts.add(item.note!);
+      return parts.join(' · ');
+    }
+    if (item.type == 'episode') {
+      parts.add('${item.parentIndex > 0 ? 'S${item.parentIndex}, ' : ''}E${item.index}');
+    } else if (item.year > 0) {
+      parts.add('${item.year}');
+    }
+    if (item.viewOffset > 0 && item.duration > 0) {
+      final left = ((item.duration - item.viewOffset) / 60000).ceil();
+      parts.add(left >= 60 ? '${left ~/ 60} hr ${left % 60} min left' : '$left min left');
+    }
+    return parts.join(' · ');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final h = Reel.h(context);
+    final radius = BorderRadius.circular(h * 0.014);
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final url = imageUrl(item, width, height, landscape, dpr);
+    final progress = item.viewOffset > 0 && item.duration > 0 ? item.viewOffset / item.duration : 0.0;
+    final textOn = landscape || showTitle;
+    final tb = textBlock(h);
+    return Padding(
+      padding: EdgeInsets.all(h * 0.011),
+      child: Pressable(
+        autofocus: autofocus,
+        onPressed: onPressed,
+        onLongPress: onLongPress,
+        onFocusChange: onFocusChange,
+        builder: (c, f) {
+          // Only the focused card (or the one whose preview is open on another page) listens for the
+          // preview; every other card stays put, so moving around never rebuilds the whole screen.
+          if (f && preview) Preview.heroOwner = c;
+          final heldNow = preview && Preview.held(item.key) && identical(Preview.heroOwner, c);
+          final live = preview && (f || heldNow);
+          Widget card(String? playing) {
+          final held = heldNow;
+          // While its preview plays, a poster card widens to 16:9 so the video fits.
+          final wide = preview && (f || held) && playing == item.key;
+          final cw = wide && !landscape ? height * 16 / 9 : width;
+          // Only the width animates; heights are set straight away so nothing ever overflows.
+          return SizedBox(
+          height: height + (textOn ? tb : 0),
+          child: AnimatedContainer(
+          duration: const Duration(milliseconds: 320),
+          curve: Curves.easeOutCubic,
+          width: cw,
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            AnimatedScale(
+              scale: f ? (wide ? 1.06 : 1.1) : 1,
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              child: SizedBox(
+                height: height,
+                child: AnimatedContainer(
+                duration: const Duration(milliseconds: 320),
+                curve: Curves.easeOutCubic,
+                width: cw,
+                decoration: BoxDecoration(
+                  borderRadius: radius,
+                  color: Reel.card,
+                  boxShadow: f
+                      ? [BoxShadow(color: const Color(0x99000000), blurRadius: h * 0.022, offset: Offset(0, h * 0.01))]
+                      : null,
+                ),
+                child: ClipRRect(
+                  borderRadius: radius,
+                  child: Stack(fit: StackFit.expand, children: [
+                    if (url != null) NetImage(url, fade: false, decodeWidth: step(width, dpr.clamp(1.0, 1.25).toDouble())),
+                    if (live) PreviewVideo.hero(item.key, active: true),
+                    if (progress > 0)
+                      Positioned(
+                        left: width * 0.06,
+                        right: width * 0.06,
+                        bottom: height * 0.07,
+                        child: Container(
+                          height: (h * 0.0055).clamp(3.0, 8.0),
+                          decoration: BoxDecoration(color: const Color(0x59FFFFFF), borderRadius: BorderRadius.circular(4)),
+                          alignment: Alignment.centerLeft,
+                          child: FractionallySizedBox(
+                            widthFactor: progress.clamp(0.02, 1.0),
+                            child: Container(
+                                decoration:
+                                    BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(4))),
+                          ),
+                        ),
+                      ),
+                    // the light sheen on a focused card
+                    if (f)
+                      const DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [Color(0x2EFFFFFF), Color(0x08FFFFFF), Color(0x00FFFFFF)],
+                          ),
+                        ),
+                      ),
+                  ]),
+                ),
+              ),
+              ),
+            ),
+            if (textOn)
+              // Slides down a little when the card grows, without changing the layout size.
+              AnimatedSlide(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOutCubic,
+                offset: Offset(0, f ? (height * 0.05) / tb : 0),
+                child: SizedBox(
+                  height: tb,
+                  child: Padding(
+                    padding: EdgeInsets.only(top: h * 0.012),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      SizedBox(
+                        height: h * 0.028,
+                        child: Text(
+                          item.type == 'episode' && !landscape ? item.title : item.displayTitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: reelText(h * 0.021,
+                              weight: FontWeight.w500, color: f ? Colors.white : Colors.white70, height: 1.25),
+                        ),
+                      ),
+                      if (_sub.isNotEmpty)
+                        SizedBox(
+                          height: h * 0.024,
+                          child: Text(_sub,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: reelText(h * 0.018, color: Reel.text2, height: 1.25)),
+                        ),
+                    ]),
+                  ),
+                ),
+              ),
+          ]),
+          ),
+        );
+          }
+
+          return live
+              ? ValueListenableBuilder<String?>(
+                  valueListenable: Preview.showing, builder: (c2, playing, _) => card(playing))
+              : card(null);
+        },
+      ),
+    );
+  }
+}
+
+/// A titled horizontal row of cards.
+class CardRow extends StatelessWidget {
+  final String title;
+  final List<PlexItem> items;
+  final bool landscape;
+  final bool titles;
+  final void Function(PlexItem) onPressed;
+  final void Function(PlexItem)? onFocused;
+  final void Function(PlexItem)? onLongPress;
+  final bool previews;
+  final bool autofocusFirst;
+  final Duration previewDelay;
+
+  static final Expando<bool> _warmed = Expando();
+
+  const CardRow({
+    super.key,
+    required this.title,
+    required this.items,
+    required this.onPressed,
+    this.onFocused,
+    this.onLongPress,
+    this.previews = true,
+    this.autofocusFirst = false,
+    this.previewDelay = const Duration(milliseconds: 900),
+    this.landscape = false,
+    this.titles = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final h = Reel.h(context);
+    final w = Reel.w(context);
+    final ch = landscape ? h * 0.185 : h * 0.28;
+    final cw = landscape ? ch * 16 / 9 : ch * 2 / 3;
+    final textH = (landscape || titles) ? PosterCard.textBlock(h) : 0.0;
+    final padV = ch * 0.07; // room above and below for the 1.1x grow and its shadow
+    // Fetch the whole row's pictures quietly in the background (once per list).
+    if (_warmed[items] != true) {
+      _warmed[items] = true;
+      final dpr = MediaQuery.devicePixelRatioOf(context);
+      // just the first couple of screens' worth: more would clog a slow connection
+      ImageLoader.prefetch(items.take(20).map((it) => PosterCard.imageUrl(it, cw, ch, landscape, dpr)));
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Padding(
+        padding: EdgeInsets.only(left: w * 0.045 + h * 0.011, top: h * 0.03),
+        child: Text(title, style: reelText(h * 0.03, weight: FontWeight.w600)),
+      ),
+      SizedBox(
+        height: ch + textH + h * 0.022 + padV * 2 + 2,
+        child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            clipBehavior: Clip.none,
+            // build well ahead so moving right with the keys always finds the next card
+            cacheExtent: w * 1.5,
+            padding: EdgeInsets.symmetric(horizontal: w * 0.045, vertical: padV),
+            itemCount: items.length,
+            itemBuilder: (c, i) => Align(
+              alignment: Alignment.topCenter,
+              child: PosterCard(
+                item: items[i],
+                width: cw,
+                height: ch,
+                landscape: landscape,
+                showTitle: titles,
+                preview: previews,
+                autofocus: autofocusFirst && i == 0,
+                onPressed: () {
+                  if (previews) Preview.handOff();
+                  onPressed(items[i]);
+                },
+                // hold Enter: just the preview, full screen
+                onLongPress: onLongPress == null
+                    ? null
+                    : () {
+                        Preview.handOff();
+                        onLongPress!(items[i]);
+                      },
+                onFocusChange: (f) {
+                  if (f) {
+                    onFocused?.call(items[i]);
+                    if (previews) Preview.focus(items[i], delay: previewDelay);
+                  } else if (previews) {
+                    Preview.blur(items[i]);
+                  }
+                },
+              ),
+            ),
+          ),
+      ),
+    ]);
+  }
+}

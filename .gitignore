@@ -1,0 +1,10 @@
+build/
+.dart_tool/
+.gradle/
+.idea/
+*.apk
+*.aab
+local.properties
+*.log
+reel-log*.txt
+plex-log.txt
