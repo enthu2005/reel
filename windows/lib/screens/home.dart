@@ -297,6 +297,7 @@ class _HomeScreenState extends State<HomeScreen> {
         because.add(
             _Row('Because you watched ${seeds[i].value}', fresh, titles: true));
     }
+    because.addAll(await _peopleRows(seeds.take(2).toList(), secs));
     // genres, biggest libraries first
     final genreRows = <_Row>[];
     for (final s in secs) {
@@ -348,6 +349,44 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// "Because you watched X · More with <actor>" and "... · Directed by <director>" rows.
+  Future<List<_Row>> _peopleRows(
+      List<MapEntry<String, String>> seeds, List<PlexSection> secs) async {
+    final out = <_Row>[];
+    final usedPeople = <String>{};
+    for (final seed in seeds) {
+      try {
+        final m = await Plex.metadata(seed.key);
+        final people = <MapEntry<String, CastMember>>[
+          if (m.cast.isNotEmpty) MapEntry('More with', m.cast.first),
+          if (m.directors.isNotEmpty) MapEntry('Directed by', m.directors.first),
+        ];
+        for (final p in people) {
+          if (!usedPeople.add(p.value.name)) continue;
+          final lists = await Future.wait([
+            for (final s
+                in secs.where((s) => s.type == 'movie' || s.type == 'show'))
+              Plex.withPerson(s.key, p.value.filter)
+                  .catchError((_) => <PlexItem>[]),
+          ]);
+          final seen = <String>{m.key};
+          final found = <PlexItem>[
+            for (final l in lists)
+              for (final x in l)
+                if (seen.add(x.key)) x
+          ]..sort((a, b) => b.year.compareTo(a.year));
+          if (found.length >= 4) {
+            out.add(_Row(
+                'Because you watched ${seed.value} · ${p.key} ${p.value.name}',
+                found.take(20).toList(),
+                titles: true));
+          }
+        }
+      } catch (_) {}
+    }
+    return out;
+  }
+
   /// "Because you watched…" rows, added once the page is already up.
   Future<void> _addSpotlight(List<_Row> rows, List<PlexSection> secs) async {
     Future<List<PlexItem>> safe(Future<List<PlexItem>> f) =>
@@ -385,33 +424,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
     rows.addAll(because);
 
-    // "More with …" / "Directed by …" from the last thing you watched
-    if (seedsUsed.isNotEmpty) {
-      try {
-        final seed = await Plex.metadata(seedsUsed.first.key);
-        final people = <MapEntry<String, CastMember>>[
-          if (seed.cast.isNotEmpty) MapEntry('More with', seed.cast.first),
-          if (seed.directors.isNotEmpty)
-            MapEntry('Directed by', seed.directors.first),
-        ];
-        for (final p in people) {
-          final lists = await Future.wait([
-            for (final s in secs.where((s) => s.type == 'movie' || s.type == 'show'))
-              safe(Plex.withPerson(s.key, p.value.filter)),
-          ]);
-          final seen = <String>{seed.key};
-          final found = <PlexItem>[
-            for (final l in lists)
-              for (final x in l)
-                if (seen.add(x.key)) x
-          ]..sort((a, b) => b.year.compareTo(a.year));
-          if (found.length >= 4) {
-            rows.add(_Row('${p.key} ${p.value.name}', found.take(20).toList(),
-                titles: true));
-          }
-        }
-      } catch (_) {}
-    }
+    // actor / director rows from the last things you watched
+    rows.addAll(await _peopleRows(seedsUsed.take(2).toList(), secs));
   }
 
   Future<List<_Row>> _discoverRows() async {

@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.enthu" "\0"
-            VALUE "FileDescription", "reel" "\0"
+            VALUE "FileDescription", "Reel" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "reel" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 com.enthu. All rights reserved." "\0"
             VALUE "OriginalFilename", "reel.exe" "\0"
-            VALUE "ProductName", "reel" "\0"
+            VALUE "ProductName", "Reel" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

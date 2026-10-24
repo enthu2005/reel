@@ -714,7 +714,8 @@ class _DetailScreenState extends State<DetailScreen> {
         onPressed: () {
           Preview.stop();
           Navigator.of(context)
-              .push(fadeRoute(PersonScreen(name: c.name, filter: c.filter)));
+              .push(fadeRoute(PersonScreen(
+                  name: c.name, filter: c.filter, thumb: c.thumb)));
         },
         builder: (ctx, f) => SizedBox(
           width: h * 0.17,
