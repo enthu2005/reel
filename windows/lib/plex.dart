@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'dart:isolate';
 
 import 'package:http/http.dart' as http;
@@ -38,7 +39,9 @@ class PlexStream {
         selected = o['selected'] == true,
         forced = o['forced'] == true,
         key = o['key']?.toString(),
-        dovi = o['DOVIPresent'] == true || o['DOVIPresent'] == 1 || o['DOVIPresent'] == '1',
+        dovi = o['DOVIPresent'] == true ||
+            o['DOVIPresent'] == 1 ||
+            o['DOVIPresent'] == '1',
         colorTrc = (o['colorTrc'] ?? '').toString(),
         title = (o['title'] ?? '').toString();
 
@@ -47,7 +50,10 @@ class PlexStream {
     final c = codec.toLowerCase();
     final p = '$profile $displayTitle $extendedTitle'.toLowerCase();
     if (c == 'truehd') return 'truehd';
-    if (c == 'dca' || c == 'dts') return p.contains('ma') || p.contains('hra') || p.contains('hd') ? 'dtshd' : 'dts';
+    if (c == 'dca' || c == 'dts')
+      return p.contains('ma') || p.contains('hra') || p.contains('hd')
+          ? 'dtshd'
+          : 'dts';
     if (c == 'eac3') return 'eac3';
     if (c == 'ac3') return 'ac3';
     return 'other';
@@ -101,10 +107,13 @@ class PlexItem {
   int viewCount = 0;
   int index = 0;
   int parentIndex = 0;
-  double aspect = 0; // the film's shape, e.g. 2.39 for a wide film (0 = unknown)
+  double aspect =
+      0; // the film's shape, e.g. 2.39 for a wide film (0 = unknown)
   String? partKey;
+  String? librarySectionKey;
   String videoRes = '';
-  String? note; // e.g. a Seerr status ("Requested", "Available") shown under the card
+  String?
+      note; // e.g. a Seerr status ("Requested", "Available") shown under the card
   String mAudioCodec = '';
   int mAudioChannels = 0;
   String mVideoProfile = '';
@@ -114,11 +123,14 @@ class PlexItem {
   final List<List<int>> credits = [];
   final List<String> genres = [];
 
-  bool get isPlayable => (type == 'movie' || type == 'episode') && !key.startsWith('seerr');
+  bool get isPlayable =>
+      (type == 'movie' || type == 'episode') && !key.startsWith('seerr');
   bool get isSeerr => key.startsWith('seerr');
   String? get heroArt => art ?? gpArt;
-  String? get poster => (type == 'episode' && gpThumb != null) ? gpThumb : thumb;
-  String get displayTitle => (type == 'episode' && gpTitle != null) ? gpTitle! : title;
+  String? get poster =>
+      (type == 'episode' && gpThumb != null) ? gpThumb : thumb;
+  String get displayTitle =>
+      (type == 'episode' && gpTitle != null) ? gpTitle! : title;
 
   /// The chosen sound track is TrueHD / Atmos or DTS-HD (lossless).
   bool get hasLosslessAudio {
@@ -127,10 +139,12 @@ class PlexItem {
     final s = a.firstWhere((x) => x.selected, orElse: () => a.first);
     final c = s.codec.toLowerCase();
     final p = '${s.profile} ${s.displayTitle} ${s.extendedTitle}'.toLowerCase();
-    return c == 'truehd' || (c == 'dca' || c == 'dts') && (p.contains('ma') || p.contains('hd'));
+    return c == 'truehd' ||
+        (c == 'dca' || c == 'dts') && (p.contains('ma') || p.contains('hd'));
   }
 
-  List<PlexStream> streamsOf(int t) => streams.where((s) => s.type == t).toList();
+  List<PlexStream> streamsOf(int t) =>
+      streams.where((s) => s.type == t).toList();
 
   /// Picture and sound labels for the title page: 4K, Dolby Vision, HDR10, Dolby Atmos, DTS-HD MA, 5.1, CC.
   /// Full details need the title's own metadata (streams); list items give a rougher answer.
@@ -164,10 +178,13 @@ class PlexItem {
 
     final a = streamsOf(2);
     PlexStream? s;
-    if (a.isNotEmpty) s = a.firstWhere((x) => x.selected, orElse: () => a.first);
+    if (a.isNotEmpty)
+      s = a.firstWhere((x) => x.selected, orElse: () => a.first);
     final codec = (s?.codec ?? mAudioCodec).toLowerCase();
     final profile = (s?.profile ?? '').toLowerCase();
-    final at = '${s?.displayTitle ?? ''} ${s?.extendedTitle ?? ''} ${s?.title ?? ''}'.toLowerCase();
+    final at =
+        '${s?.displayTitle ?? ''} ${s?.extendedTitle ?? ''} ${s?.title ?? ''}'
+            .toLowerCase();
     final ch = s?.channels ?? mAudioChannels;
     String? sound;
     if (at.contains('atmos')) {
@@ -181,7 +198,9 @@ class PlexItem {
     } else if (codec == 'dca' || codec == 'dts' || codec.startsWith('dts')) {
       if (profile == 'x' || at.contains('dts:x') || at.contains('dts-x')) {
         sound = 'DTS:X';
-      } else if (profile == 'ma' || at.contains('dts-hd ma') || at.contains('dts-hd master')) {
+      } else if (profile == 'ma' ||
+          at.contains('dts-hd ma') ||
+          at.contains('dts-hd master')) {
         sound = 'DTS-HD MA';
       } else if (profile == 'hra' || at.contains('dts-hd hra')) {
         sound = 'DTS-HD HRA';
@@ -225,7 +244,8 @@ class PlexItem {
         p.add(type);
     }
     if (type != 'episode' && year > 0) p.add('$year');
-    if (genres.isNotEmpty && type != 'episode') p.add(genres.take(2).join(', '));
+    if (genres.isNotEmpty && type != 'episode')
+      p.add(genres.take(2).join(', '));
     if (contentRating.isNotEmpty) p.add(contentRating);
     if (duration > 0 && isPlayable) p.add(formatDuration(duration));
     if (note != null) p.add(note!);
@@ -246,6 +266,7 @@ class PlexItem {
     i.gpKey = m['grandparentRatingKey']?.toString();
     i.gpThumb = m['grandparentThumb']?.toString();
     i.gpArt = m['grandparentArt']?.toString();
+    i.librarySectionKey = m['librarySectionID']?.toString();
     i.duration = _int(m['duration']);
     i.viewOffset = _int(m['viewOffset']);
     i.viewCount = _int(m['viewCount']);
@@ -260,7 +281,8 @@ class PlexItem {
       final name = (ro['tag'] ?? '').toString();
       final filter = (ro['filter'] ?? '').toString();
       if (name.isNotEmpty) {
-        i.cast.add(CastMember(name, (ro['role'] ?? '').toString(), ro['thumb']?.toString(), filter));
+        i.cast.add(CastMember(name, (ro['role'] ?? '').toString(),
+            ro['thumb']?.toString(), filter));
       }
     }
     for (final mk in (m['Marker'] as List? ?? const [])) {
@@ -271,7 +293,8 @@ class PlexItem {
     }
     for (final im in (m['Image'] as List? ?? const [])) {
       final o = im as Map;
-      if (o['type'] == 'clearLogo' && o['url'] != null) i.logo = o['url'].toString();
+      if (o['type'] == 'clearLogo' && o['url'] != null)
+        i.logo = o['url'].toString();
     }
     final media = m['Media'] as List?;
     if (media != null && media.isNotEmpty) {
@@ -290,7 +313,8 @@ class PlexItem {
         final p0 = parts.first as Map;
         i.partKey = p0['key']?.toString();
         for (final s in (p0['Stream'] as List? ?? const [])) {
-          i.streams.add(PlexStream.fromJson(Map<String, dynamic>.from(s as Map)));
+          i.streams
+              .add(PlexStream.fromJson(Map<String, dynamic>.from(s as Map)));
         }
       }
     }
@@ -314,6 +338,20 @@ class PlexSection {
   final List<String> paths; // the folders on the server this library reads from
 
   PlexSection(this.key, this.type, this.title, [this.paths = const []]);
+
+  bool get hiddenFromHome => switch (title.trim().toLowerCase()) {
+        'demo' || 'tamil comedy' || 'tamil music videos' => true,
+        _ => false,
+      };
+}
+
+class PlexHomeUser {
+  final String id;
+  final String title;
+  final String? thumb;
+  final bool admin;
+
+  PlexHomeUser(this.id, this.title, this.thumb, this.admin);
 }
 
 /// A quick look at a library: how many titles, and the newest one (for its picture).
@@ -339,8 +377,10 @@ String formatDuration(int ms) {
 /// Talks to plex.tv (sign-in) and your Plex server.
 class Plex {
   static final http.Client _client = makeClient();
+  static String? _sessionToken;
+  static String? _sessionOwnerToken;
 
-  static String? get token => Prefs.token;
+  static String? get token => _sessionToken ?? Prefs.token;
   static String? get server => Prefs.server;
   static String? get serverName => Prefs.serverName;
   static bool get isReady => token != null && server != null;
@@ -362,7 +402,8 @@ class Plex {
         if (token != null) 'X-Plex-Token': token!,
       };
 
-  static Future<String> _send(String method, String url, {Duration timeout = const Duration(seconds: 15)}) async {
+  static Future<String> _send(String method, String url,
+      {Duration timeout = const Duration(seconds: 15)}) async {
     final req = http.Request(method, Uri.parse(url));
     req.headers.addAll(headers);
     final res = await _client.send(req).timeout(timeout);
@@ -383,7 +424,8 @@ class Plex {
 
   /// Starts a sign-in: returns {id, code}. The user enters the code at plex.tv/link.
   static Future<Map<String, dynamic>> createPin() async {
-    final body = await _send('POST', 'https://plex.tv/api/v2/pins?strong=false');
+    final body =
+        await _send('POST', 'https://plex.tv/api/v2/pins?strong=false');
     return Map<String, dynamic>.from(jsonDecode(body) as Map);
   }
 
@@ -396,7 +438,8 @@ class Plex {
 
   /// Picks your own server first, preferring local addresses, then remote, then relay.
   static Future<void> findServer() async {
-    final body = await _send('GET', 'https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1');
+    final body = await _send('GET',
+        'https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1');
     final res = jsonDecode(body) as List;
     final candidates = <List<String>>[]; // [uri, name, kind, 'mine'|'shared']
     for (final pass in [true, false]) {
@@ -418,7 +461,8 @@ class Plex {
             final addr = (c['address'] ?? '').toString();
             if (addr.isNotEmpty) {
               local.add('http://$addr:${c['port'] ?? 32400}');
-              local.add('https://$addr:${c['port'] ?? 32400}'); // by IP: works even if your router blocks plex.direct names
+              local.add(
+                  'https://$addr:${c['port'] ?? 32400}'); // by IP: works even if your router blocks plex.direct names
             }
             local.add(uri);
           } else {
@@ -437,7 +481,8 @@ class Plex {
         }
       }
     }
-    if (candidates.isEmpty) throw Exception('No Plex server found on this account');
+    if (candidates.isEmpty)
+      throw Exception('No Plex server found on this account');
 
     // Try them all at once, then take the best (earliest in the list) that answered.
     final ok = List<bool>.filled(candidates.length, false);
@@ -445,7 +490,8 @@ class Plex {
     await Future.wait(List.generate(candidates.length, (i) async {
       final sw = Stopwatch()..start();
       try {
-        await _send('GET', '${candidates[i][0]}/identity', timeout: const Duration(seconds: 5));
+        await _send('GET', '${candidates[i][0]}/identity',
+            timeout: const Duration(seconds: 5));
         ok[i] = true;
         ms[i] = sw.elapsedMilliseconds;
       } catch (_) {}
@@ -470,7 +516,8 @@ class Plex {
         best = i;
         continue;
       }
-      final mineA = candidates[best][3] == 'mine', mineB = candidates[i][3] == 'mine';
+      final mineA = candidates[best][3] == 'mine',
+          mineB = candidates[i][3] == 'mine';
       if (mineA != mineB) {
         if (mineB) best = i;
         continue;
@@ -480,7 +527,10 @@ class Plex {
       if (b < a || (b == a && ms[i] < ms[best])) best = i;
     }
     // Remember which servers were found, so Settings can offer the choice.
-    Prefs.serverList = {for (var i = 0; i < candidates.length; i++) if (ok[i]) candidates[i][1]}.join('|');
+    Prefs.serverList = {
+      for (var i = 0; i < candidates.length; i++)
+        if (ok[i]) candidates[i][1]
+    }.join('|');
     if (best >= 0) {
       Prefs.server = candidates[best][0];
       Prefs.serverName = candidates[best][1];
@@ -490,10 +540,63 @@ class Plex {
     throw Exception('Found your server but none of its addresses answered');
   }
 
-  static void signIn(String t) => Prefs.token = t;
+  static void signIn(String t) {
+    _sessionOwnerToken = t;
+    _sessionToken = t;
+    if (Prefs.staySignedIn) {
+      Prefs.ownerToken = t;
+      Prefs.token = t;
+    } else {
+      Prefs.ownerToken = null;
+      Prefs.token = null;
+    }
+  }
+
+  static Future<List<PlexHomeUser>> homeUsers() async {
+    final owner = _sessionOwnerToken ?? Prefs.ownerToken ?? token;
+    if (owner == null) return [];
+    final req = http.Request(
+        'GET',
+        Uri.parse(
+            'https://plex.tv/api/v2/home/users?X-Plex-Client-Identifier=${Uri.encodeQueryComponent(Prefs.clientId)}&X-Plex-Token=${Uri.encodeQueryComponent(owner)}'));
+    req.headers.addAll({...headers, 'X-Plex-Token': owner});
+    final res = await _client.send(req).timeout(const Duration(seconds: 15));
+    final body = await res.stream.bytesToString();
+    if (res.statusCode >= 400) throw Exception('HTTP ${res.statusCode}');
+    final decoded = jsonDecode(body);
+    final raw = decoded is List
+        ? decoded
+        : (decoded is Map ? (decoded['users'] ?? decoded['User'] ?? []) : []);
+    return [
+      for (final value in raw is List ? raw : const [])
+        if (value is Map)
+          PlexHomeUser(
+              '${value['id'] ?? value['uuid'] ?? ''}',
+              '${value['title'] ?? value['username'] ?? 'Plex user'}',
+              value['thumb']?.toString(),
+              value['admin'] == true || value['admin'] == '1')
+    ];
+  }
+
+  static Future<void> switchHomeUser(PlexHomeUser user) async {
+    final owner = _sessionOwnerToken ?? Prefs.ownerToken ?? token;
+    if (owner == null) throw Exception('Not signed in');
+    final body = await _send('POST',
+        'https://plex.tv/api/home/users/${Uri.encodeComponent(user.id)}/switch?X-Plex-Token=${Uri.encodeQueryComponent(owner)}');
+    final decoded = jsonDecode(body);
+    final selectedToken =
+        decoded is Map ? decoded['authToken']?.toString() : null;
+    if (selectedToken == null || selectedToken.isEmpty)
+      throw Exception('Plex did not return a profile token');
+    _sessionToken = selectedToken;
+    if (Prefs.staySignedIn) Prefs.token = selectedToken;
+  }
 
   static void signOut() {
+    _sessionToken = null;
+    _sessionOwnerToken = null;
     Prefs.token = null;
+    Prefs.ownerToken = null;
     Prefs.server = null;
     Prefs.serverName = null;
   }
@@ -508,14 +611,18 @@ class Plex {
   }
 
   static List<PlexItem> _parseItems(String body) {
-    final mc = Map<String, dynamic>.from((jsonDecode(body) as Map)['MediaContainer'] as Map);
+    final mc = Map<String, dynamic>.from(
+        (jsonDecode(body) as Map)['MediaContainer'] as Map);
     final list = (mc['Metadata'] ?? mc['Directory']) as List?;
     if (list == null) return [];
-    return list.map((e) => PlexItem.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+    return list
+        .map((e) => PlexItem.fromJson(Map<String, dynamic>.from(e as Map)))
+        .toList();
   }
 
   static Future<PlexItem> metadata(String ratingKey) async {
-    final l = await items('/library/metadata/$ratingKey?includeMarkers=1&includeChapters=1');
+    final l = await items(
+        '/library/metadata/$ratingKey?includeMarkers=1&includeChapters=1');
     if (l.isEmpty) throw Exception('Not found');
     return l.first;
   }
@@ -526,15 +633,19 @@ class Plex {
     return d.map((e) {
       final o = e as Map;
       final paths = [
-        for (final l in (o['Location'] as List? ?? const [])) (l as Map)['path'].toString(),
+        for (final l in (o['Location'] as List? ?? const []))
+          (l as Map)['path'].toString(),
       ];
-      return PlexSection((o['key'] ?? '').toString(), (o['type'] ?? '').toString(), (o['title'] ?? '').toString(), paths);
+      return PlexSection((o['key'] ?? '').toString(),
+          (o['type'] ?? '').toString(), (o['title'] ?? '').toString(), paths);
     }).toList();
   }
 
   /// The genres in a library, biggest first-ish, as [key, title] pairs.
   static Future<List<List<String>>> genresOf(String sectionKey) async {
-    final mc = (await _get('/library/sections/$sectionKey/genre'))['MediaContainer'] as Map;
+    final mc =
+        (await _get('/library/sections/$sectionKey/genre'))['MediaContainer']
+            as Map;
     final out = <List<String>>[];
     for (final d in (mc['Directory'] as List? ?? const [])) {
       final o = d as Map;
@@ -542,7 +653,10 @@ class Plex {
       final fast = (o['fastKey'] ?? '').toString();
       final key = (o['key'] ?? '').toString();
       if (title.isEmpty || (fast.isEmpty && key.isEmpty)) continue;
-      out.add([fast.isNotEmpty ? fast : '/library/sections/$sectionKey/all?genre=$key', title]);
+      out.add([
+        fast.isNotEmpty ? fast : '/library/sections/$sectionKey/all?genre=$key',
+        title
+      ]);
     }
     return out;
   }
@@ -555,9 +669,11 @@ class Plex {
       items(paged('$path&sort=audienceRating:desc', count));
 
   /// Subtitles Plex can fetch from the internet for this title.
-  static Future<List<SubtitleFind>> searchSubtitles(String ratingKey, String language) async {
+  static Future<List<SubtitleFind>> searchSubtitles(
+      String ratingKey, String language) async {
     final mc = (await _get('/library/metadata/$ratingKey/subtitles'
-        '?language=$language&hearingImpaired=0&forced=0'))['MediaContainer'] as Map;
+            '?language=$language&hearingImpaired=0&forced=0'))['MediaContainer']
+        as Map;
     final out = <SubtitleFind>[];
     for (final s in (mc['Stream'] as List? ?? const [])) {
       final o = s as Map;
@@ -574,32 +690,47 @@ class Plex {
   }
 
   /// Tells the server to fetch one of those and attach it to the title.
-  static Future<void> downloadSubtitle(String ratingKey, String key) =>
-      _send('PUT', '$server/library/metadata/$ratingKey/subtitles?key=${Uri.encodeQueryComponent(key)}',
-          timeout: const Duration(seconds: 60));
+  static Future<void> downloadSubtitle(String ratingKey, String key) => _send(
+      'PUT',
+      '$server/library/metadata/$ratingKey/subtitles?key=${Uri.encodeQueryComponent(key)}',
+      timeout: const Duration(seconds: 60));
 
   static Future<SectionPeek> sectionPeek(String key) async {
-    final mc = (await _get(paged('/library/sections/$key/all?sort=addedAt:desc', 1)))['MediaContainer'] as Map;
+    final mc =
+        (await _get(paged('/library/sections/$key/all?sort=addedAt:desc', 1)))[
+            'MediaContainer'] as Map;
     final list = mc['Metadata'] as List?;
-    final latest = (list == null || list.isEmpty) ? null : PlexItem.fromJson(Map<String, dynamic>.from(list.first as Map));
-    return SectionPeek(int.tryParse('${mc['totalSize'] ?? mc['size'] ?? 0}') ?? 0, latest);
+    final latest = (list == null || list.isEmpty)
+        ? null
+        : PlexItem.fromJson(Map<String, dynamic>.from(list.first as Map));
+    return SectionPeek(
+        int.tryParse('${mc['totalSize'] ?? mc['size'] ?? 0}') ?? 0, latest);
   }
 
   static Future<List<PlexItem>> onDeck() => items(paged('/library/onDeck', 20));
 
-  static Future<List<PlexItem>> recentlyAdded(String sectionKey, {int count = 40}) =>
-      items(paged('/library/sections/$sectionKey/all?sort=addedAt:desc', count));
+  static Future<List<PlexItem>> recentlyAdded(String sectionKey,
+          {int count = 40}) =>
+      items(
+          paged('/library/sections/$sectionKey/all?sort=addedAt:desc', count));
 
-  static Future<List<PlexItem>> recentlyReleased(String sectionKey, {int count = 20}) =>
-      items(paged('/library/sections/$sectionKey/all?sort=originallyAvailableAt:desc', count));
+  static Future<List<PlexItem>> recentlyReleased(String sectionKey,
+          {int count = 20}) =>
+      items(paged(
+          '/library/sections/$sectionKey/all?sort=originallyAvailableAt:desc',
+          count));
 
   /// Films you've finished, most recently watched first.
-  static Future<List<PlexItem>> recentlyWatched(String sectionKey, {int count = 3}) =>
-      items(paged('/library/sections/$sectionKey/all?sort=lastViewedAt:desc&unwatched=0', count));
+  static Future<List<PlexItem>> recentlyWatched(String sectionKey,
+          {int count = 3}) =>
+      items(paged(
+          '/library/sections/$sectionKey/all?sort=lastViewedAt:desc&unwatched=0',
+          count));
 
   /// "More like this": what Plex suggests next to a film or show.
   static Future<List<PlexItem>> related(String ratingKey) async {
-    final mc = (await _get('/library/metadata/$ratingKey/related?count=24'))['MediaContainer'] as Map;
+    final mc = (await _get('/library/metadata/$ratingKey/related?count=24'))[
+        'MediaContainer'] as Map;
     for (final h in (mc['Hub'] as List? ?? const [])) {
       final hub = h as Map;
       final t = (hub['type'] ?? '').toString();
@@ -615,10 +746,24 @@ class Plex {
     return [];
   }
 
-  static Future<List<PlexItem>> all(String sectionKey, {String sort = 'titleSort'}) =>
+  static Future<List<PlexItem>> all(String sectionKey,
+          {String sort = 'titleSort'}) =>
       items(paged('/library/sections/$sectionKey/all?sort=$sort', 3000));
 
-  static Future<List<PlexItem>> children(String ratingKey) => items('/library/metadata/$ratingKey/children');
+  static Future<List<PlexItem>> relatedInLibrary(PlexItem item) async {
+    final section = item.librarySectionKey;
+    if (section == null || section.isEmpty) return [];
+    final allItems = await all(section);
+    final related = allItems
+        .where(
+            (x) => x.key != item.key && (x.type == 'movie' || x.type == 'show'))
+        .toList();
+    related.shuffle(Random());
+    return related.take(20).toList();
+  }
+
+  static Future<List<PlexItem>> children(String ratingKey) =>
+      items('/library/metadata/$ratingKey/children');
 
   /// The first episode of a show (used for a preview when the show has no trailer).
   static Future<PlexItem?> firstEpisode(String showKey) async {
@@ -630,7 +775,9 @@ class Plex {
       items(paged('/library/metadata/$showKey/allLeaves', 800));
 
   static Future<List<PlexItem>> search(String q) async {
-    final mc = (await _get('/hubs/search?query=${Uri.encodeQueryComponent(q)}&limit=24'))['MediaContainer'] as Map;
+    final mc = (await _get(
+            '/hubs/search?query=${Uri.encodeQueryComponent(q)}&limit=24'))[
+        'MediaContainer'] as Map;
     final out = <PlexItem>[];
     for (final h in (mc['Hub'] as List? ?? const [])) {
       final hub = h as Map;
@@ -665,7 +812,8 @@ class Plex {
     }
 
     try {
-      final mc = (await _get('/library/metadata/$ratingKey?includeExtras=1'))['MediaContainer'] as Map;
+      final mc = (await _get('/library/metadata/$ratingKey?includeExtras=1'))[
+          'MediaContainer'] as Map;
       final m = mc['Metadata'] as List?;
       if (m != null && m.isNotEmpty) {
         final ex = (m.first as Map)['Extras'] as Map?;
@@ -674,7 +822,9 @@ class Plex {
       }
     } catch (_) {}
     try {
-      final mc = (await _get('/library/metadata/$ratingKey/extras'))['MediaContainer'] as Map;
+      final mc =
+          (await _get('/library/metadata/$ratingKey/extras'))['MediaContainer']
+              as Map;
       return pick(mc['Metadata'] as List?);
     } catch (_) {
       return null;
@@ -686,7 +836,8 @@ class Plex {
   static Future<int> sceneOffset(String ratingKey, int durationMs) async {
     var fallback = (durationMs * 0.2).round();
     try {
-      final mc = (await _get('/library/metadata/$ratingKey?includeChapters=1'))['MediaContainer'] as Map;
+      final mc = (await _get('/library/metadata/$ratingKey?includeChapters=1'))[
+          'MediaContainer'] as Map;
       final m = mc['Metadata'] as List?;
       if (m == null || m.isEmpty) return fallback;
       final o = m.first as Map;
@@ -716,7 +867,8 @@ class Plex {
   /// so it starts fast over weak Wi-Fi instead of pulling the full-size file.
   static String previewUrl(String ratingKey, int offsetMs, String session) {
     String e(String s) => Uri.encodeQueryComponent(s);
-    const profile = 'add-transcode-target(type=videoProfile&context=streaming&protocol=hls'
+    const profile =
+        'add-transcode-target(type=videoProfile&context=streaming&protocol=hls'
         '&container=mpegts&videoCodec=h264,hevc&audioCodec=aac)'
         '+add-limitation(scope=videoAudioCodec&scopeName=aac&type=upperBound&name=audio.channels&value=2)';
     return '$server/video/:/transcode/universal/start.m3u8'
@@ -738,7 +890,8 @@ class Plex {
   /// Used for TrueHD / DTS-HD, which this PC can't always decode or pass through.
   static String stereoUrl(String ratingKey, String session) {
     String e(String s) => Uri.encodeQueryComponent(s);
-    const profile = 'add-transcode-target(type=videoProfile&context=streaming&protocol=hls'
+    const profile =
+        'add-transcode-target(type=videoProfile&context=streaming&protocol=hls'
         '&container=mpegts&videoCodec=h264,hevc&audioCodec=aac)'
         '+add-limitation(scope=videoAudioCodec&scopeName=aac&type=upperBound&name=audio.channels&value=2)';
     return '$server/video/:/transcode/universal/start.m3u8'
@@ -757,7 +910,8 @@ class Plex {
 
   /// Tells the server to stop making a preview stream nobody is watching any more.
   static void stopTranscode(String session) {
-    _send('GET', '$server/video/:/transcode/universal/stop?session=$session').catchError((_) => '');
+    _send('GET', '$server/video/:/transcode/universal/stop?session=$session')
+        .catchError((_) => '');
   }
 
   // ------------------------------------------------------------ urls
@@ -784,7 +938,8 @@ class Plex {
 
   // ------------------------------------------------------------ state
 
-  static Future<void> timeline(String key, String state, int timeMs, int durMs) async {
+  static Future<void> timeline(
+      String key, String state, int timeMs, int durMs) async {
     try {
       await _send(
           'GET',

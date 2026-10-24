@@ -29,7 +29,8 @@ class Preview {
   static int _gen = 0;
   static final Map<String, String?> _trailers = {};
   static final Map<String, int> _offsets = {};
-  static final Map<String, PlexItem> _episodeOf = {}; // a show's first episode, for its preview
+  static final Map<String, PlexItem> _episodeOf =
+      {}; // a show's first episode, for its preview
 
   /// What the server transcodes a scene preview to, so we know where the black bars are.
   static const double _streamAspect = 1280 / 720;
@@ -42,7 +43,7 @@ class Preview {
   static final ValueNotifier<int> sizeTick = ValueNotifier(0);
 
   /// One loudness for every preview and trailer alike.
-  static const double _level = 40;
+  static const double _level = 100;
 
   static VideoController? get video => _video;
 
@@ -54,7 +55,8 @@ class Preview {
   static void _show(String? key) {
     _desired = key;
     final phase = SchedulerBinding.instance.schedulerPhase;
-    final building = phase == SchedulerPhase.persistentCallbacks || phase == SchedulerPhase.midFrameMicrotasks;
+    final building = phase == SchedulerPhase.persistentCallbacks ||
+        phase == SchedulerPhase.midFrameMicrotasks;
     if (!building) {
       showing.value = key;
       return;
@@ -66,6 +68,7 @@ class Preview {
       showing.value = _desired;
     });
   }
+
   static String? get wanted => _want ?? _timerKey;
 
   /// This title's preview is being carried into another page (title page or full screen).
@@ -73,7 +76,9 @@ class Preview {
 
   static Player _ensure() {
     if (_player != null) return _player!;
-    final p = Player(configuration: const PlayerConfiguration(title: 'Reel preview', bufferSize: 48 * 1024 * 1024));
+    final p = Player(
+        configuration: const PlayerConfiguration(
+            title: 'Reel preview', bufferSize: 48 * 1024 * 1024));
     _player = p;
     _video = VideoController(p);
     p.stream.width.listen((_) => sizeTick.value++);
@@ -85,8 +90,9 @@ class Preview {
     if (np is NativePlayer) {
       () async {
         try {
-          await np.setProperty('af', 'dynaudnorm=f=200:g=15:p=0.85:m=8:r=0.9');
-          await np.setProperty('volume-max', '100');
+          await np.setProperty('af',
+              'loudnorm=I=-16:LRA=11:TP=-1.5,dynaudnorm=f=200:g=15:p=0.85:m=8:r=0.9');
+          await np.setProperty('volume-max', '200');
         } catch (_) {}
       }();
     }
@@ -94,7 +100,8 @@ class Preview {
   }
 
   /// A card got focus: start its preview after a short rest.
-  static void focus(PlexItem it, {Duration delay = const Duration(milliseconds: 500)}) {
+  static void focus(PlexItem it,
+      {Duration delay = const Duration(seconds: 2)}) {
     if (!Prefs.previews) return;
     if (_want == it.key || _timerKey == it.key) {
       _keep = false; // back on the card it came from: carry on playing here
@@ -102,7 +109,8 @@ class Preview {
     }
     stop();
     _timerKey = it.key;
-    unawaited(_warm(it)); // look up the trailer / best scene while the card rests, so it starts sooner
+    unawaited(_warm(
+        it)); // look up the trailer / best scene while the card rests, so it starts sooner
     _timer = Timer(delay, () {
       _timerKey = null;
       start(it);
@@ -136,7 +144,8 @@ class Preview {
   static Future<void> _warm(PlexItem it) async {
     try {
       if (it.type == 'movie' || it.type == 'show' || it.type == 'season') {
-        if (!_trailers.containsKey(it.key)) _trailers[it.key] = await Plex.trailerUrl(it.key);
+        if (!_trailers.containsKey(it.key))
+          _trailers[it.key] = await Plex.trailerUrl(it.key);
         if (_trailers[it.key] != null) return;
       }
       var src = it;
@@ -162,7 +171,7 @@ class Preview {
       if (gen != _gen || src == null) return;
       final p = _ensure();
       Log.w('PREVIEW opening  ${it.displayTitle}');
-      await p.setVolume(_level); // the same for every preview, whatever it is
+      await p.setVolume(_level);
       await p.open(Media(src), play: true);
       // Only show it once frames are actually moving, so the card never goes black.
       await p.stream.position
@@ -171,7 +180,9 @@ class Preview {
       if (gen != _gen) return;
       Log.w('PREVIEW playing  ${it.displayTitle}');
       _show(it.key);
-      if (_session != null) unawaited(_probe(gen)); // a film scene (not a trailer): look for black bars
+      if (_session != null)
+        unawaited(
+            _probe(gen)); // a film scene (not a trailer): look for black bars
     } catch (_) {
       // no preview for this one; the poster stays
     }
@@ -179,7 +190,9 @@ class Preview {
 
   static Future<String?> _source(PlexItem it) async {
     if (it.type == 'movie' || it.type == 'show' || it.type == 'season') {
-      final t = _trailers.containsKey(it.key) ? _trailers[it.key] : (_trailers[it.key] = await Plex.trailerUrl(it.key));
+      final t = _trailers.containsKey(it.key)
+          ? _trailers[it.key]
+          : (_trailers[it.key] = await Plex.trailerUrl(it.key));
       if (t != null) return t;
     }
     // A show has no video of its own: play a scene from its first episode instead.
@@ -190,14 +203,18 @@ class Preview {
       _episodeOf[it.key] = src = e;
     }
     if (src.type == 'movie' || src.type == 'episode') {
-      final off = _offsets[src.key] ??= await Plex.sceneOffset(src.key, src.duration);
+      final off =
+          _offsets[src.key] ??= await Plex.sceneOffset(src.key, src.duration);
       final s = 'reelprev${Random().nextInt(1 << 30)}';
       _session = s;
       // The server letterboxes the scene into a 16:9 stream, so cut those bars off straight away.
-      crop.value = barsFor(src.aspect > 0 ? src.aspect : it.aspect, _streamAspect);
+      crop.value =
+          barsFor(src.aspect > 0 ? src.aspect : it.aspect, _streamAspect);
       return Plex.previewUrl(src.key, off, s);
     }
-    return null;
+    // Music-video and other video libraries may expose a playable part without Plex
+    // classifying the item as a movie or episode.
+    return Plex.directUrl(src);
   }
 
   /// Where the real picture sits inside a stream that letterboxes a [content]-shaped film into a
@@ -216,13 +233,15 @@ class Preview {
   /// Looks at a few frames and works out how much black border the picture has, then scales to fill.
   static Future<void> _probe(int gen) async {
     final r = await probeBars(_player!, cancelled: () => gen != _gen);
-    if (gen != _gen || r == null) return; // nothing found: keep what the film's shape told us
+    if (gen != _gen || r == null)
+      return; // nothing found: keep what the film's shape told us
     crop.value = r;
   }
 
   /// Samples a few frames of [p] and returns the part that isn't black bars (as fractions), or null
   /// if there are no real bars. Keeps the smallest border seen, so one dark scene never crops picture.
-  static Future<Rect?> probeBars(Player p, {bool Function()? cancelled, int samples = 3}) async {
+  static Future<Rect?> probeBars(Player p,
+      {bool Function()? cancelled, int samples = 3}) async {
     Rect? best;
     for (var i = 0; i < samples; i++) {
       await Future.delayed(Duration(milliseconds: i == 0 ? 1200 : 1500));
@@ -234,14 +253,17 @@ class Preview {
       if (r == null) continue;
       best = best == null
           ? r
-          : Rect.fromLTRB(min(best.left, r.left), min(best.top, r.top), max(best.right, r.right), max(best.bottom, r.bottom));
+          : Rect.fromLTRB(min(best.left, r.left), min(best.top, r.top),
+              max(best.right, r.right), max(best.bottom, r.bottom));
     }
     if (best == null) return null;
     final l = best.left < 0.02 ? 0.0 : best.left;
     final t = best.top < 0.02 ? 0.0 : best.top;
     final rr = best.right > 0.98 ? 1.0 : best.right;
     final b = best.bottom > 0.98 ? 1.0 : best.bottom;
-    return (l == 0 && t == 0 && rr == 1 && b == 1) ? null : Rect.fromLTRB(l, t, rr, b);
+    return (l == 0 && t == 0 && rr == 1 && b == 1)
+        ? null
+        : Rect.fromLTRB(l, t, rr, b);
   }
 
   static Future<Rect?> measureBars(Player? p) async {
@@ -255,7 +277,11 @@ class Preview {
     if (bd == null || w < 32 || h < 32) return null;
     bool dark(int x, int y) {
       final o = (y * w + x) * 4;
-      return (bd.getUint8(o) * 299 + bd.getUint8(o + 1) * 587 + bd.getUint8(o + 2) * 114) ~/ 1000 < 22;
+      return (bd.getUint8(o) * 299 +
+                  bd.getUint8(o + 1) * 587 +
+                  bd.getUint8(o + 2) * 114) ~/
+              1000 <
+          22;
     }
 
     bool rowDark(int y) {
@@ -317,8 +343,9 @@ class PreviewVideo extends StatelessWidget {
   const PreviewVideo({super.key, required this.itemKey, this.active = true});
 
   /// Wrapped in a Hero so it grows out of the card into the title page / full screen.
-  static Widget hero(String itemKey, {bool active = true}) =>
-      Hero(tag: 'preview-$itemKey', child: PreviewVideo(itemKey: itemKey, active: active));
+  static Widget hero(String itemKey, {bool active = true}) => Hero(
+      tag: 'preview-$itemKey',
+      child: PreviewVideo(itemKey: itemKey, active: active));
 
   @override
   Widget build(BuildContext context) {
@@ -330,7 +357,7 @@ class PreviewVideo extends StatelessWidget {
           opacity: on ? 1 : 0,
           duration: const Duration(milliseconds: 350),
           child: on
-              ? _filled(Preview.video!)
+              ? SizedBox.expand(child: _filled(Preview.video!))
               : const SizedBox.expand(),
         );
       },
@@ -346,7 +373,8 @@ class PreviewVideo extends StatelessWidget {
   /// Fills the whole area with the picture, cropping what doesn't fit. [r] is the part of the video
   /// that is real picture (the rest being black bars the stream has baked in): it is blown up until
   /// that part covers the area, so a letterboxed film fills the screen instead of sitting in a box.
-  static Widget cover(VideoController v, Rect? r, {SubtitleViewConfiguration? subtitles}) {
+  static Widget cover(VideoController v, Rect? r,
+      {SubtitleViewConfiguration? subtitles}) {
     final subs = subtitles ?? const SubtitleViewConfiguration();
     Widget plain(BoxFit fit) => Video(
           controller: v,
@@ -365,7 +393,8 @@ class PreviewVideo extends StatelessWidget {
       child: LayoutBuilder(
         builder: (c, box) {
           final w = box.maxWidth, h = box.maxHeight;
-          if (!w.isFinite || !h.isFinite || w <= 0 || h <= 0) return plain(BoxFit.cover);
+          if (!w.isFinite || !h.isFinite || w <= 0 || h <= 0)
+            return plain(BoxFit.cover);
           // how much to blow the whole frame up so the real picture covers the area
           final s = max(w / (vw * cr0.width), h / (vh * cr0.height));
           final fw = vw * s, fh = vh * s;

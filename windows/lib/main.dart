@@ -7,8 +7,8 @@ import 'package:window_manager/window_manager.dart';
 import 'log.dart';
 import 'plex.dart';
 import 'prefs.dart';
-import 'screens/home.dart';
 import 'screens/login.dart';
+import 'screens/profiles.dart';
 import 'warmup.dart';
 import 'ui/theme.dart';
 import 'ui/widgets.dart';
@@ -35,7 +35,8 @@ class _PageWatcher extends NavigatorObserver {
   @override
   void didRemove(Route<dynamic> route, Route<dynamic>? previous) => _check();
   @override
-  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) => _check();
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) =>
+      _check();
 }
 
 Future<void> main() async {
@@ -47,7 +48,8 @@ Future<void> main() async {
   MediaKit.ensureInitialized();
   await windowManager.ensureInitialized();
   await Prefs.load();
-  Log.w('posters: ${Prefs.imgOriginal ? 'original files' : 'resized by the server'}');
+  Log.w(
+      'posters: ${Prefs.imgOriginal ? 'original files' : 'resized by the server'}');
   await Plex.init();
   unawaited(Warmup.run());
 
@@ -106,10 +108,13 @@ class ReelApp extends StatelessWidget {
       shortcuts: {
         ...WidgetsApp.defaultShortcuts,
         const SingleActivator(LogicalKeyboardKey.escape): const BackIntent(),
-        const SingleActivator(LogicalKeyboardKey.browserBack): const BackIntent(),
-        const SingleActivator(LogicalKeyboardKey.gameButtonB): const BackIntent(),
+        const SingleActivator(LogicalKeyboardKey.browserBack):
+            const BackIntent(),
+        const SingleActivator(LogicalKeyboardKey.gameButtonB):
+            const BackIntent(),
         const SingleActivator(LogicalKeyboardKey.f11): const FullscreenIntent(),
-        const SingleActivator(LogicalKeyboardKey.enter, alt: true): const FullscreenIntent(),
+        const SingleActivator(LogicalKeyboardKey.enter, alt: true):
+            const FullscreenIntent(),
       },
       actions: {
         ...WidgetsApp.defaultActions,
@@ -139,20 +144,21 @@ class ReelApp extends StatelessWidget {
               builder: (c2, _) {
                 final show = canGoBack.value && !watching.value;
                 return AnimatedOpacity(
-                opacity: show ? 1 : 0,
-                duration: const Duration(milliseconds: 180),
-                child: IgnorePointer(
-                  ignoring: !show,
-                  child: HoverButton(Icons.arrow_back_rounded,
-                      size: MediaQuery.sizeOf(c).height * 0.055, onPressed: goBack),
-                ),
+                  opacity: show ? 1 : 0,
+                  duration: const Duration(milliseconds: 180),
+                  child: IgnorePointer(
+                    ignoring: !show,
+                    child: HoverButton(Icons.arrow_back_rounded,
+                        size: MediaQuery.sizeOf(c).height * 0.055,
+                        onPressed: goBack),
+                  ),
                 );
               },
             ),
           ),
         ]),
       ),
-      home: Plex.isReady ? const HomeScreen() : const LoginScreen(),
+      home: Plex.isReady ? const ProfilesScreen() : const LoginScreen(),
     );
   }
 }

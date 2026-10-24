@@ -6,7 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../plex.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
-import 'home.dart';
+import 'profiles.dart';
 
 /// Sign in the Plex way: show a short code, you enter it at plex.tv/link.
 class LoginScreen extends StatefulWidget {
@@ -51,7 +51,8 @@ class _LoginScreenState extends State<LoginScreen> {
           setState(() => _status = 'Signed in. Finding your server…');
           await Plex.findServer();
           if (!mounted) return;
-          Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const HomeScreen()));
+          Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (_) => const ProfilesScreen()));
         } catch (e) {
           if (mounted) setState(() => _status = 'Problem: $e');
         }
@@ -77,10 +78,12 @@ class _LoginScreenState extends State<LoginScreen> {
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             Text('Reel', style: reelText(h * 0.09, weight: FontWeight.w700)),
             SizedBox(height: h * 0.04),
-            Text('Go to plex.tv/link and enter this code', style: reelText(h * 0.032, color: Reel.text2)),
+            Text('Go to plex.tv/link and enter this code',
+                style: reelText(h * 0.032, color: Reel.text2)),
             SizedBox(height: h * 0.03),
             Text(_code ?? '••••',
-                style: reelText(h * 0.12, weight: FontWeight.w700).copyWith(letterSpacing: h * 0.02)),
+                style: reelText(h * 0.12, weight: FontWeight.w700)
+                    .copyWith(letterSpacing: h * 0.02)),
             SizedBox(height: h * 0.03),
             Text(_status, style: reelText(h * 0.024, color: Reel.text2)),
             SizedBox(height: h * 0.05),
@@ -88,7 +91,8 @@ class _LoginScreenState extends State<LoginScreen> {
               PillButton('Open plex.tv/link',
                   primary: true,
                   autofocus: true,
-                  onPressed: () => launchUrl(Uri.parse('https://plex.tv/link'))),
+                  onPressed: () =>
+                      launchUrl(Uri.parse('https://plex.tv/link'))),
               SizedBox(width: h * 0.02),
               PillButton('New code', onPressed: _start),
             ]),

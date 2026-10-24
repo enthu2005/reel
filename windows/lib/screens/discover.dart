@@ -18,29 +18,37 @@ Future<bool> askSeerrAddress(BuildContext context) async {
     context: context,
     builder: (c) => AlertDialog(
       backgroundColor: Reel.card,
-      title: Text('Seerr address', style: reelText(h * 0.03, weight: FontWeight.w700)),
+      title: Text('Seerr address',
+          style: reelText(h * 0.03, weight: FontWeight.w700)),
       content: SizedBox(
         width: h * 0.7,
-        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('The address you open Seerr at, for example http://192.168.1.20:5055 or https://seerr.yourdomain.com. '
-              'It signs in with your Plex account.',
-              style: reelText(h * 0.02, color: Reel.text2, height: 1.35)),
-          SizedBox(height: h * 0.02),
-          TextField(
-            controller: text,
-            autofocus: true,
-            style: reelText(h * 0.026),
-            cursorColor: Colors.white,
-            decoration: InputDecoration(
-              filled: true,
-              fillColor: const Color(0xFF2C2C2E),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(h * 0.012), borderSide: BorderSide.none),
-            ),
-            onSubmitted: (_) => Navigator.of(c).pop(true),
-          ),
-          SizedBox(height: h * 0.012),
-          Text('Enter to save · Esc to cancel', style: reelText(h * 0.018, color: Reel.text3)),
-        ]),
+        child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                  'The address you open Seerr at, for example http://192.168.1.20:5055 or https://seerr.yourdomain.com. '
+                  'It signs in with your Plex account.',
+                  style: reelText(h * 0.02, color: Reel.text2, height: 1.35)),
+              SizedBox(height: h * 0.02),
+              TextField(
+                controller: text,
+                autofocus: true,
+                style: reelText(h * 0.026),
+                cursorColor: Colors.white,
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: const Color(0xFF2C2C2E),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(h * 0.012),
+                      borderSide: BorderSide.none),
+                ),
+                onSubmitted: (_) => Navigator.of(c).pop(true),
+              ),
+              SizedBox(height: h * 0.012),
+              Text('Enter to save · Esc to cancel',
+                  style: reelText(h * 0.018, color: Reel.text3)),
+            ]),
       ),
     ),
   );
@@ -117,9 +125,12 @@ class _SeerrDetailScreenState extends State<SeerrDetailScreen> {
         await Seerr.requestMovie(_m.id);
       }
       await _load();
-      if (mounted) setState(() => _message = 'Requested. It shows up in "Your requests" on Discover.');
+      if (mounted)
+        setState(() => _message =
+            'Requested. It shows up in "Your requests" on Discover.');
     } catch (e) {
-      if (mounted) setState(() => _message = "The request didn't go through: $e");
+      if (mounted)
+        setState(() => _message = "The request didn't go through: $e");
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -134,7 +145,13 @@ class _SeerrDetailScreenState extends State<SeerrDetailScreen> {
     final status = m.statusText;
     final seasonLine = m.type == 'tv' && m.seasons.isNotEmpty
         ? m.seasons.map((s) {
-            final st = s[2] == 5 ? 'have' : s[2] == 4 ? 'some' : s[2] >= 2 ? 'requested' : '';
+            final st = s[2] == 5
+                ? 'have'
+                : s[2] == 4
+                    ? 'some'
+                    : s[2] >= 2
+                        ? 'requested'
+                        : '';
             return 'S${s[0]}${st.isEmpty ? '' : ' ($st)'}';
           }).join('  ·  ')
         : '';
@@ -144,7 +161,15 @@ class _SeerrDetailScreenState extends State<SeerrDetailScreen> {
         const Positioned.fill(
           child: DecoratedBox(
             decoration: BoxDecoration(
-              gradient: LinearGradient(colors: [Color(0xF0000000), Color(0xA6000000), Color(0x1A000000)], stops: [0, 0.5, 0.85]),
+              gradient: LinearGradient(colors: [
+                Color(0xF0000000),
+                Color(0xA6000000),
+                Color(0x1A000000)
+              ], stops: [
+                0,
+                0.5,
+                0.85
+              ]),
             ),
           ),
         ),
@@ -158,77 +183,118 @@ class _SeerrDetailScreenState extends State<SeerrDetailScreen> {
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [Color(0x00000000), Color(0xCC000000), Color(0xFF000000)],
+                colors: [
+                  Color(0x00000000),
+                  Color(0xCC000000),
+                  Color(0xFF000000)
+                ],
               ),
             ),
           ),
         ),
         SingleChildScrollView(
           padding: EdgeInsets.only(top: h * 0.14, bottom: h * 0.08),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Padding(
               padding: EdgeInsets.only(left: w * 0.05),
               child: SizedBox(
                 width: w * 0.5,
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(m.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: reelText(h * 0.062, weight: FontWeight.w700, height: 1.05)),
-                  SizedBox(height: h * 0.014),
-                  Text([m.type == 'tv' ? 'TV Show' : 'Movie', if (m.year > 0) '${m.year}', if (status.isNotEmpty) status].join(' · '),
-                      style: reelText(h * 0.023, weight: FontWeight.w500, color: Reel.text2)),
-                  if (eta.isNotEmpty) ...[
-                    SizedBox(height: h * 0.01),
-                    Row(children: [
-                      Icon(Icons.schedule_rounded, size: h * 0.026, color: Colors.white),
-                      SizedBox(width: h * 0.008),
-                      Flexible(child: Text(eta, style: reelText(h * 0.023, weight: FontWeight.w600))),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(m.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: reelText(h * 0.062,
+                              weight: FontWeight.w700, height: 1.05)),
+                      SizedBox(height: h * 0.014),
+                      Text(
+                          [
+                            m.type == 'tv' ? 'TV Show' : 'Movie',
+                            if (m.year > 0) '${m.year}',
+                            if (status.isNotEmpty) status
+                          ].join(' · '),
+                          style: reelText(h * 0.023,
+                              weight: FontWeight.w500, color: Reel.text2)),
+                      if (eta.isNotEmpty) ...[
+                        SizedBox(height: h * 0.01),
+                        Row(children: [
+                          Icon(Icons.schedule_rounded,
+                              size: h * 0.026, color: Colors.white),
+                          SizedBox(width: h * 0.008),
+                          Flexible(
+                              child: Text(eta,
+                                  style: reelText(h * 0.023,
+                                      weight: FontWeight.w600))),
+                        ]),
+                      ],
+                      if (m.dlPercent >= 0) ...[
+                        SizedBox(height: h * 0.012),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: LinearProgressIndicator(
+                              value: m.dlPercent / 100,
+                              minHeight: 6,
+                              color: Colors.white,
+                              backgroundColor: const Color(0x40FFFFFF)),
+                        ),
+                      ],
+                      SizedBox(height: h * 0.028),
+                      Wrap(
+                          spacing: h * 0.016,
+                          runSpacing: h * 0.016,
+                          children: [
+                            if (m.ratingKey != null)
+                              PillButton('Open in your library',
+                                  icon: Icons.play_arrow_rounded,
+                                  primary: true,
+                                  autofocus: true,
+                                  onPressed: () => Navigator.of(context).push(
+                                      fadeRoute(DetailScreen(
+                                          ratingKey: m.ratingKey!)))),
+                            if (_loaded && m.requestable)
+                              PillButton(
+                                  _busy
+                                      ? 'Requesting…'
+                                      : (m.type == 'tv'
+                                          ? (m.status == 4
+                                              ? 'Request the rest'
+                                              : 'Request all seasons')
+                                          : 'Request'),
+                                  icon: Icons.add_rounded,
+                                  primary: m.ratingKey == null,
+                                  autofocus: m.ratingKey == null,
+                                  onPressed: _busy ? () {} : _request),
+                            if (m.youtubeTrailer != null)
+                              PillButton('Trailer',
+                                  icon: Icons.movie_outlined,
+                                  autofocus: !(_loaded && m.requestable) &&
+                                      m.ratingKey == null,
+                                  onPressed: () => launchUrl(Uri.parse(
+                                      'https://www.youtube.com/watch?v=${m.youtubeTrailer}'))),
+                            if (!_loaded)
+                              Text('Loading…',
+                                  style:
+                                      reelText(h * 0.022, color: Reel.text2)),
+                          ]),
+                      if (_message != null) ...[
+                        SizedBox(height: h * 0.016),
+                        Text(_message!,
+                            style: reelText(h * 0.021, color: Reel.text2)),
+                      ],
+                      SizedBox(height: h * 0.026),
+                      Text(m.overview,
+                          maxLines: 5,
+                          overflow: TextOverflow.ellipsis,
+                          style: reelText(h * 0.024,
+                              color: const Color(0xD9FFFFFF), height: 1.4)),
+                      if (seasonLine.isNotEmpty) ...[
+                        SizedBox(height: h * 0.016),
+                        Text(seasonLine,
+                            style: reelText(h * 0.02, color: Reel.text2)),
+                      ],
                     ]),
-                  ],
-                  if (m.dlPercent >= 0) ...[
-                    SizedBox(height: h * 0.012),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(4),
-                      child: LinearProgressIndicator(
-                          value: m.dlPercent / 100, minHeight: 6, color: Colors.white, backgroundColor: const Color(0x40FFFFFF)),
-                    ),
-                  ],
-                  SizedBox(height: h * 0.028),
-                  Wrap(spacing: h * 0.016, runSpacing: h * 0.016, children: [
-                    if (m.ratingKey != null)
-                      PillButton('Open in your library',
-                          icon: Icons.play_arrow_rounded,
-                          primary: true,
-                          autofocus: true,
-                          onPressed: () => Navigator.of(context).push(fadeRoute(DetailScreen(ratingKey: m.ratingKey!)))),
-                    if (_loaded && m.requestable)
-                      PillButton(_busy ? 'Requesting…' : (m.type == 'tv' ? (m.status == 4 ? 'Request the rest' : 'Request all seasons') : 'Request'),
-                          icon: Icons.add_rounded,
-                          primary: m.ratingKey == null,
-                          autofocus: m.ratingKey == null,
-                          onPressed: _busy ? () {} : _request),
-                    if (m.youtubeTrailer != null)
-                      PillButton('Trailer',
-                          icon: Icons.movie_outlined,
-                          autofocus: !(_loaded && m.requestable) && m.ratingKey == null,
-                          onPressed: () => launchUrl(Uri.parse('https://www.youtube.com/watch?v=${m.youtubeTrailer}'))),
-                    if (!_loaded) Text('Loading…', style: reelText(h * 0.022, color: Reel.text2)),
-                  ]),
-                  if (_message != null) ...[
-                    SizedBox(height: h * 0.016),
-                    Text(_message!, style: reelText(h * 0.021, color: Reel.text2)),
-                  ],
-                  SizedBox(height: h * 0.026),
-                  Text(m.overview,
-                      maxLines: 5,
-                      overflow: TextOverflow.ellipsis,
-                      style: reelText(h * 0.024, color: const Color(0xD9FFFFFF), height: 1.4)),
-                  if (seasonLine.isNotEmpty) ...[
-                    SizedBox(height: h * 0.016),
-                    Text(seasonLine, style: reelText(h * 0.02, color: Reel.text2)),
-                  ],
-                ]),
               ),
             ),
             if (_more.isNotEmpty)
@@ -237,8 +303,8 @@ class _SeerrDetailScreenState extends State<SeerrDetailScreen> {
                 items: _more.map((x) => x.toItem()).toList(),
                 titles: true,
                 previews: false,
-                onPressed: (it) => Navigator.of(context)
-                    .push(fadeRoute(SeerrDetailScreen(media: Seerr.known[it.key] ?? _m))),
+                onPressed: (it) => Navigator.of(context).push(fadeRoute(
+                    SeerrDetailScreen(media: Seerr.known[it.key] ?? _m))),
               ),
           ]),
         ),
@@ -272,7 +338,8 @@ class _SeerrGenreScreenState extends State<SeerrGenreScreen> {
     if (_loading || _page >= 10) return;
     _loading = true;
     try {
-      final r = await Seerr.byGenre(widget.genre.type, widget.genre.id, _page + 1);
+      final r =
+          await Seerr.byGenre(widget.genre.type, widget.genre.id, _page + 1);
       _page++;
       if (mounted) setState(() => _items.addAll(r.map((m) => m.toItem())));
     } catch (e) {
@@ -288,14 +355,16 @@ class _SeerrGenreScreenState extends State<SeerrGenreScreen> {
     final w = Reel.w(context);
     const cols = 7;
     final cw = (w * 0.9 - h * 0.022 * cols) / cols;
-    final ch = cw * 1.5;
+    final ch = cw * 9 / 16;
     return Scaffold(
       body: Padding(
         padding: EdgeInsets.fromLTRB(w * 0.05, h * 0.07, w * 0.05, 0),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('${widget.genre.name} · ${widget.genre.type == 'tv' ? 'TV Shows' : 'Movies'}',
+          Text(
+              '${widget.genre.name} · ${widget.genre.type == 'tv' ? 'TV Shows' : 'Movies'}',
               style: reelText(h * 0.05, weight: FontWeight.w700)),
-          if (_error != null) Text(_error!, style: reelText(h * 0.024, color: Reel.text2)),
+          if (_error != null)
+            Text(_error!, style: reelText(h * 0.024, color: Reel.text2)),
           SizedBox(height: h * 0.02),
           Expanded(
             child: GridView.builder(
@@ -303,21 +372,24 @@ class _SeerrGenreScreenState extends State<SeerrGenreScreen> {
               padding: EdgeInsets.only(top: h * 0.02, bottom: h * 0.06),
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: cols,
-                childAspectRatio: (cw + h * 0.022) / (ch + PosterCard.textBlock(h) + h * 0.04),
+                childAspectRatio: (cw + h * 0.022) /
+                    (ch + PosterCard.textBlock(h) + h * 0.04),
               ),
               itemCount: _items.length,
               itemBuilder: (c, i) {
-                if (i >= _items.length - cols * 2) _more(); // load the next page before you reach the end
+                if (i >= _items.length - cols * 2)
+                  _more(); // load the next page before you reach the end
                 final it = _items[i];
                 return PosterCard(
                   item: it,
                   width: cw,
                   height: ch,
+                  landscape: true,
                   showTitle: true,
                   preview: false,
                   autofocus: i == 0,
-                  onPressed: () => Navigator.of(context)
-                      .push(fadeRoute(SeerrDetailScreen(media: Seerr.known[it.key]!))),
+                  onPressed: () => Navigator.of(context).push(fadeRoute(
+                      SeerrDetailScreen(media: Seerr.known[it.key]!))),
                 );
               },
             ),

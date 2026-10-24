@@ -10,7 +10,8 @@ class Prefs {
     _p = await SharedPreferences.getInstance();
     if (clientId.isEmpty) {
       final r = Random.secure();
-      final id = List.generate(16, (_) => r.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
+      final id = List.generate(
+          16, (_) => r.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
       await _p.setString('cid', 'reel-win-$id');
     }
   }
@@ -18,10 +19,17 @@ class Prefs {
   static String get clientId => _p.getString('cid') ?? '';
 
   static String? get token => _p.getString('token');
-  static set token(String? v) => v == null ? _p.remove('token') : _p.setString('token', v);
+  static set token(String? v) =>
+      v == null ? _p.remove('token') : _p.setString('token', v);
+  static String? get ownerToken => _p.getString('ownerToken');
+  static set ownerToken(String? v) =>
+      v == null ? _p.remove('ownerToken') : _p.setString('ownerToken', v);
+  static bool get staySignedIn => _p.getBool('staySignedIn') ?? true;
+  static set staySignedIn(bool v) => _p.setBool('staySignedIn', v);
 
   static String? get server => _p.getString('server');
-  static set server(String? v) => v == null ? _p.remove('server') : _p.setString('server', v);
+  static set server(String? v) =>
+      v == null ? _p.remove('server') : _p.setString('server', v);
 
   /// 'local', 'remote' or 'relay' (relay = through Plex's servers, capped at about 2 Mbps)
   static String get serverTest => _p.getString('serverTest') ?? '';
@@ -30,7 +38,8 @@ class Prefs {
   static set serverKind(String v) => _p.setString('serverKind', v);
 
   static String? get serverName => _p.getString('serverName');
-  static set serverName(String? v) => v == null ? _p.remove('serverName') : _p.setString('serverName', v);
+  static set serverName(String? v) =>
+      v == null ? _p.remove('serverName') : _p.setString('serverName', v);
 
   /// Send Dolby / DTS untouched to an HDMI receiver (mpv "spdif" passthrough, exclusive output).
   static bool get passthrough => _p.getBool('passthrough') ?? false;
@@ -60,6 +69,14 @@ class Prefs {
   static int get subSize => _p.getInt('subSize') ?? 1;
   static set subSize(int v) => _p.setInt('subSize', v);
 
+  static String get subtitleLanguage =>
+      _p.getString('subtitleLanguage') ?? 'en';
+  static set subtitleLanguage(String v) => _p.setString('subtitleLanguage', v);
+  static int get subColor => _p.getInt('subColor') ?? 0;
+  static set subColor(int v) => _p.setInt('subColor', v);
+  static int get subPosition => _p.getInt('subPosition') ?? 100;
+  static set subPosition(int v) => _p.setInt('subPosition', v);
+
   /// Play a short clip or trailer in a card after resting on it, and behind the title page.
   static bool get previews => _p.getBool('previews') ?? true;
   static set previews(bool v) => _p.setBool('previews', v);
@@ -68,7 +85,8 @@ class Prefs {
   static String get seerrUrl => _p.getString('seerrUrl') ?? '';
   static set seerrUrl(String v) => _p.setString('seerrUrl', v);
   static String? get seerrCookie => _p.getString('seerrCookie');
-  static set seerrCookie(String? v) => v == null ? _p.remove('seerrCookie') : _p.setString('seerrCookie', v);
+  static set seerrCookie(String? v) =>
+      v == null ? _p.remove('seerrCookie') : _p.setString('seerrCookie', v);
 
   /// How the picture fills the screen: 0 fit (black bars), 1 fill (crop black bars and edges), 2 stretch
   static int get fitMode => _p.getInt('fitMode') ?? 0;

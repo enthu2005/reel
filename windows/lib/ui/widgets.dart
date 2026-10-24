@@ -42,7 +42,8 @@ class _PressableState extends State<Pressable> {
   @override
   void didUpdateWidget(covariant Pressable old) {
     super.didUpdateWidget(old);
-    if (widget.focusNode != null && widget.focusNode != _node) _node = widget.focusNode!;
+    if (widget.focusNode != null && widget.focusNode != _node)
+      _node = widget.focusNode!;
   }
 
   @override
@@ -66,8 +67,10 @@ class _PressableState extends State<Pressable> {
       return KeyEventResult.handled;
     }
     if (e is KeyRepeatEvent) {
-      if (_downAt != null && widget.onLongPress != null &&
-          DateTime.now().difference(_downAt!) > const Duration(milliseconds: 500)) {
+      if (_downAt != null &&
+          widget.onLongPress != null &&
+          DateTime.now().difference(_downAt!) >
+              const Duration(milliseconds: 500)) {
         _downAt = null;
         widget.onLongPress!();
       }
@@ -89,6 +92,7 @@ class _PressableState extends State<Pressable> {
       onKeyEvent: _onKey,
       onFocusChange: (f) {
         setState(() => _focused = f);
+        if (f) SystemSound.play(SystemSoundType.click);
         widget.onFocusChange?.call(f);
         if (f && widget.scrollAlignment >= 0 && !_byMouse) {
           Scrollable.ensureVisible(context,
@@ -106,17 +110,21 @@ class _PressableState extends State<Pressable> {
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onHover: (e) {
-        if (e.delta == Offset.zero || _node.hasFocus) return; // only when the mouse really moves
-        _byMouse = true; // the list stays where it is; only keys scroll to what's selected
+        if (e.delta == Offset.zero || _node.hasFocus)
+          return; // only when the mouse really moves
+        _byMouse =
+            true; // the list stays where it is; only keys scroll to what's selected
         _node.requestFocus();
-        Future.delayed(const Duration(milliseconds: 80), () => _byMouse = false);
+        Future.delayed(
+            const Duration(milliseconds: 80), () => _byMouse = false);
       },
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () {
           _byMouse = true;
           _node.requestFocus();
-          Future.delayed(const Duration(milliseconds: 80), () => _byMouse = false);
+          Future.delayed(
+              const Duration(milliseconds: 80), () => _byMouse = false);
           widget.onPressed?.call();
         },
         onLongPress: widget.onLongPress,
@@ -126,12 +134,57 @@ class _PressableState extends State<Pressable> {
   }
 }
 
+class HoverButton extends StatefulWidget {
+  final IconData icon;
+  final double size;
+  final String? tooltip;
+  final VoidCallback onPressed;
+
+  const HoverButton(this.icon,
+      {super.key, required this.size, this.tooltip, required this.onPressed});
+
+  @override
+  State<HoverButton> createState() => _HoverButtonState();
+}
+
+class _HoverButtonState extends State<HoverButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final button = MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: widget.onPressed,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          padding: EdgeInsets.all(widget.size * 0.18),
+          decoration: BoxDecoration(
+            color: _hovered ? Colors.white : const Color(0x66000000),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(widget.icon,
+              size: widget.size * 0.58,
+              color: _hovered ? Colors.black : Colors.white),
+        ),
+      ),
+    );
+    return widget.tooltip == null
+        ? button
+        : Tooltip(message: widget.tooltip!, child: button);
+  }
+}
+
 /// A gentle cross-fade between pages (the preview video grows out of the card through it).
 Route<T> fadeRoute<T>(Widget page) => PageRouteBuilder<T>(
       transitionDuration: const Duration(milliseconds: 380),
       reverseTransitionDuration: const Duration(milliseconds: 300),
       pageBuilder: (_, __, ___) => page,
-      transitionsBuilder: (_, a, __, child) => FadeTransition(opacity: CurvedAnimation(parent: a, curve: Curves.easeOut), child: child),
+      transitionsBuilder: (_, a, __, child) => FadeTransition(
+          opacity: CurvedAnimation(parent: a, curve: Curves.easeOut),
+          child: child),
     );
 
 /// Picture and sound labels (4K, Dolby Vision, Dolby Atmos, DTS-HD MA, 5.1…) as small outlined tags.
@@ -146,12 +199,17 @@ class Badges extends StatelessWidget {
     return Wrap(spacing: h * 0.008, runSpacing: h * 0.008, children: [
       for (final b in items)
         Container(
-          padding: EdgeInsets.symmetric(horizontal: h * 0.008, vertical: h * 0.002),
+          padding:
+              EdgeInsets.symmetric(horizontal: h * 0.008, vertical: h * 0.002),
           decoration: BoxDecoration(
             border: Border.all(color: const Color(0xA6FFFFFF), width: 1.2),
             borderRadius: BorderRadius.circular(h * 0.006),
           ),
-          child: Text(b, style: reelText(h * 0.0165, weight: FontWeight.w700, color: const Color(0xE6FFFFFF), height: 1.3)),
+          child: Text(b,
+              style: reelText(h * 0.0165,
+                  weight: FontWeight.w700,
+                  color: const Color(0xE6FFFFFF),
+                  height: 1.3)),
         ),
     ]);
   }
@@ -193,20 +251,36 @@ class PillButton extends StatelessWidget {
         curve: Curves.easeOut,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),
-          padding: EdgeInsets.symmetric(horizontal: h * 0.03, vertical: h * 0.016),
+          padding:
+              EdgeInsets.symmetric(horizontal: h * 0.03, vertical: h * 0.016),
           constraints: BoxConstraints(minWidth: primary ? h * 0.18 : 0),
           decoration: BoxDecoration(
-            color: f ? Colors.white : (primary ? const Color(0x4DFFFFFF) : Reel.fill),
+            color: f
+                ? Colors.white
+                : (primary ? const Color(0x4DFFFFFF) : Reel.fill),
             borderRadius: BorderRadius.circular(h),
-            boxShadow: f ? [BoxShadow(color: Colors.black.withOpacity(0.45), blurRadius: h * 0.03)] : null,
+            boxShadow: f
+                ? [
+                    BoxShadow(
+                        color: Colors.black.withOpacity(0.45),
+                        blurRadius: h * 0.03)
+                  ]
+                : null,
           ),
-          child: Row(mainAxisSize: MainAxisSize.min, mainAxisAlignment: MainAxisAlignment.center, children: [
-            if (icon != null) ...[
-              Icon(icon, size: h * 0.03, color: f ? Colors.black : Colors.white),
-              SizedBox(width: h * 0.01),
-            ],
-            Text(label, style: reelText(h * 0.024, weight: FontWeight.w600, color: f ? Colors.black : Colors.white)),
-          ]),
+          child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (icon != null) ...[
+                  Icon(icon,
+                      size: h * 0.03, color: f ? Colors.black : Colors.white),
+                  SizedBox(width: h * 0.01),
+                ],
+                Text(label,
+                    style: reelText(h * 0.024,
+                        weight: FontWeight.w600,
+                        color: f ? Colors.black : Colors.white)),
+              ]),
         ),
       ),
     );
@@ -222,7 +296,11 @@ class IconPill extends StatelessWidget {
   final double scrollAlignment;
 
   const IconPill(this.icon,
-      {super.key, required this.onPressed, this.focusNode, this.onFocusChange, this.scrollAlignment = 0.0});
+      {super.key,
+      required this.onPressed,
+      this.focusNode,
+      this.onFocusChange,
+      this.scrollAlignment = 0.0});
 
   @override
   Widget build(BuildContext context) {
@@ -243,9 +321,16 @@ class IconPill extends StatelessWidget {
           decoration: BoxDecoration(
             color: f ? Colors.white : Reel.fill,
             shape: BoxShape.circle,
-            boxShadow: f ? [BoxShadow(color: Colors.black.withOpacity(0.45), blurRadius: h * 0.03)] : null,
+            boxShadow: f
+                ? [
+                    BoxShadow(
+                        color: Colors.black.withOpacity(0.45),
+                        blurRadius: h * 0.03)
+                  ]
+                : null,
           ),
-          child: Icon(icon, size: h * 0.028, color: f ? Colors.black : Colors.white),
+          child: Icon(icon,
+              size: h * 0.028, color: f ? Colors.black : Colors.white),
         ),
       ),
     );
@@ -275,7 +360,7 @@ class PosterCard extends StatelessWidget {
     required this.width,
     required this.height,
     required this.onPressed,
-    this.landscape = false,
+    this.landscape = true,
     this.showTitle = false,
     this.subtitle,
     this.onLongPress,
@@ -286,7 +371,8 @@ class PosterCard extends StatelessWidget {
 
   static String? _imageOf(PlexItem item, bool landscape) {
     if (!landscape) return item.poster;
-    if ((item.type == 'movie' || item.type == 'show') && item.art != null) return item.art;
+    if ((item.type == 'movie' || item.type == 'show') && item.art != null)
+      return item.art;
     return item.thumb ?? item.poster;
   }
 
@@ -294,11 +380,15 @@ class PosterCard extends StatelessWidget {
   static int step(double v, double dpr) => ((v * dpr) / 40).ceil() * 40;
 
   /// Asks for at most 1.25x the on-screen size: sharp enough, and far fewer bytes on slow Wi-Fi.
-  static String? imageUrl(PlexItem item, double width, double height, bool landscape, double dpr) {
+  static String? imageUrl(
+      PlexItem item, double width, double height, bool landscape, double dpr) {
     // One fixed size per kind of card, whatever the window size, so every poster is saved once and
     // found again (and can be saved ahead of time by Warmup).
-    if (landscape && width > 520) return Plex.img(_imageOf(item, true), 1280, 720); // big spotlight cards
-    return landscape ? Plex.img(_imageOf(item, true), 560, 315) : Plex.img(_imageOf(item, false), 400, 600);
+    if (landscape && width > 520)
+      return Plex.img(_imageOf(item, true), 1280, 720); // big spotlight cards
+    return landscape
+        ? Plex.img(_imageOf(item, true), 560, 315)
+        : Plex.img(_imageOf(item, false), 400, 600);
   }
 
   String get _sub {
@@ -311,13 +401,16 @@ class PosterCard extends StatelessWidget {
       return parts.join(' · ');
     }
     if (item.type == 'episode') {
-      parts.add('${item.parentIndex > 0 ? 'S${item.parentIndex}, ' : ''}E${item.index}');
+      parts.add(
+          '${item.parentIndex > 0 ? 'S${item.parentIndex}, ' : ''}E${item.index}');
     } else if (item.year > 0) {
       parts.add('${item.year}');
     }
     if (item.viewOffset > 0 && item.duration > 0) {
       final left = ((item.duration - item.viewOffset) / 60000).ceil();
-      parts.add(left >= 60 ? '${left ~/ 60} hr ${left % 60} min left' : '$left min left');
+      parts.add(left >= 60
+          ? '${left ~/ 60} hr ${left % 60} min left'
+          : '$left min left');
     }
     return parts.join(' · ');
   }
@@ -330,9 +423,12 @@ class PosterCard extends StatelessWidget {
     final url = imageUrl(item, width, height, landscape, dpr);
     if (url == null) {
       ImageLoader.noPicture.add(item.displayTitle);
-      Log.w('NO POSTER for "${item.displayTitle}"  (thumb=${item.thumb} art=${item.art} gpThumb=${item.gpThumb})');
+      Log.w(
+          'NO POSTER for "${item.displayTitle}"  (thumb=${item.thumb} art=${item.art} gpThumb=${item.gpThumb})');
     }
-    final progress = item.viewOffset > 0 && item.duration > 0 ? item.viewOffset / item.duration : 0.0;
+    final progress = item.viewOffset > 0 && item.duration > 0
+        ? item.viewOffset / item.duration
+        : 0.0;
     final textOn = landscape || showTitle;
     final tb = textBlock(h);
     return Padding(
@@ -346,122 +442,159 @@ class PosterCard extends StatelessWidget {
           // Only the focused card (or the one whose preview is open on another page) listens for the
           // preview; every other card stays put, so moving around never rebuilds the whole screen.
           if (f && preview) Preview.heroOwner = c;
-          final heldNow = preview && Preview.held(item.key) && identical(Preview.heroOwner, c);
+          final heldNow = preview &&
+              Preview.held(item.key) &&
+              identical(Preview.heroOwner, c);
           final live = preview && (f || heldNow);
           Widget card(String? playing) {
-          final held = heldNow;
-          // While its preview plays, a poster card widens to 16:9 so the video fits.
-          final wide = preview && (f || held) && playing == item.key;
-          final cw = wide && !landscape ? height * 16 / 9 : width;
-          // Only the width animates; heights are set straight away so nothing ever overflows.
-          return SizedBox(
-          height: height + (textOn ? tb : 0),
-          child: AnimatedContainer(
-          duration: const Duration(milliseconds: 320),
-          curve: Curves.easeOutCubic,
-          width: cw,
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-            AnimatedScale(
-              scale: f ? (wide ? 1.06 : 1.1) : 1,
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOutCubic,
-              child: SizedBox(
-                height: height,
-                child: AnimatedContainer(
+            final held = heldNow;
+            // While its preview plays, a poster card widens to 16:9 so the video fits.
+            final wide = preview && (f || held) && !landscape;
+            final cw = wide && !landscape ? height * 16 / 9 : width;
+            final cardHeight = wide ? cw * 9 / 16 : height;
+            // Only the width animates; heights are set straight away so nothing ever overflows.
+            return SizedBox(
+              height: cardHeight + (textOn ? tb : 0),
+              child: AnimatedContainer(
                 duration: const Duration(milliseconds: 320),
                 curve: Curves.easeOutCubic,
                 width: cw,
-                decoration: BoxDecoration(
-                  borderRadius: radius,
-                  color: Reel.card,
-                  boxShadow: f
-                      ? [BoxShadow(color: const Color(0x99000000), blurRadius: h * 0.022, offset: Offset(0, h * 0.01))]
-                      : null,
-                ),
-                child: ClipRRect(
-                  borderRadius: radius,
-                  child: Stack(fit: StackFit.expand, children: [
-                    Padding(
-                      padding: EdgeInsets.all(width * 0.08),
-                      child: Center(
-                        child: Text(item.displayTitle,
-                            maxLines: 3,
-                            textAlign: TextAlign.center,
-                            overflow: TextOverflow.ellipsis,
-                            style: reelText(width * 0.1, weight: FontWeight.w600, color: Reel.text3)),
-                      ),
-                    ),
-                    if (url != null) NetImage(url, fade: false, decodeWidth: step(width, dpr.clamp(1.0, 1.25).toDouble())),
-                    if (live) PreviewVideo.hero(item.key, active: true),
-                    if (progress > 0)
-                      Positioned(
-                        left: width * 0.06,
-                        right: width * 0.06,
-                        bottom: height * 0.07,
-                        child: Container(
-                          height: (h * 0.0055).clamp(3.0, 8.0),
-                          decoration: BoxDecoration(color: const Color(0x59FFFFFF), borderRadius: BorderRadius.circular(4)),
-                          alignment: Alignment.centerLeft,
-                          child: FractionallySizedBox(
-                            widthFactor: progress.clamp(0.02, 1.0),
-                            child: Container(
-                                decoration:
-                                    BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(4))),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      AnimatedScale(
+                        scale: f ? (wide ? 1.06 : 1.1) : 1,
+                        duration: const Duration(milliseconds: 180),
+                        curve: Curves.easeOutCubic,
+                        child: SizedBox(
+                          height: cardHeight,
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 320),
+                            curve: Curves.easeOutCubic,
+                            width: cw,
+                            decoration: BoxDecoration(
+                              borderRadius: radius,
+                              color: Reel.card,
+                              boxShadow: f
+                                  ? [
+                                      BoxShadow(
+                                          color: const Color(0x99000000),
+                                          blurRadius: h * 0.022,
+                                          offset: Offset(0, h * 0.01))
+                                    ]
+                                  : null,
+                            ),
+                            child: ClipRRect(
+                              borderRadius: radius,
+                              child: Stack(fit: StackFit.expand, children: [
+                                Padding(
+                                  padding: EdgeInsets.all(width * 0.08),
+                                  child: Center(
+                                    child: Text(item.displayTitle,
+                                        maxLines: 3,
+                                        textAlign: TextAlign.center,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: reelText(width * 0.1,
+                                            weight: FontWeight.w600,
+                                            color: Reel.text3)),
+                                  ),
+                                ),
+                                if (url != null)
+                                  NetImage(url,
+                                      fade: false,
+                                      decodeWidth: step(width,
+                                          dpr.clamp(1.0, 1.25).toDouble())),
+                                if (live)
+                                  PreviewVideo.hero(item.key, active: true),
+                                if (progress > 0)
+                                  Positioned(
+                                    left: width * 0.06,
+                                    right: width * 0.06,
+                                    bottom: cardHeight * 0.07,
+                                    child: Container(
+                                      height: (h * 0.0055).clamp(3.0, 8.0),
+                                      decoration: BoxDecoration(
+                                          color: const Color(0x59FFFFFF),
+                                          borderRadius:
+                                              BorderRadius.circular(4)),
+                                      alignment: Alignment.centerLeft,
+                                      child: FractionallySizedBox(
+                                        widthFactor: progress.clamp(0.02, 1.0),
+                                        child: Container(
+                                            decoration: BoxDecoration(
+                                                color: Colors.white,
+                                                borderRadius:
+                                                    BorderRadius.circular(4))),
+                                      ),
+                                    ),
+                                  ),
+                                // the light sheen on a focused card
+                                if (f)
+                                  const DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                        colors: [
+                                          Color(0x2EFFFFFF),
+                                          Color(0x08FFFFFF),
+                                          Color(0x00FFFFFF)
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                              ]),
+                            ),
                           ),
                         ),
                       ),
-                    // the light sheen on a focused card
-                    if (f)
-                      const DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [Color(0x2EFFFFFF), Color(0x08FFFFFF), Color(0x00FFFFFF)],
+                      if (textOn)
+                        // Slides down a little when the card grows, without changing the layout size.
+                        AnimatedSlide(
+                          duration: const Duration(milliseconds: 180),
+                          curve: Curves.easeOutCubic,
+                          offset: Offset(0, f ? (height * 0.05) / tb : 0),
+                          child: SizedBox(
+                            height: tb,
+                            child: Padding(
+                              padding: EdgeInsets.only(top: h * 0.012),
+                              child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    SizedBox(
+                                      height: h * 0.028,
+                                      child: Text(
+                                        item.type == 'episode' && !landscape
+                                            ? item.title
+                                            : item.displayTitle,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: reelText(h * 0.021,
+                                            weight: FontWeight.w500,
+                                            color: f
+                                                ? Colors.white
+                                                : Colors.white70,
+                                            height: 1.25),
+                                      ),
+                                    ),
+                                    if (_sub.isNotEmpty)
+                                      SizedBox(
+                                        height: h * 0.024,
+                                        child: Text(_sub,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: reelText(h * 0.018,
+                                                color: Reel.text2,
+                                                height: 1.25)),
+                                      ),
+                                  ]),
+                            ),
                           ),
-                        ),
-                      ),
-                  ]),
-                ),
-              ),
-              ),
-            ),
-            if (textOn)
-              // Slides down a little when the card grows, without changing the layout size.
-              AnimatedSlide(
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOutCubic,
-                offset: Offset(0, f ? (height * 0.05) / tb : 0),
-                child: SizedBox(
-                  height: tb,
-                  child: Padding(
-                    padding: EdgeInsets.only(top: h * 0.012),
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      SizedBox(
-                        height: h * 0.028,
-                        child: Text(
-                          item.type == 'episode' && !landscape ? item.title : item.displayTitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: reelText(h * 0.021,
-                              weight: FontWeight.w500, color: f ? Colors.white : Colors.white70, height: 1.25),
-                        ),
-                      ),
-                      if (_sub.isNotEmpty)
-                        SizedBox(
-                          height: h * 0.024,
-                          child: Text(_sub,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: reelText(h * 0.018, color: Reel.text2, height: 1.25)),
                         ),
                     ]),
-                  ),
-                ),
               ),
-          ]),
-          ),
-        );
+            );
           }
 
           // Always built the same way, whether or not this card has focus: swapping the shape of the
@@ -477,7 +610,7 @@ class PosterCard extends StatelessWidget {
 }
 
 /// A titled horizontal row of cards.
-class CardRow extends StatelessWidget {
+class CardRow extends StatefulWidget {
   final String title;
   final List<PlexItem> items;
   final bool landscape;
@@ -502,25 +635,53 @@ class CardRow extends StatelessWidget {
     this.previews = true,
     this.autofocusFirst = false,
     this.big = false,
-    this.previewDelay = const Duration(milliseconds: 900),
-    this.landscape = false,
+    this.previewDelay = const Duration(seconds: 2),
+    this.landscape = true,
     this.titles = false,
   });
+
+  @override
+  State<CardRow> createState() => _CardRowState();
+}
+
+class _CardRowState extends State<CardRow> {
+  final _scroll = ScrollController();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  void _move(double amount) {
+    if (!_scroll.hasClients) return;
+    final target =
+        (_scroll.offset + amount).clamp(0.0, _scroll.position.maxScrollExtent);
+    _scroll.animateTo(target,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOutCubic);
+  }
 
   @override
   Widget build(BuildContext context) {
     final h = Reel.h(context);
     final w = Reel.w(context);
-    final ch = big ? h * 0.40 : (landscape ? h * 0.185 : h * 0.28);
-    final cw = landscape ? ch * 16 / 9 : ch * 2 / 3;
-    final textH = (landscape || titles) ? PosterCard.textBlock(h) : 0.0;
-    final padV = ch * 0.07; // room above and below for the 1.1x grow and its shadow
+    final ch =
+        widget.big ? h * 0.40 : (widget.landscape ? h * 0.185 : h * 0.28);
+    final cw = widget.landscape ? ch * 16 / 9 : ch * 2 / 3;
+    final textH =
+        (widget.landscape || widget.titles) ? PosterCard.textBlock(h) : 0.0;
+    final padV =
+        ch * 0.07; // room above and below for the 1.1x grow and its shadow
     // Fetch the whole row's pictures quietly in the background (once per list).
-    if (_warmed[items] != true) {
-      _warmed[items] = true;
+    if (CardRow._warmed[widget.items] != true) {
+      CardRow._warmed[widget.items] = true;
       final dpr = MediaQuery.devicePixelRatioOf(context);
       // just the first couple of screens' worth: more would clog a slow connection
-      final urls = items.take(40).map((it) => PosterCard.imageUrl(it, cw, ch, landscape, dpr)).toList();
+      final urls = widget.items
+          .take(40)
+          .map((it) => PosterCard.imageUrl(it, cw, ch, widget.landscape, dpr))
+          .toList();
       // The first screenful of a row goes in the on-screen queue, not the background one, so a row
       // never arrives with empty cards at its far end.
       for (final u in urls.take(14)) {
@@ -531,49 +692,76 @@ class CardRow extends StatelessWidget {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Padding(
         padding: EdgeInsets.only(left: w * 0.045 + h * 0.011, top: h * 0.03),
-        child: Text(title, style: reelText(h * 0.03, weight: FontWeight.w600)),
+        child: Text(widget.title,
+            style: reelText(h * 0.03, weight: FontWeight.w600)),
       ),
       SizedBox(
         height: ch + textH + h * 0.022 + padV * 2 + 2,
-        child: ListView.builder(
+        child: Stack(children: [
+          ListView.builder(
+            controller: _scroll,
             scrollDirection: Axis.horizontal,
             clipBehavior: Clip.none,
             // build well ahead so moving right with the keys always finds the next card
             cacheExtent: w * 2.5,
-            padding: EdgeInsets.symmetric(horizontal: w * 0.045, vertical: padV),
-            itemCount: items.length,
+            padding:
+                EdgeInsets.symmetric(horizontal: w * 0.045, vertical: padV),
+            itemCount: widget.items.length,
             itemBuilder: (c, i) => Align(
               alignment: Alignment.topCenter,
               child: PosterCard(
-                item: items[i],
+                item: widget.items[i],
                 width: cw,
                 height: ch,
-                landscape: landscape,
-                showTitle: titles,
-                preview: previews,
-                autofocus: autofocusFirst && i == 0,
+                landscape: widget.landscape,
+                showTitle: widget.titles,
+                preview: widget.previews,
+                autofocus: widget.autofocusFirst && i == 0,
                 onPressed: () {
-                  if (previews) Preview.handOff();
-                  onPressed(items[i]);
+                  if (widget.previews) Preview.handOff();
+                  widget.onPressed(widget.items[i]);
                 },
                 // hold Enter: just the preview, full screen
-                onLongPress: onLongPress == null
+                onLongPress: widget.onLongPress == null
                     ? null
                     : () {
                         Preview.handOff();
-                        onLongPress!(items[i]);
+                        widget.onLongPress!(widget.items[i]);
                       },
                 onFocusChange: (f) {
                   if (f) {
-                    onFocused?.call(items[i]);
-                    if (previews) Preview.focus(items[i], delay: previewDelay);
-                  } else if (previews) {
-                    Preview.blur(items[i]);
+                    widget.onFocused?.call(widget.items[i]);
+                    if (widget.previews)
+                      Preview.focus(widget.items[i],
+                          delay: widget.previewDelay);
+                  } else if (widget.previews) {
+                    Preview.blur(widget.items[i]);
                   }
                 },
               ),
             ),
           ),
+          Positioned(
+              left: w * 0.012,
+              top: 0,
+              bottom: 0,
+              child: Center(
+                child: HoverButton(Icons.chevron_left_rounded,
+                    size: h * 0.055,
+                    tooltip: 'Previous',
+                    onPressed: () => _move(-w * 0.65)),
+              )),
+          Positioned(
+              right: w * 0.012,
+              top: 0,
+              bottom: 0,
+              child: Center(
+                child: HoverButton(Icons.chevron_right_rounded,
+                    size: h * 0.055,
+                    tooltip: 'Next',
+                    onPressed: () => _move(w * 0.65)),
+              )),
+        ]),
       ),
     ]);
   }
