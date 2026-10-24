@@ -118,8 +118,8 @@ final class PlayerOsd {
             long t = scrubTarget;
             scrubTarget = -1;
             host.seekTo(t);
-            preview.animate().alpha(0f).setDuration(200).start();
-            knob.animate().scaleX(1f).scaleY(1f).setDuration(150).start();
+            preview.animate().alpha(0f).setDuration(Motion.FOCUS_MS).setInterpolator(Motion.EASE).start();
+            knob.animate().scaleX(1f).scaleY(1f).setDuration(Motion.FAST_MS).setInterpolator(Motion.EASE).start();
             touch();
         }
     };
@@ -244,7 +244,7 @@ final class PlayerOsd {
     /** Slides the timeline up by [px] (out of the way of a row along the bottom), or back with 0. */
     void lift(float px) {
         bottom.animate().cancel();
-        bottom.animate().translationY(-px).setDuration(220).start();
+        bottom.animate().translationY(-px).setDuration(Motion.FOCUS_MS).setInterpolator(Motion.EASE).start();
     }
 
     private void touch() {
@@ -259,7 +259,7 @@ final class PlayerOsd {
         update();
         for (View v : new View[]{shadeBottom, shadeTop, bottom}) {
             v.animate().cancel();
-            v.animate().alpha(1f).setDuration(220).start();
+            v.animate().alpha(1f).setDuration(Motion.FOCUS_MS).setInterpolator(Motion.EASE).start();
         }
         if (visListener != null) visListener.onChange(true);
         handler.removeCallbacks(tick);
@@ -272,7 +272,7 @@ final class PlayerOsd {
         handler.removeCallbacks(tick);
         for (View v : new View[]{shadeBottom, shadeTop, bottom}) {
             v.animate().cancel();
-            v.animate().alpha(0f).setDuration(260).start();
+            v.animate().alpha(0f).setDuration(Motion.MEDIUM_MS).setInterpolator(Motion.EASE).start();
         }
         handler.postDelayed(() -> {
             if (!visible) bottom.setVisibility(View.GONE);
@@ -285,7 +285,7 @@ final class PlayerOsd {
         if (scrubTarget >= 0) {
             handler.removeCallbacks(commit);
             scrubTarget = -1;
-            preview.animate().alpha(0f).setDuration(150).start();
+            preview.animate().alpha(0f).setDuration(Motion.FAST_MS).setInterpolator(Motion.EASE).start();
             update();
             return true;
         }
@@ -335,8 +335,8 @@ final class PlayerOsd {
             mark.setAlpha(1f);
             mark.setScaleX(0.85f);
             mark.setScaleY(0.85f);
-            mark.animate().scaleX(1f).scaleY(1f).setDuration(180).withEndAction(() -> {
-                if (host.playing()) mark.animate().alpha(0f).setDuration(350).start();
+            mark.animate().scaleX(1f).scaleY(1f).setDuration(Motion.FOCUS_MS).setInterpolator(Motion.EASE).withEndAction(() -> {
+                if (host.playing()) mark.animate().alpha(0f).setDuration(Motion.MEDIUM_MS).setInterpolator(Motion.EASE).start();
             }).start();
             show();
             return true;
@@ -347,10 +347,10 @@ final class PlayerOsd {
     /** Called by the activity when playback starts or stops on its own. */
     void onPlayingChanged(boolean playing) {
         if (playing) {
-            mark.animate().alpha(0f).setDuration(300).start();
+            mark.animate().alpha(0f).setDuration(Motion.MEDIUM_MS).setInterpolator(Motion.EASE).start();
         } else {
             mark.set(false);
-            mark.animate().alpha(1f).setDuration(200).start();
+            mark.animate().alpha(1f).setDuration(Motion.FOCUS_MS).setInterpolator(Motion.EASE).start();
             show();
         }
     }
@@ -364,11 +364,30 @@ final class PlayerOsd {
         show();
         update();
         preview.animate().cancel();
-        preview.animate().alpha(1f).setDuration(120).start();
-        knob.animate().scaleX(1.35f).scaleY(1.35f).setDuration(120).start();
+        preview.animate().alpha(1f).setDuration(Motion.FAST_MS).setInterpolator(Motion.EASE).start();
+        knob.animate().scaleX(1.35f).scaleY(1.35f).setDuration(Motion.FAST_MS).setInterpolator(Motion.EASE).start();
         showThumb(scrubTarget);
         handler.removeCallbacks(commit);
         handler.postDelayed(commit, COMMIT_MS);
+    }
+
+    /** Fast forward / rewind: move the timeline to [t] without seeking the video. */
+    void trickTo(long t) {
+        scrubTarget = Math.max(0, t);
+        handler.removeCallbacks(commit);
+        show();
+        update();
+        if (preview.getAlpha() < 1f) preview.animate().alpha(1f).setDuration(Motion.FAST_MS).setInterpolator(Motion.EASE).start();
+        knob.animate().scaleX(1.35f).scaleY(1.35f).setDuration(Motion.FAST_MS).setInterpolator(Motion.EASE).start();
+        showThumb(scrubTarget);
+    }
+
+    void trickCancel() {
+        scrubTarget = -1;
+        handler.removeCallbacks(commit);
+        preview.animate().alpha(0f).setDuration(Motion.FOCUS_MS).setInterpolator(Motion.EASE).start();
+        knob.animate().scaleX(1f).scaleY(1f).setDuration(Motion.FAST_MS).setInterpolator(Motion.EASE).start();
+        update();
     }
 
     private void update() {

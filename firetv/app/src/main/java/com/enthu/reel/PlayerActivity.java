@@ -335,8 +335,8 @@ public class PlayerActivity extends Activity {
             upNext.setAlpha(0f);
             upNext.setTranslationX(W * 0.05f);
             upNext.setVisibility(View.VISIBLE);
-            upNext.animate().alpha(1f).translationX(0f).setDuration(300)
-                    .setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
+            upNext.animate().alpha(1f).translationX(0f).setDuration(Motion.MEDIUM_MS)
+                    .setInterpolator(Motion.EASE).start();
             upNextAt = android.os.SystemClock.uptimeMillis();
             upNextLeft = UP_NEXT_MS;
             if (skipBtn != null) skipBtn.setVisibility(View.GONE);
@@ -356,7 +356,7 @@ public class PlayerActivity extends Activity {
     }
 
     private void hideUpNext() {
-        upNext.animate().alpha(0f).setDuration(200).withEndAction(() -> upNext.setVisibility(View.GONE)).start();
+        upNext.animate().alpha(0f).setDuration(Motion.FOCUS_MS).setInterpolator(Motion.EASE).withEndAction(() -> upNext.setVisibility(View.GONE)).start();
     }
 
     private void playNext() {
@@ -693,6 +693,18 @@ public class PlayerActivity extends Activity {
             hint.setBackground(UiUtil.rounded(f ? 0xFFFFFFFF : 0x99000000, H * 0.05f));
             hint.setTextColor(f ? 0xFF111111 : 0xFFFFFFFF);
         });
+        trickLabel = new TextView(this);
+        trickLabel.setTextColor(0xFFFFFFFF);
+        trickLabel.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.04f);
+        trickLabel.setTypeface(UiUtil.font(UiUtil.MEDIUM));
+        trickLabel.setPadding((int) (W * 0.02f), (int) (H * 0.016f), (int) (W * 0.02f), (int) (H * 0.016f));
+        trickLabel.setBackground(UiUtil.rounded(0xB3000000, H * 0.06f));
+        trickLabel.setVisibility(View.GONE);
+        FrameLayout.LayoutParams trickLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER_HORIZONTAL | Gravity.TOP);
+        trickLp.topMargin = (int) (H * 0.12f);
+        root.addView(trickLabel, trickLp);
         FrameLayout.LayoutParams hintLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP | Gravity.END);
@@ -1529,6 +1541,84 @@ public class PlayerActivity extends Activity {
      */
     private long seekingTo = -1;
 
+    // ---- Fast forward / rewind at 2x 4x 8x 16x (remote skip buttons) ----
+    private static final int[] TRICK_SPEEDS = {2, 4, 8, 16};
+    private static final long TRICK_TICK_MS = 100;
+    // How many seconds of film the timeline moves per real second at each step (2x, 4x, 8x, 16x)
+    private static final int[] TRICK_RATE = {10, 30, 90, 240};
+    private long trickStart = 0;
+    private boolean trickWasPlaying = false;
+    private int trickEat = 0;
+    private int trickDir = 0;      // +1 forward, -1 back, 0 off
+    private int trickIdx = 0;
+    private long trickPos = 0;
+    private TextView trickLabel;
+    private final Runnable trickTick = new Runnable() {
+        @Override
+        public void run() {
+            if (trickDir == 0 || player == null) return;
+            long dur = item != null && item.duration > 0 ? item.duration : offsetMs + Math.max(0, player.getDuration());
+            trickPos += trickDir * TRICK_RATE[trickIdx] * TRICK_TICK_MS;
+            if (trickDir < 0 && trickPos <= 0) { trickPos = 0; stopTrick(true); return; }
+            if (trickDir > 0 && dur > 0 && trickPos >= dur - 4000) { trickPos = Math.max(0, dur - 4000); stopTrick(true); return; }
+            if (osd != null) osd.trickTo(trickPos);
+            updateTrickLabel();
+            handler.postDelayed(this, TRICK_TICK_MS);
+        }
+    };
+
+    private void updateTrickLabel() {
+        if (trickLabel == null) return;
+        long s = Math.max(0, trickPos) / 1000;
+        String t = (s >= 3600 ? (s / 3600) + ":" + String.format(java.util.Locale.US, "%02d:%02d", (s / 60) % 60, s % 60)
+                : String.format(java.util.Locale.US, "%d:%02d", s / 60, s % 60));
+        trickLabel.setText((trickDir > 0 ? "\u25B6\u25B6  " : "\u25C0\u25C0  ") + TRICK_SPEEDS[trickIdx] + "x    " + t);
+    }
+
+    private void trickPress(int dir) {
+        if (player == null) return;
+        if (trickDir == 0) {
+            trickDir = dir;
+            trickIdx = 0;
+            trickPos = currentMs();
+            trickStart = trickPos;
+            trickWasPlaying = player.getPlayWhenReady();
+            player.setPlayWhenReady(false);
+            if (osd != null) { osd.show(); osd.pin(true); }
+            if (trickLabel != null) {
+                trickLabel.setVisibility(View.VISIBLE);
+                trickLabel.setAlpha(0f);
+                trickLabel.animate().alpha(1f).setDuration(Motion.FOCUS_MS).setInterpolator(Motion.EASE).start();
+            }
+        } else if (dir == trickDir) {
+            trickIdx = Math.min(TRICK_SPEEDS.length - 1, trickIdx + 1);
+        } else if (trickIdx == 0) {
+            stopTrick(true);
+            return;
+        } else {
+            trickIdx--;
+        }
+        updateTrickLabel();
+        handler.removeCallbacks(trickTick);
+        handler.postDelayed(trickTick, TRICK_TICK_MS);
+    }
+
+    /** Leave fast forward / rewind; commit = jump there (needed when the stream is being transcoded). */
+    private void stopTrick(boolean commit) {
+        if (trickDir == 0) return;
+        trickDir = 0;
+        handler.removeCallbacks(trickTick);
+        if (osd != null) { osd.trickCancel(); osd.pin(false); }
+        if (player != null) {
+            seekAbs(commit ? trickPos : trickStart);
+            player.setPlayWhenReady(trickWasPlaying || commit);
+        }
+        if (trickLabel != null) {
+            trickLabel.animate().alpha(0f).setDuration(Motion.FOCUS_MS).setInterpolator(Motion.EASE)
+                    .withEndAction(() -> { if (trickDir == 0) trickLabel.setVisibility(View.GONE); }).start();
+        }
+    }
+
     private void seekAbs(long ms) {
         if (player == null) return;
         ms = Math.max(0, ms);
@@ -1593,6 +1683,8 @@ public class PlayerActivity extends Activity {
     }
 
     private void releasePlayer() {
+        trickDir = 0;
+        handler.removeCallbacks(trickTick);
         handler.removeCallbacks(frameWatch);
         handler.removeCallbacks(ticker);
         handler.removeCallbacks(skipTick);
@@ -1852,7 +1944,7 @@ public class PlayerActivity extends Activity {
             skipBtn.setBackground(UiUtil.rounded(f ? 0xFFFFFFFF : 0xCC000000, r));
             skipBtn.setTextColor(f ? 0xFF111111 : 0xFFFFFFFF);
             float sc = f ? 1.08f : 1f;
-            v.animate().scaleX(sc).scaleY(sc).setDuration(130).start();
+            v.animate().scaleX(sc).scaleY(sc).setDuration(Motion.FAST_MS).setInterpolator(Motion.EASE).start();
         });
         skipBtn.setOnClickListener(v -> {
             if (skipRange == null || player == null) return;
@@ -2231,6 +2323,31 @@ public class PlayerActivity extends Activity {
                     upNextCancelled = true;
                     hideUpNext();
                 }
+                return true;
+            }
+        }
+        if (!panelOpen && !epOpen && player != null) {
+            boolean ff = kc == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD || kc == KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD;
+            boolean rw = kc == KeyEvent.KEYCODE_MEDIA_REWIND || kc == KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD;
+            if (ff || rw) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) trickPress(ff ? 1 : -1);
+                return true;
+            }
+            if (trickDir != 0) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                    // Any other button ends it where we are; Back, OK and Play/Pause are used up by that
+                    boolean eat = kc == KeyEvent.KEYCODE_BACK || kc == KeyEvent.KEYCODE_DPAD_CENTER
+                            || kc == KeyEvent.KEYCODE_ENTER || kc == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+                            || kc == KeyEvent.KEYCODE_MEDIA_PLAY || kc == KeyEvent.KEYCODE_MEDIA_PAUSE;
+                    stopTrick(kc != KeyEvent.KEYCODE_BACK);
+                    if (eat) trickEat = kc;
+                    if (eat) return true;
+                } else if (trickEat == kc) {
+                    if (event.getAction() == KeyEvent.ACTION_UP) trickEat = 0;
+                    return true;
+                }
+            } else if (trickEat == kc) {
+                if (event.getAction() == KeyEvent.ACTION_UP) trickEat = 0;
                 return true;
             }
         }

@@ -270,7 +270,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
             public void playing() {
                 if (token != previewToken || ytView != ref[0]) return;
                 previewShowing = true;
-                ref[0].animate().alpha(1f).setDuration(500).start();
+                ref[0].animate().alpha(1f).setDuration(Motion.SLOW_MS).setInterpolator(Motion.EASE).start();
                 handler.removeCallbacks(previewEnd);
                 handler.postDelayed(previewEnd, PREVIEW_MAX_MS);
             }
@@ -376,7 +376,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         pCard.setTranslationY(cy - ty);
         pCard.setAlpha(0.6f);
         pCard.animate().scaleX(1f).scaleY(1f).translationX(0f).translationY(0f).alpha(1f)
-                .setDuration(320).setInterpolator(new DecelerateInterpolator(1.6f)).start();
+                .setDuration(Motion.MEDIUM_MS).setInterpolator(Motion.EASE).start();
         showHiddenCard();
         if (focusedCardRoot != null) {
             hiddenCardRoot = focusedCardRoot;
@@ -390,7 +390,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     private void dimBackdrop(boolean on) {
         if (bgBox == null) return;
         bgBox.animate().cancel();
-        bgBox.animate().alpha(on ? 0f : 1f).setDuration(on ? 350 : 450).start();
+        bgBox.animate().alpha(on ? 0f : 1f).setDuration(on ? Motion.MEDIUM_MS : Motion.SLOW_MS).start();
     }
 
     /** Fills the TextureView with the video, cropping the edges (like a centre-crop picture). */
@@ -427,7 +427,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
             public void onRenderedFirstFrame() {
                 if (token != previewToken || pTex == null) return;
                 previewShowing = true;
-                pTex.animate().alpha(1f).setDuration(400).start();
+                pTex.animate().alpha(1f).setDuration(Motion.SLOW_MS).setInterpolator(Motion.EASE).start();
                 fadeVolume(previewPlayer, previewVolume(HomeActivity.this), 1800);
                 handler.removeCallbacks(previewEnd);
                 handler.postDelayed(previewEnd, PREVIEW_MAX_MS);
@@ -507,7 +507,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
             ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) c.getLayoutParams();
             c.animate().scaleX(pFrom[2] / c.getWidth()).scaleY(pFrom[3] / c.getHeight())
                     .translationX(pFrom[0] - lp.leftMargin).translationY(pFrom[1] - lp.topMargin)
-                    .alpha(0f).setDuration(200).withEndAction(() -> {
+                    .alpha(0f).setDuration(Motion.FOCUS_MS).setInterpolator(Motion.EASE).withEndAction(() -> {
                         if (c.getParent() != null) ((ViewGroup) c.getParent()).removeView(c);
                     }).start();
         } else if (c.getParent() != null) {
@@ -557,7 +557,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
             View v = rootView.getChildAt(i);
             if (v == bgBox || v == heroTex) continue;
             heroFullAlphas.put(v, v.getAlpha());
-            v.animate().alpha(0f).setDuration(300).start();
+            v.animate().alpha(0f).setDuration(Motion.MEDIUM_MS).setInterpolator(Motion.EASE).start();
         }
         handler.removeCallbacks(heroEnd);
         if (heroPrevClip) handler.postDelayed(heroEnd, 90_000); // a clip of the film still stops
@@ -568,7 +568,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         if (!heroFull) return;
         heroFull = false;
         for (java.util.Map.Entry<View, Float> en : heroFullAlphas.entrySet()) {
-            en.getKey().animate().alpha(en.getValue()).setDuration(300).start();
+            en.getKey().animate().alpha(en.getValue()).setDuration(Motion.MEDIUM_MS).setInterpolator(Motion.EASE).start();
         }
         heroFullAlphas.clear();
         if (heroPrevShowing) {
@@ -578,12 +578,18 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     }
 
     /** While the spotlight preview plays the rows slide down out of the way; title, nav and button stay. */
+    /** A short beat after the preview picture appears, the cards slide down out of its way. */
+    private final Runnable heroPush = () -> {
+        if (heroPrevShowing) pushRows(true);
+    };
+    private static final long PUSH_DELAY_MS = 1200;
+
     private void pushRows(boolean down) {
         if (rowsView == null || rowsPushed == down) return;
         rowsPushed = down;
         rowsView.animate().cancel();
-        rowsView.animate().translationY(down ? H * 0.34f : 0f).setDuration(down ? 600 : 400)
-                .setInterpolator(new DecelerateInterpolator()).start();
+        rowsView.animate().translationY(down ? H * 0.34f : 0f).setDuration(down ? Motion.LONG_MS : Motion.SLOW_MS)
+                .setInterpolator(Motion.EASE).start();
     }
     private static final long HERO_PREVIEW_MS = 3000;
     private final Runnable heroDue = () -> {
@@ -696,8 +702,9 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 if (token != heroPrevToken || heroTex == null) return;
                 heroPrevShowing = true;
                 if (bgDrift != null) bgDrift.pause();
-                pushRows(true);
-                heroTex.animate().alpha(1f).setDuration(600).start();
+                handler.removeCallbacks(heroPush);
+                handler.postDelayed(heroPush, PUSH_DELAY_MS);
+                heroTex.animate().alpha(1f).setDuration(Motion.LONG_MS).setInterpolator(Motion.EASE).start();
                 fadeVolume(heroPlayer, previewVolume(HomeActivity.this), 1800);
                 handler.removeCallbacks(heroEnd);
                 handler.postDelayed(heroEnd, PREVIEW_MAX_MS);
@@ -739,6 +746,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         heroPrevDue = false;
         heroPrevReady = false;
         heroPrevShowing = false;
+        handler.removeCallbacks(heroPush);
         if (bgDrift != null && bgDrift.isPaused() && pCard == null) bgDrift.resume();
         pushRows(false);
         handler.removeCallbacks(heroDue);
@@ -1040,8 +1048,8 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         });
         // The splash (logo on black) sits behind; fade the home screen in over it.
         root.setAlpha(0f);
-        root.animate().alpha(1f).setStartDelay(120).setDuration(650)
-                .setInterpolator(new DecelerateInterpolator()).start();
+        root.animate().alpha(1f).setStartDelay(120).setDuration(Motion.LONG_MS)
+                .setInterpolator(Motion.EASE).start();
     }
 
     private ImageView newBg() {
@@ -1274,7 +1282,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         t.setOnFocusChangeListener((v, focused) -> {
             applyButtonStyle(t, primary, focused, r);
             float s = focused ? 1.1f : 1f;
-            v.animate().scaleX(s).scaleY(s).setDuration(160).start();
+            Motion.focusScale(v, s);
             v.setElevation(focused ? H * 0.02f : 0f);
             if (focused) {
                 SoundFx.move();
@@ -1302,7 +1310,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         t.setClickable(true);
         t.setOnFocusChangeListener((v, focused) -> {
             float s = focused ? 1.06f : 1f;
-            v.animate().scaleX(s).scaleY(s).setDuration(130).start();
+            Motion.focusScale(v, s);
             if (focused) {
                 SoundFx.move();
                 // On the top bar nothing plays in the background: the quick way to get the app quiet
@@ -1353,7 +1361,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         styleTabs();
         // Rows slide down and fade while the new tab loads
         rowsView.animate().cancel();
-        rowsView.animate().alpha(0f).translationY(H * 0.03f).setDuration(160).start();
+        rowsView.animate().alpha(0f).translationY(H * 0.03f).setDuration(Motion.FAST_MS).setInterpolator(Motion.EASE).start();
         load();
     }
 
@@ -1366,7 +1374,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
             status.setVisibility(View.VISIBLE);
         }
 
-        Plex.async(() -> {
+        final java.util.concurrent.Callable<Loaded> job = () -> {
             Loaded out = new Loaded();
             List<List<Plex.Item>> recents = new ArrayList<>();
             List<Plex.Section> sections = Plex.visibleSections(Plex.sections());
@@ -1438,7 +1446,8 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 }
             }
             return out;
-        }, new Plex.Callback<Loaded>() {
+        };
+        final Plex.Callback<Loaded> cb = new Plex.Callback<Loaded>() {
             @Override
             public void ok(Loaded result) {
                 if (mine != loadToken || isDestroyed()) return;
@@ -1453,8 +1462,8 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 if (!returning) {
                     rowsView.setTranslationY(H * 0.03f);
                     rowsView.setAlpha(0f);
-                    rowsView.animate().alpha(1f).translationY(0f).setDuration(380)
-                            .setInterpolator(new DecelerateInterpolator()).start();
+                    rowsView.animate().alpha(1f).translationY(0f).setDuration(Motion.MEDIUM_MS)
+                            .setInterpolator(Motion.EASE).start();
                 }
 
                 if (rows.isEmpty()) {
@@ -1505,7 +1514,54 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 if (!rows.isEmpty()) return; // keep what we have
                 showStatus("Can't reach your Plex server.\nPress OK to try again.", () -> load());
             }
+        };
+        final boolean[] cached = {false, false}; // {showed the saved copy, the network answer is in}
+        if (rows.isEmpty()) {
+            // Open straight away on what was seen last time; the fresh answer replaces it below
+            Plex.async(() -> Plex.cacheOnly(job), new Plex.Callback<Loaded>() {
+                @Override
+                public void ok(Loaded r) {
+                    if (mine != loadToken || isDestroyed() || cached[1] || r.rows.isEmpty()) return;
+                    cached[0] = true;
+                    lastSig = signature(r);
+                    cb.ok(r);
+                }
+
+                @Override
+                public void fail(Exception e) {
+                }
+            });
+        }
+        Plex.async(job, new Plex.Callback<Loaded>() {
+            @Override
+            public void ok(Loaded r) {
+                cached[1] = true;
+                if (mine != loadToken || isDestroyed()) return;
+                String sig = signature(r);
+                if (cached[0] && sig.equals(lastSig)) return; // nothing changed since the saved copy
+                lastSig = sig;
+                cb.ok(r);
+            }
+
+            @Override
+            public void fail(Exception e) {
+                cb.fail(e);
+            }
         });
+    }
+
+    private String lastSig = "";
+
+    /** The rows and what's in them, so a refresh that changed nothing doesn't redraw the page. */
+    private static String signature(Loaded r) {
+        StringBuilder sb = new StringBuilder();
+        for (Row row : r.rows) {
+            sb.append(row.title).append('|');
+            for (int i = 0; i < row.items.size() && i < 30; i++) sb.append(row.items.get(i).key).append(',');
+            sb.append(';');
+        }
+        for (Plex.Item it : r.spotlight) sb.append(it.key).append('.');
+        return sb.toString();
     }
 
     private final java.util.Map<String, Seerr.Media> requestMedia = new java.util.HashMap<>();
@@ -1800,7 +1856,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         if (pendingHero != null) handler.removeCallbacks(pendingHero);
         if (spotlightMode || spotlight.isEmpty()) return;
         spotlightMode = true;
-        dots.animate().alpha(1f).setDuration(200).start();
+        dots.animate().alpha(1f).setDuration(Motion.FOCUS_MS).setInterpolator(Motion.EASE).start();
         applyHero(spotlight.get(spotIndex), true);
         restartSpotlightTimer();
     }
@@ -1813,7 +1869,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         pendingHero = () -> {
             if (spotlightMode) {
                 spotlightMode = false;
-                dots.animate().alpha(0f).setDuration(200).start();
+                dots.animate().alpha(0f).setDuration(Motion.FOCUS_MS).setInterpolator(Motion.EASE).start();
             }
             applyHero(item, true);
         };
@@ -1835,12 +1891,12 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
 
         heroGroup.animate().cancel();
         if (animate) {
-            heroGroup.animate().alpha(0f).translationY(H * 0.012f).setDuration(110)
+            heroGroup.animate().alpha(0f).translationY(H * 0.012f).setDuration(Motion.FAST_MS).setInterpolator(Motion.EASE)
                     .withEndAction(() -> {
                         if (token != heroToken) return;
                         bindHeroText(it);
-                        heroGroup.animate().alpha(1f).translationY(0f).setDuration(280)
-                                .setInterpolator(new DecelerateInterpolator()).start();
+                        heroGroup.animate().alpha(1f).translationY(0f).setDuration(Motion.MEDIUM_MS)
+                                .setInterpolator(Motion.EASE).start();
                     }).start();
         } else {
             bindHeroText(it);
@@ -1964,7 +2020,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         final int[] from = navColors.clone();
         if (navAnim != null) navAnim.cancel();
         navAnim = android.animation.ValueAnimator.ofFloat(0f, 1f);
-        navAnim.setDuration(450);
+        navAnim.setDuration(Motion.SLOW_MS).setInterpolator(Motion.EASE);
         final android.animation.ArgbEvaluator ev = new android.animation.ArgbEvaluator();
         navAnim.addUpdateListener(a -> {
             float f = (Float) a.getAnimatedValue();
@@ -1982,7 +2038,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         next.setAlpha(0f);
         bgFront = next;
         next.animate().cancel();
-        next.animate().alpha(1f).setDuration(500).setListener(new AnimatorListenerAdapter() {
+        next.animate().alpha(1f).setDuration(Motion.SLOW_MS).setInterpolator(Motion.EASE).setListener(new AnimatorListenerAdapter() {
             @Override
             public void onAnimationEnd(Animator animation) {
                 if (bgFront == next) old.setAlpha(0f);
@@ -2015,7 +2071,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         previewFullscreen = true;
         for (int i = 0; i < c.getChildCount(); i++) {
             View ch = c.getChildAt(i);
-            if ("cardText".equals(ch.getTag())) ch.animate().alpha(0f).setDuration(150).start();
+            if ("cardText".equals(ch.getTag())) ch.animate().alpha(0f).setDuration(Motion.FAST_MS).setInterpolator(Motion.EASE).start();
         }
         ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) c.getLayoutParams();
         // A card that was only just created hasn't been measured yet (width 0): use its planned size.
@@ -2034,8 +2090,8 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                         W / 2f - (lp.leftMargin + cw / 2f)),
                 android.animation.PropertyValuesHolder.ofFloat(View.TRANSLATION_Y, c.getTranslationY(),
                         H / 2f - (lp.topMargin + chh / 2f)));
-        grow.setDuration(460);
-        grow.setInterpolator(new android.view.animation.AccelerateDecelerateInterpolator());
+        grow.setDuration(Motion.SLOW_MS);
+        grow.setInterpolator(Motion.EASE);
         grow.start();
         fadeVolume(previewPlayer, previewVolume(this), 700);
         setYoutubeVolume(previewVolume(this));
@@ -2059,11 +2115,11 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         handler.removeCallbacks(previewEnd);
         handler.postDelayed(previewEnd, PREVIEW_MAX_MS);
         c.animate().scaleX(1f).scaleY(1f).translationX(0f).translationY(0f).rotationY(0f)
-                .setDuration(320).setInterpolator(new DecelerateInterpolator(1.4f))
+                .setDuration(Motion.MEDIUM_MS).setInterpolator(Motion.EASE)
                 .withEndAction(() -> UiUtil.clipRounded(c, H * 0.016f)).start();
         for (int i = 0; i < c.getChildCount(); i++) {
             View ch = c.getChildAt(i);
-            if ("cardText".equals(ch.getTag())) ch.animate().alpha(1f).setDuration(250).start();
+            if ("cardText".equals(ch.getTag())) ch.animate().alpha(1f).setDuration(Motion.MEDIUM_MS).setInterpolator(Motion.EASE).start();
         }
         fadeVolume(previewPlayer, previewVolume(this), 500);
         setYoutubeVolume(previewVolume(this));
@@ -2132,7 +2188,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
             if ("cardText".equals(ch.getTag())) {
                 ch.animate().cancel();
                 ch.setAlpha(0.15f);
-                ch.animate().alpha(1f).setDuration(220).setInterpolator(new DecelerateInterpolator(1.5f)).start();
+                ch.animate().alpha(1f).setDuration(Motion.FOCUS_MS).setInterpolator(Motion.EASE).start();
             }
         }
     }
@@ -2148,7 +2204,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
             View ch = c.getChildAt(i);
             if ("cardText".equals(ch.getTag())) {
                 ch.animate().cancel();
-                ch.animate().alpha(1f).setDuration(220).setInterpolator(new DecelerateInterpolator(1.5f)).start();
+                ch.animate().alpha(1f).setDuration(Motion.FOCUS_MS).setInterpolator(Motion.EASE).start();
             }
         }
         ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) c.getLayoutParams();
@@ -2169,7 +2225,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                         W / 2f - (lp.leftMargin + cw / 2f)),
                 android.animation.PropertyValuesHolder.ofFloat(View.TRANSLATION_Y, c.getTranslationY(),
                         H / 2f - (lp.topMargin + chh / 2f)));
-        grow.setDuration(420);
+        grow.setDuration(Motion.SLOW_MS);
         grow.setInterpolator(new android.view.animation.PathInterpolator(0.2f, 0f, 0f, 1f));
         grow.addListener(new android.animation.AnimatorListenerAdapter() {
             @Override
@@ -2253,7 +2309,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                             android.animation.Keyframe.ofFloat(0f, 0f),
                             android.animation.Keyframe.ofFloat(0.5f, -22f),
                             android.animation.Keyframe.ofFloat(1f, 0f)));
-            sw.setDuration(420);
+            sw.setDuration(Motion.SLOW_MS).setInterpolator(Motion.EASE);
             sw.start();
             android.app.ActivityOptions o = android.app.ActivityOptions.makeScaleUpAnimation(
                     card, 0, 0, card.getWidth(), card.getHeight());

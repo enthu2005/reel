@@ -453,7 +453,7 @@ public class SettingsActivity extends ReelActivity {
             item.setOnFocusChangeListener((v, f) -> {
                 paint.run();
                 float sc = f ? 1.03f : 1f;
-                item.animate().scaleX(sc).scaleY(sc).setDuration(160).start();
+                item.animate().scaleX(sc).scaleY(sc).setDuration(Motion.FAST_MS).setInterpolator(Motion.EASE).start();
                 if (f) SoundFx.move();
             });
             item.setOnClickListener(v -> {
@@ -521,7 +521,7 @@ public class SettingsActivity extends ReelActivity {
             h.setTextColor(focused ? 0xFF555555 : UiUtil.TEXT3);
             v.setTextColor(focused ? 0xFF333333 : UiUtil.TEXT2);
             float sc = focused ? 1.03f : 1f;
-            r.animate().scaleX(sc).scaleY(sc).setDuration(160).start();
+            r.animate().scaleX(sc).scaleY(sc).setDuration(Motion.FAST_MS).setInterpolator(Motion.EASE).start();
             r.setElevation(focused ? H * 0.015f : 0f);
             if (focused) SoundFx.move();
         });

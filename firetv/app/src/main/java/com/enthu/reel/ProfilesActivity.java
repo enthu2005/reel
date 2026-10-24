@@ -206,7 +206,7 @@ public class ProfilesActivity extends Activity {
 
         t.setOnFocusChangeListener((v, f) -> {
             float s = f ? 1.12f : 1f;
-            v.animate().scaleX(s).scaleY(s).setDuration(150).start();
+            v.animate().scaleX(s).scaleY(s).setDuration(Motion.FAST_MS).setInterpolator(Motion.EASE).start();
             name.setTextColor(f ? Color.WHITE : 0xFFB0B4C0);
             ring.setStroke(f ? Math.max(4, (int) (H * 0.006f)) : 0, Color.WHITE);
             if (f) SoundFx.move();

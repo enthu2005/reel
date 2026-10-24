@@ -226,14 +226,15 @@ final class PosterAdapter extends RecyclerView.Adapter<PosterAdapter.VH> {
 
         vh.root.setOnClickListener(v -> {
             SoundFx.click();
-            v.animate().scaleX(0.97f).scaleY(0.97f).setDuration(60).withEndAction(
-                    () -> v.animate().scaleX(1f).scaleY(1f).setDuration(90).start()).start();
+            v.animate().scaleX(0.97f).scaleY(0.97f).setDuration(Motion.TAP_MS).setInterpolator(Motion.EASE).withEndAction(
+                    () -> v.animate().scaleX(1f).scaleY(1f).setDuration(Motion.TAP_MS).setInterpolator(Motion.EASE).start()).start();
             listener.onClicked(it);
         });
         vh.root.setLongClickable(true);
         vh.root.setOnLongClickListener(v -> listener.onLongClicked(it));
         vh.root.setOnKeyListener((v, code, e) -> {
             if (e.getAction() != android.view.KeyEvent.ACTION_DOWN) return false;
+            Motion.noteKey(code);
             boolean arrow = code == android.view.KeyEvent.KEYCODE_DPAD_LEFT
                     || code == android.view.KeyEvent.KEYCODE_DPAD_RIGHT
                     || code == android.view.KeyEvent.KEYCODE_DPAD_UP
@@ -251,8 +252,8 @@ final class PosterAdapter extends RecyclerView.Adapter<PosterAdapter.VH> {
             // End of the list: a little nudge and a thud so it doesn't just do nothing.
             SoundFx.edge();
             float d = sh * 0.012f * (end ? 1 : -1);
-            vh.card.animate().translationX(d).setDuration(70).withEndAction(
-                    () -> vh.card.animate().translationX(0f).setDuration(110).start()).start();
+            vh.card.animate().translationX(d).setDuration(Motion.TAP_MS).setInterpolator(Motion.EASE).withEndAction(
+                    () -> vh.card.animate().translationX(0f).setDuration(Motion.FAST_MS).setInterpolator(Motion.EASE).start()).start();
             return true;
         });
         vh.root.setOnFocusChangeListener((v, focused) -> {
@@ -262,13 +263,23 @@ final class PosterAdapter extends RecyclerView.Adapter<PosterAdapter.VH> {
             v.setTranslationZ(focused ? sh * 0.02f : 0f);
             vh.card.setPivotX(w / 2f);
             vh.card.setPivotY(h / 2f);
-            vh.card.animate().scaleX(s).scaleY(s).setDuration(180)
-                    .setInterpolator(new DecelerateInterpolator()).start();
+            // The card leans the way you moved (Apple TV style), then settles flat.
+            float ry = focused ? -Motion.lastDx * 7f : 0f;
+            float rx = focused ? Motion.lastDy * 5f : 0f;
+            vh.card.setCameraDistance(w * 14f);
+            vh.card.animate().scaleX(s).scaleY(s).rotationY(ry).rotationX(rx).setDuration(Motion.FOCUS_MS)
+                    .setInterpolator(Motion.EASE).withEndAction(() -> {
+                        if (vh.root.hasFocus()) {
+                            vh.card.animate().rotationY(0f).rotationX(0f).setDuration(Motion.SLOW_MS)
+                                    .setInterpolator(Motion.EASE).start();
+                        }
+                    }).start();
             vh.card.setElevation(focused ? sh * 0.025f : 0f);
             vh.card.setForeground(focused ? UiUtil.sheen(radius) : null);
             float drop = focused ? grow : 0f;
-            vh.title.animate().translationY(drop).alpha(focused ? 1f : 0.8f).setDuration(180).start();
-            vh.sub.animate().translationY(drop).setDuration(180).start();
+            vh.title.animate().translationY(drop).alpha(focused ? 1f : 0.8f).setDuration(Motion.FOCUS_MS)
+                    .setInterpolator(Motion.EASE).start();
+            vh.sub.animate().translationY(drop).setDuration(Motion.FOCUS_MS).setInterpolator(Motion.EASE).start();
             if (focused) {
                 SoundFx.move();
                 listener.onFocused(it);

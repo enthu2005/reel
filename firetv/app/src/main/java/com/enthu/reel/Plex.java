@@ -206,6 +206,8 @@ public final class Plex {
     public static void init(Context c) {
         if (prefs != null) return;
         prefs = c.getApplicationContext().getSharedPreferences("reel", Context.MODE_PRIVATE);
+        apiCache = new java.io.File(c.getApplicationContext().getCacheDir(), "api");
+        apiCache.mkdirs();
         clientId = prefs.getString("cid", null);
         if (clientId == null) {
             clientId = UUID.randomUUID().toString();
@@ -421,8 +423,58 @@ public final class Plex {
         return body;
     }
 
+    // Library answers are kept on disk so Home can open straight away and refresh behind the scenes.
+    private static java.io.File apiCache;
+    private static final ThreadLocal<Boolean> CACHE_ONLY = new ThreadLocal<>();
+
+    private static java.io.File cacheFile(String path) {
+        if (apiCache == null || serverUri == null || !path.startsWith("/library/")) return null;
+        String k = Integer.toHexString((serverUri + "|" + profileName + "|" + path).hashCode());
+        return new java.io.File(apiCache, k + ".json");
+    }
+
+    /** Runs the job reading only what was saved earlier: missing answers come back empty, nothing hits the network. */
+    public static <T> T cacheOnly(Callable<T> job) throws Exception {
+        CACHE_ONLY.set(Boolean.TRUE);
+        try {
+            return job.call();
+        } finally {
+            CACHE_ONLY.remove();
+        }
+    }
+
     private static JSONObject get(String path) throws Exception {
-        return new JSONObject(http("GET", serverUri + path, 15000));
+        java.io.File cf = cacheFile(path);
+        if (Boolean.TRUE.equals(CACHE_ONLY.get())) {
+            if (cf != null && cf.exists()) {
+                try {
+                    java.io.FileInputStream in = new java.io.FileInputStream(cf);
+                    byte[] buf = new byte[(int) cf.length()];
+                    int n = 0;
+                    while (n < buf.length) {
+                        int r = in.read(buf, n, buf.length - n);
+                        if (r < 0) break;
+                        n += r;
+                    }
+                    in.close();
+                    return new JSONObject(new String(buf, 0, n, "UTF-8"));
+                } catch (Exception ignored) {
+                    // fall through to empty
+                }
+            }
+            return new JSONObject("{\"MediaContainer\":{}}");
+        }
+        String body = http("GET", serverUri + path, 15000);
+        if (cf != null && body.length() < 2_000_000) {
+            try {
+                java.io.FileOutputStream out = new java.io.FileOutputStream(cf);
+                out.write(body.getBytes("UTF-8"));
+                out.close();
+            } catch (Exception ignored) {
+                // no cache this time
+            }
+        }
+        return new JSONObject(body);
     }
 
     private static String enc(String s) {

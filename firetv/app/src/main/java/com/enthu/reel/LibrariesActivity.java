@@ -202,7 +202,7 @@ public class LibrariesActivity extends ReelActivity {
                 card.setForeground(f ? UiUtil.sheen(r) : null);
                 card.setElevation(f ? H * 0.025f : 0f);
                 float sc = f ? 1.05f : 1f;
-                v.animate().scaleX(sc).scaleY(sc).setDuration(150).start();
+                v.animate().scaleX(sc).scaleY(sc).setDuration(Motion.FAST_MS).setInterpolator(Motion.EASE).start();
                 if (f) SoundFx.move();
             });
             return new RecyclerView.ViewHolder(card) {

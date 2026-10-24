@@ -151,7 +151,7 @@ final class PreviewCard {
         handler.removeCallbacks(end);
         for (int i = 0; i < c.getChildCount(); i++) {
             View ch = c.getChildAt(i);
-            if ("cardText".equals(ch.getTag())) ch.animate().alpha(0f).setDuration(120).start();
+            if ("cardText".equals(ch.getTag())) ch.animate().alpha(0f).setDuration(Motion.FAST_MS).setInterpolator(Motion.EASE).start();
         }
         ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) c.getLayoutParams();
         final float cw = c.getWidth() > 0 ? c.getWidth() : Math.max(1, lp.width);
@@ -174,8 +174,8 @@ final class PreviewCard {
                         android.animation.Keyframe.ofFloat(0f, 0f),
                         android.animation.Keyframe.ofFloat(0.45f, -10f),
                         android.animation.Keyframe.ofFloat(1f, 0f)));
-        g.setDuration(300);
-        g.setInterpolator(new android.view.animation.AccelerateDecelerateInterpolator());
+        g.setDuration(Motion.MEDIUM_MS);
+        g.setInterpolator(Motion.EASE);
         g.addListener(new android.animation.AnimatorListenerAdapter() {
             @Override
             public void onAnimationEnd(android.animation.Animator animation) {
@@ -292,7 +292,7 @@ final class PreviewCard {
                 public void onRenderedFirstFrame() {
                     if (t != token || tex == null) return;
                     showing = true;
-                    tex.animate().alpha(1f).setDuration(400).start();
+                    tex.animate().alpha(1f).setDuration(Motion.SLOW_MS).setInterpolator(Motion.EASE).start();
                     HomeActivity.fadeVolume(player, HomeActivity.previewVolume(act), 1800);
                     handler.removeCallbacks(end);
                     handler.postDelayed(end, MAX_MS);
@@ -375,7 +375,7 @@ final class PreviewCard {
     private void webOn() {
         if (web == null) return;
         showing = true;
-        web.animate().alpha(1f).setDuration(400).start();
+        web.animate().alpha(1f).setDuration(Motion.SLOW_MS).setInterpolator(Motion.EASE).start();
         YouTubeEmbed.setVolume(web, HomeActivity.previewVolume(act));
         handler.removeCallbacks(end);
         handler.postDelayed(end, MAX_MS);
@@ -472,7 +472,7 @@ final class PreviewCard {
         pCard.setTranslationY(from[1] - lp.topMargin);
         pCard.setAlpha(0.6f);
         pCard.animate().scaleX(1f).scaleY(1f).translationX(0f).translationY(0f).alpha(1f)
-                .setDuration(320).setInterpolator(new DecelerateInterpolator(1.6f)).start();
+                .setDuration(Motion.MEDIUM_MS).setInterpolator(Motion.EASE).start();
     }
 
     private void crop(int vw, int vh, float ratio) {
@@ -502,7 +502,7 @@ final class PreviewCard {
         handler.removeCallbacks(end);
         for (int i = 0; i < c.getChildCount(); i++) {
             View ch = c.getChildAt(i);
-            if ("cardText".equals(ch.getTag())) ch.animate().alpha(0f).setDuration(150).start();
+            if ("cardText".equals(ch.getTag())) ch.animate().alpha(0f).setDuration(Motion.FAST_MS).setInterpolator(Motion.EASE).start();
         }
         ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) c.getLayoutParams();
         // A card that was only just created hasn't been measured yet (width 0): use its planned size.
@@ -525,8 +525,8 @@ final class PreviewCard {
                         android.animation.Keyframe.ofFloat(0f, 0f),
                         android.animation.Keyframe.ofFloat(0.45f, -16f),
                         android.animation.Keyframe.ofFloat(1f, 0f)));
-        g.setDuration(460);
-        g.setInterpolator(new android.view.animation.AccelerateDecelerateInterpolator());
+        g.setDuration(Motion.SLOW_MS);
+        g.setInterpolator(Motion.EASE);
         g.start();
         setVolume(HomeActivity.previewVolume(act));
         return true;
@@ -540,11 +540,11 @@ final class PreviewCard {
         handler.removeCallbacks(end);
         handler.postDelayed(end, MAX_MS);
         c.animate().scaleX(1f).scaleY(1f).translationX(0f).translationY(0f).rotationY(0f)
-                .setDuration(320).setInterpolator(new DecelerateInterpolator(1.4f))
+                .setDuration(Motion.MEDIUM_MS).setInterpolator(Motion.EASE)
                 .withEndAction(() -> UiUtil.clipRounded(c, H * 0.016f)).start();
         for (int i = 0; i < c.getChildCount(); i++) {
             View ch = c.getChildAt(i);
-            if ("cardText".equals(ch.getTag())) ch.animate().alpha(1f).setDuration(250).start();
+            if ("cardText".equals(ch.getTag())) ch.animate().alpha(1f).setDuration(Motion.MEDIUM_MS).setInterpolator(Motion.EASE).start();
         }
         setVolume(HomeActivity.previewVolume(act));
     }
@@ -621,7 +621,7 @@ final class PreviewCard {
             ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) c.getLayoutParams();
             c.animate().scaleX(from[2] / c.getWidth()).scaleY(from[3] / c.getHeight())
                     .translationX(from[0] - lp.leftMargin).translationY(from[1] - lp.topMargin)
-                    .rotationY(0f).alpha(0f).setDuration(200).withEndAction(() -> {
+                    .rotationY(0f).alpha(0f).setDuration(Motion.FOCUS_MS).setInterpolator(Motion.EASE).withEndAction(() -> {
                         if (c.getParent() != null) ((ViewGroup) c.getParent()).removeView(c);
                     }).start();
         } else if (c.getParent() != null) {

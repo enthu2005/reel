@@ -358,12 +358,12 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         if (scrimLeft == null) return;
         // The side and bottom shading stay mostly there (text must stay readable) and fade to clear
         // where there is nothing on the page; the whole picture also gets a light tint.
-        scrimLeft.animate().alpha(on ? 0.85f : 1f).setDuration(600).start();
-        scrimBottom.animate().alpha(on ? 0.85f : 1f).setDuration(600).start();
-        if (tint != null && !previewFull) tint.animate().alpha(on ? 1f : 0f).setDuration(600).start();
+        scrimLeft.animate().alpha(on ? 0.85f : 1f).setDuration(Motion.LONG_MS).setInterpolator(Motion.EASE).start();
+        scrimBottom.animate().alpha(on ? 0.85f : 1f).setDuration(Motion.LONG_MS).setInterpolator(Motion.EASE).start();
+        if (tint != null && !previewFull) tint.animate().alpha(on ? 1f : 0f).setDuration(Motion.LONG_MS).setInterpolator(Motion.EASE).start();
     }
     private android.webkit.WebView previewWeb; // a YouTube trailer playing behind the page
-    private static final long BEHIND_DELAY_MS = 2500;
+    private static final long BEHIND_DELAY_MS = 4000;
     private boolean behindStarted;
 
     private boolean previewPlaying() {
@@ -429,7 +429,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
                             @Override
                             public void playing() {
                                 if (previewWeb != ref[0]) return;
-                                ytBox.animate().alpha(1f).setDuration(700).start();
+                                ytBox.animate().alpha(1f).setDuration(Motion.LONG_MS).setInterpolator(Motion.EASE).start();
                                 previewOn(true);
                             }
 
@@ -468,11 +468,16 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             previewView.setAlpha(0f);
             previewView.setPlayer(p);
             p.setVolume(0f);
+            p.setPlayWhenReady(false); // hold until the gap is over
             p.addListener(new androidx.media3.common.Player.Listener() {
+                private boolean shown;
+
                 @Override
-                public void onRenderedFirstFrame() {
-                    if (preview != p) return;
-                    previewView.animate().alpha(1f).setDuration(700).start();
+                public void onIsPlayingChanged(boolean playing) {
+                    // The first frame can be ready while it's still waiting out the gap: keep the poster until it really plays
+                    if (!playing || shown || preview != p) return;
+                    shown = true;
+                    previewView.animate().alpha(1f).setDuration(1500).setInterpolator(Motion.EASE).start();
                     HomeActivity.fadeVolume(p, HomeActivity.previewVolume(DetailActivity.this), 1800);
                     previewOn(true);
                 }
@@ -523,7 +528,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             previewOn(false);
             if (previewFull) collapsePreview();
             YouTubeEmbed.setVolume(wv, 0f);
-            ytBox.animate().alpha(0f).setDuration(500).withEndAction(() -> YouTubeEmbed.destroy(wv)).start();
+            ytBox.animate().alpha(0f).setDuration(Motion.SLOW_MS).setInterpolator(Motion.EASE).withEndAction(() -> YouTubeEmbed.destroy(wv)).start();
         }
         if (preview == null) return;
         previewOn(false);
@@ -533,7 +538,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         preview = null;
         previewSession = null;
         HomeActivity.fadeVolume(p, 0f, 450);
-        previewView.animate().alpha(0f).setDuration(500).withEndAction(() -> {
+        previewView.animate().alpha(0f).setDuration(Motion.SLOW_MS).setInterpolator(Motion.EASE).withEndAction(() -> {
             previewView.setPlayer(null);
             p.release();
             if (session != null) Plex.stopTranscode(session);
@@ -548,7 +553,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         for (int i = 0; i < rootView.getChildCount(); i++) {
             View v = rootView.getChildAt(i);
             if (v == bg || v == previewView || v == ytBox) continue;
-            v.animate().alpha(0f).setDuration(350).start();
+            v.animate().alpha(0f).setDuration(Motion.MEDIUM_MS).setInterpolator(Motion.EASE).start();
         }
         HomeActivity.fadeVolume(preview, HomeActivity.previewVolume(this), 600);
     }
@@ -559,13 +564,13 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         for (int i = 0; i < rootView.getChildCount(); i++) {
             View v = rootView.getChildAt(i);
             if (v == bg || v == previewView || v == ytBox || v == tint) continue;
-            v.animate().alpha(1f).setDuration(300).start();
+            v.animate().alpha(1f).setDuration(Motion.MEDIUM_MS).setInterpolator(Motion.EASE).start();
         }
         if (previewPlaying() && scrimLeft != null) {
             // still playing behind the page: keep the lighter shading
-            scrimLeft.animate().alpha(0.85f).setDuration(300).start();
-            scrimBottom.animate().alpha(0.85f).setDuration(300).start();
-            if (tint != null) tint.animate().alpha(1f).setDuration(300).start();
+            scrimLeft.animate().alpha(0.85f).setDuration(Motion.MEDIUM_MS).setInterpolator(Motion.EASE).start();
+            scrimBottom.animate().alpha(0.85f).setDuration(Motion.MEDIUM_MS).setInterpolator(Motion.EASE).start();
+            if (tint != null) tint.animate().alpha(1f).setDuration(Motion.MEDIUM_MS).setInterpolator(Motion.EASE).start();
         }
         if (preview != null) {
             float vol = HomeActivity.previewVolume(this);
@@ -706,10 +711,10 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
                 face.setForeground(f ? UiUtil.sheen(d / 2f) : null);
                 face.setElevation(f ? H * 0.02f : 0f);
                 float sc = f ? 1.12f : 1f;
-                face.animate().scaleX(sc).scaleY(sc).setDuration(180).start();
+                Motion.focusScale(face, sc);
                 v.setAlpha(1f);
-                ((TextView) card.getChildAt(1)).animate().translationY(f ? d * 0.06f : 0f).setDuration(180).start();
-                ((TextView) card.getChildAt(2)).animate().translationY(f ? d * 0.06f : 0f).setDuration(180).start();
+                ((TextView) card.getChildAt(1)).animate().translationY(f ? d * 0.06f : 0f).setDuration(Motion.FOCUS_MS).setInterpolator(Motion.EASE).start();
+                ((TextView) card.getChildAt(2)).animate().translationY(f ? d * 0.06f : 0f).setDuration(Motion.FOCUS_MS).setInterpolator(Motion.EASE).start();
                 if (f) SoundFx.move();
             });
             card.setOnClickListener(v -> {
@@ -816,7 +821,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         t.setOnFocusChangeListener((v, focused) -> {
             style(t, primary, focused, r);
             float s = focused ? 1.1f : 1f;
-            v.animate().scaleX(s).scaleY(s).setDuration(160).start();
+            Motion.focusScale(v, s);
             v.setElevation(focused ? H * 0.02f : 0f);
             if (focused) SoundFx.move();
         });
@@ -914,6 +919,62 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         return episodes.isEmpty() ? null : episodes.get(0);
     }
 
+    private String tintFor;
+
+    /** Pulls the main colour out of the poster and lets it colour the dark gradients (the Apple TV look). */
+    private void applyTint(final String posterPath) {
+        if (posterPath == null || posterPath.equals(tintFor) || scrimLeft == null) return;
+        tintFor = posterPath;
+        Glide.with(this).asBitmap().load(Plex.img(posterPath, 48, 72))
+                .into(new com.bumptech.glide.request.target.CustomTarget<android.graphics.Bitmap>(48, 72) {
+                    @Override
+                    public void onResourceReady(android.graphics.Bitmap bmp,
+                                                com.bumptech.glide.request.transition.Transition<? super android.graphics.Bitmap> t) {
+                        if (isDestroyed() || scrimLeft == null) return;
+                        int c = dominantColour(bmp);
+                        if (c == 0) return;
+                        scrimLeft.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                                new int[]{shade(c, 0.17f, 0xEE), shade(c, 0.20f, 0x99), shade(c, 0.20f, 0x00)}));
+                        scrimBottom.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                                new int[]{shade(c, 0.14f, 0x00), shade(c, 0.12f, 0xB3), shade(c, 0.07f, 0xFF)}));
+                    }
+
+                    @Override
+                    public void onLoadCleared(android.graphics.drawable.Drawable placeholder) {
+                    }
+                });
+    }
+
+    /** The colour that stands out most in a small picture: colourful, not too dark, not washed out. */
+    private static int dominantColour(android.graphics.Bitmap b) {
+        if (b == null || b.getWidth() == 0) return 0;
+        float[] hsv = new float[3];
+        double r = 0, g = 0, bl = 0, wsum = 0;
+        for (int y = 0; y < b.getHeight(); y++) {
+            for (int x = 0; x < b.getWidth(); x++) {
+                int px = b.getPixel(x, y);
+                Color.colorToHSV(px, hsv);
+                double w = hsv[1] * hsv[2] + 0.02;
+                if (hsv[2] < 0.15f) w *= 0.1;
+                r += Color.red(px) * w;
+                g += Color.green(px) * w;
+                bl += Color.blue(px) * w;
+                wsum += w;
+            }
+        }
+        if (wsum <= 0) return 0;
+        return Color.rgb((int) (r / wsum), (int) (g / wsum), (int) (bl / wsum));
+    }
+
+    /** The colour at a fixed darkness, so text on top stays readable. */
+    private static int shade(int rgb, float value, int alpha) {
+        float[] hsv = new float[3];
+        Color.colorToHSV(rgb, hsv);
+        hsv[1] = Math.min(hsv[1], 0.75f);
+        hsv[2] = value;
+        return Color.HSVToColor(alpha, hsv);
+    }
+
     private void bind() {
         title.setText(item.displayTitle());
         title.setVisibility(View.VISIBLE);
@@ -927,6 +988,8 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             Glide.with(this).load(art).centerCrop()
                     .transition(DrawableTransitionOptions.withCrossFade(300)).into(bg);
         }
+
+        applyTint(item.poster());
 
         String logoPath = item.logo != null ? item.logo : showLogo;
         if (logoPath != null) {
@@ -962,10 +1025,18 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         }
 
         if (item.type.equals("movie") && !item.cast.isEmpty()) {
-            castRow.setAdapter(new CastAdapter(item.cast));
+            // Coming back from a cast page re-runs this: keep the row (and the focus on it) as it was
+            String castSig = item.key + ":" + item.cast.size();
+            if (castRow.getAdapter() == null || !castSig.equals(castRow.getTag())) {
+                castRow.setAdapter(new CastAdapter(item.cast));
+                castRow.setTag(castSig);
+            }
             castBox.setVisibility(View.VISIBLE);
             if (!related.isEmpty()) {
                 moreLabel.setText("Similar");
+                String sigrelated = item.key + ":" + related.size();
+                if (moreRow.getAdapter() == null || !sigrelated.equals(moreRow.getTag()))
+                { moreRow.setTag(sigrelated);
                 moreRow.setAdapter(new PosterAdapter(related, (int) (H * 0.13f * 16f / 9f), (int) (H * 0.13f), true,
                         new PosterAdapter.Listener() {
                             @Override public void onFocused(Plex.Item it) {}
@@ -975,6 +1046,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
                                 startActivity(i);
                             }
                         }));
+                }
                 moreBox.setVisibility(View.VISIBLE);
             } else {
                 moreBox.setVisibility(View.GONE);
@@ -983,6 +1055,9 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             castBox.setVisibility(View.GONE);
             if (!sameLibrary.isEmpty()) {
                 moreLabel.setText("More in this library");
+                String sigsameLibrary = item.key + ":" + sameLibrary.size();
+                if (moreRow.getAdapter() == null || !sigsameLibrary.equals(moreRow.getTag()))
+                { moreRow.setTag(sigsameLibrary);
                 moreRow.setAdapter(new PosterAdapter(sameLibrary, (int) (H * 0.13f * 16f / 9f), (int) (H * 0.13f), true,
                         new PosterAdapter.Listener() {
                             @Override public void onFocused(Plex.Item it) {}
@@ -992,6 +1067,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
                                 startActivity(i);
                             }
                         }));
+                }
                 moreBox.setVisibility(View.VISIBLE);
             } else {
                 moreBox.setVisibility(View.GONE);
@@ -1199,7 +1275,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             @Override
             public void onRenderedFirstFrame() {
                 if (preview != p) return;
-                previewView.animate().alpha(1f).setDuration(700).start();
+                previewView.animate().alpha(1f).setDuration(1500).setInterpolator(Motion.EASE).start();
                 HomeActivity.fadeVolume(p, HomeActivity.previewVolume(DetailActivity.this), 1800);
                 previewOn(true);
             }

@@ -210,7 +210,7 @@ public class ScreensaverActivity extends Activity {
         drift.setDuration(SLIDE_MS + 2000);
         drift.setInterpolator(new LinearInterpolator());
         drift.start();
-        out.animate().alpha(0f).setStartDelay(1500).setDuration(10).start();
+        out.animate().alpha(0f).setStartDelay(1500).setDuration(Motion.TAP_MS).setInterpolator(Motion.EASE).start();
         // Bring the caption views back above the new picture
         ViewGroup root = (ViewGroup) in.getParent();
         for (int i = 0; i < root.getChildCount(); i++) {

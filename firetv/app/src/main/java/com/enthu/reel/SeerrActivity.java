@@ -250,7 +250,7 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
         t.setOnFocusChangeListener((v, f) -> {
             UiUtil.stylePill(t, f, r);
             float s = f ? 1.08f : 1f;
-            v.animate().scaleX(s).scaleY(s).setDuration(150).start();
+            v.animate().scaleX(s).scaleY(s).setDuration(Motion.FAST_MS).setInterpolator(Motion.EASE).start();
             if (f) SoundFx.move();
         });
         return t;
@@ -747,7 +747,7 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
         final boolean[] full = {false};
         final boolean[] paused = {false};
         final Runnable showTrailer = () -> {
-            trailerBox.animate().alpha(1f).setDuration(600).start();
+            trailerBox.animate().alpha(1f).setDuration(Motion.LONG_MS).setInterpolator(Motion.EASE).start();
             watch.setVisibility(View.VISIBLE);
         };
         final Runnable[] setFull = new Runnable[1];
@@ -755,7 +755,7 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
             for (int i = 0; i < root.getChildCount(); i++) {
                 View v = root.getChildAt(i);
                 if (v == bg || v == trailerBox) continue;
-                v.animate().alpha(full[0] ? 0f : 1f).setDuration(300).start();
+                v.animate().alpha(full[0] ? 0f : 1f).setDuration(Motion.MEDIUM_MS).setInterpolator(Motion.EASE).start();
             }
             float vol = HomeActivity.previewVolume(this);
             if (tr[0] != null) HomeActivity.fadeVolume((androidx.media3.exoplayer.ExoPlayer) tr[0], 0.8f, 500);
@@ -826,7 +826,7 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
                         @Override
                         public void onPlaybackStateChanged(int state) {
                             if (state == androidx.media3.common.Player.STATE_ENDED) {
-                                trailerBox.animate().alpha(0f).setDuration(500).start();
+                                trailerBox.animate().alpha(0f).setDuration(Motion.SLOW_MS).setInterpolator(Motion.EASE).start();
                                 watch.setVisibility(View.GONE);
                                 if (full[0]) {
                                     full[0] = false;
@@ -848,7 +848,7 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
 
                                 @Override
                                 public void ended() {
-                                    trailerBox.animate().alpha(0f).setDuration(500).start();
+                                    trailerBox.animate().alpha(0f).setDuration(Motion.SLOW_MS).setInterpolator(Motion.EASE).start();
                                     watch.setVisibility(View.GONE);
                                     if (full[0]) {
                                         full[0] = false;
