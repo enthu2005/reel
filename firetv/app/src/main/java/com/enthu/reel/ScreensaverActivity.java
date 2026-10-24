@@ -133,8 +133,11 @@ public class ScreensaverActivity extends Activity {
     private void load() {
         Plex.async(() -> {
             List<Plex.Item> out = new ArrayList<>();
+            // Only the libraries chosen in Settings; until then, just the movie libraries
+            java.util.Set<String> chosen = Plex.libraryChoice("screensaverLibraries");
             for (Plex.Section s : Plex.sections()) {
-                if (!s.type.equals("movie") && !s.type.equals("show")) continue;
+                if (chosen == null ? !s.type.equals("movie")
+                        : !chosen.contains(s.key) || (!s.type.equals("movie") && !s.type.equals("show"))) continue;
                 for (Plex.Item it : Plex.items(Plex.paged("/library/sections/" + s.key + "/all?sort=random", 40))) {
                     if (it.art != null) out.add(it);
                 }

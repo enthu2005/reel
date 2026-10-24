@@ -72,6 +72,9 @@ public class SettingsActivity extends ReelActivity {
         render(true);
     }
 
+    private List<Plex.Section> sectionsCache;
+    private boolean sectionsLoading;
+
     private void render(boolean focusFirst) {
         int keep = 0;
         for (int i = 0; i < list.getChildCount(); i++) if (list.getChildAt(i).hasFocus()) keep = i;
@@ -154,6 +157,24 @@ public class SettingsActivity extends ReelActivity {
                 "Text subtitles only. Picture subtitles (PGS) keep the size they were made at.",
                 v -> {
                     prefs.edit().putInt("subSize", (prefs.getInt("subSize", 1) + 1) % 4).apply();
+                    render(false);
+                });
+
+        final String[] colourNames = {"White", "Yellow", "Cyan", "Green"};
+        int subColour = prefs.getInt("subColour", 0);
+        row("Subtitle colour", colourNames[Math.max(0, Math.min(3, subColour))],
+                "The colour of subtitle text. Picture subtitles (PGS) keep their own colours.",
+                v -> {
+                    prefs.edit().putInt("subColour", (prefs.getInt("subColour", 0) + 1) % 4).apply();
+                    render(false);
+                });
+
+        final String[] posNames = {"Lowest", "Low", "Default", "High", "Highest"};
+        int subPos = prefs.getInt("subPos", 2);
+        row("Subtitle position", posNames[Math.max(0, Math.min(4, subPos))],
+                "How far up the screen the subtitles sit. Picture subtitles (PGS) stay where they were made.",
+                v -> {
+                    prefs.edit().putInt("subPos", (prefs.getInt("subPos", 2) + 1) % 5).apply();
                     render(false);
                 });
 
@@ -254,17 +275,47 @@ public class SettingsActivity extends ReelActivity {
                     render(false);
                 });
 
+        // The library list comes from the server, so fetch it off the main thread, then redraw
         List<Plex.Section> libraryChoices = new ArrayList<>();
-        try {
-            libraryChoices.addAll(Plex.sections());
-        } catch (Exception ignored) {
+        if (sectionsCache != null) {
+            libraryChoices.addAll(sectionsCache);
+        } else if (!sectionsLoading) {
+            sectionsLoading = true;
+            Plex.async(Plex::sections, new Plex.Callback<List<Plex.Section>>() {
+                @Override
+                public void ok(List<Plex.Section> r) {
+                    sectionsLoading = false;
+                    sectionsCache = r;
+                    if (!isFinishing()) render(false);
+                }
+
+                @Override
+                public void fail(Exception e) {
+                    sectionsLoading = false;
+                }
+            });
         }
         if (!libraryChoices.isEmpty()) {
             int visible = 0;
             for (Plex.Section s : libraryChoices) if (Plex.isLibraryEnabled(s.key)) visible++;
             row("Home & movies libraries", visible + " / " + libraryChoices.size() + " shown",
                     "Choose which Plex libraries appear in Home and Movies. Hidden libraries stay available elsewhere.",
-                    v -> chooseLibraries(libraryChoices));
+                    v -> chooseLibraries(libraryChoices, "visibleLibraries", "Libraries on Home & Movies", null));
+
+            java.util.Set<String> saverChoice = Plex.libraryChoice("screensaverLibraries");
+            String saverValue;
+            if (saverChoice == null) {
+                saverValue = "Movie libraries";
+            } else {
+                int n = 0;
+                for (Plex.Section s : libraryChoices) if (saverChoice.contains(s.key)) n++;
+                saverValue = n + " / " + libraryChoices.size() + " used";
+            }
+            final java.util.Set<String> movieKeys = new java.util.HashSet<>();
+            for (Plex.Section s : libraryChoices) if (s.type.equals("movie")) movieKeys.add(s.key);
+            row("Screensaver libraries", saverValue,
+                    "Which libraries the screensaver takes its artwork from. Until you choose, it uses only your movie libraries.",
+                    v -> chooseLibraries(libraryChoices, "screensaverLibraries", "Libraries for the screensaver", movieKeys));
         }
 
         boolean tun = prefs.getBoolean("tunneled", false);
@@ -275,6 +326,18 @@ public class SettingsActivity extends ReelActivity {
                     prefs.edit().putBoolean("tunneled", !prefs.getBoolean("tunneled", false)).apply();
                     render(false);
                 });
+
+        boolean autoIn = prefs.getBoolean("autoSignIn", false);
+        row("Automatic sign in", (autoIn ? "\u2611  On" : "\u2610  Off"),
+                "On: Reel opens straight into the profile you used last. Off: it asks \"Who's watching?\" each time it "
+                        + "starts (only when your Plex Home has more than one profile). Press to change.",
+                v -> {
+                    prefs.edit().putBoolean("autoSignIn", !prefs.getBoolean("autoSignIn", false)).apply();
+                    render(false);
+                });
+        row("Profile", Plex.profileName == null ? "Main account" : Plex.profileName,
+                "Switch to another profile in your Plex Home. Press to choose.",
+                v -> startActivity(new Intent(this, ProfilesActivity.class)));
 
         row("Sign out", "", "Signs Reel out of your Plex account.",
                 v -> {
@@ -341,7 +404,19 @@ public class SettingsActivity extends ReelActivity {
         box.requestFocus();
     }
 
-    private void chooseLibraries(List<Plex.Section> sections) {
+    /**
+     * Tick the libraries to use. [defaults] is what counts as ticked until a choice has been saved
+     * (null means every library). The list stays open while you tick.
+     */
+    private void chooseLibraries(final List<Plex.Section> sections, final String prefKey, String title,
+                                 java.util.Set<String> defaults) {
+        final java.util.Set<String> chosen = new java.util.HashSet<>();
+        java.util.Set<String> saved = Plex.libraryChoice(prefKey);
+        if (saved != null) {
+            chosen.addAll(saved);
+        } else {
+            for (Plex.Section s : sections) if (defaults == null || defaults.contains(s.key)) chosen.add(s.key);
+        }
         final android.app.Dialog d = new android.app.Dialog(this);
         d.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
         LinearLayout panel = new LinearLayout(this);
@@ -350,7 +425,7 @@ public class SettingsActivity extends ReelActivity {
         panel.setBackground(UiUtil.rounded(UiUtil.CARD, H * 0.022f));
 
         TextView heading = new TextView(this);
-        heading.setText("Libraries on Home & Movies");
+        heading.setText(title);
         heading.setTextColor(Color.WHITE);
         heading.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.032f);
         heading.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
@@ -358,20 +433,37 @@ public class SettingsActivity extends ReelActivity {
         panel.addView(heading);
 
         for (final Plex.Section s : sections) {
-            final boolean checked = Plex.isLibraryEnabled(s.key);
-            TextView item = new TextView(this);
-            item.setText((checked ? "☑ " : "☐ ") + s.title);
-            item.setTextColor(checked ? Color.WHITE : UiUtil.TEXT2);
+            final TextView item = new TextView(this);
             item.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.026f);
             item.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
             int pad = (int) (H * 0.016f);
             item.setPadding(pad, pad, pad, pad);
             item.setBackground(UiUtil.rounded(UiUtil.CARD, H * 0.015f));
             item.setFocusable(true);
+            item.setClickable(true);
+            final float rad = H * 0.015f;
+            final Runnable paint = () -> {
+                boolean on = chosen.contains(s.key);
+                boolean f = item.hasFocus();
+                item.setText((on ? "\u2611 " : "\u2610 ") + s.title);
+                item.setTextColor(f ? 0xFF000000 : on ? Color.WHITE : UiUtil.TEXT2);
+                item.setBackground(UiUtil.rounded(f ? 0xFFFFFFFF : UiUtil.CARD, rad));
+            };
+            paint.run();
+            item.setOnFocusChangeListener((v, f) -> {
+                paint.run();
+                float sc = f ? 1.03f : 1f;
+                item.animate().scaleX(sc).scaleY(sc).setDuration(160).start();
+                if (f) SoundFx.move();
+            });
             item.setOnClickListener(v -> {
-                Plex.setLibraryEnabled(s.key, !checked);
-                render(false);
-                d.dismiss();
+                if (chosen.contains(s.key)) {
+                    if (chosen.size() > 1) chosen.remove(s.key); // keep at least one
+                } else {
+                    chosen.add(s.key);
+                }
+                Plex.saveLibraryChoice(prefKey, chosen);
+                paint.run();
             });
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -380,6 +472,7 @@ public class SettingsActivity extends ReelActivity {
         }
 
         d.setContentView(panel);
+        d.setOnDismissListener(x -> render(false));
         if (d.getWindow() != null) {
             d.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0xCC000000));
             d.getWindow().setLayout((int) (W * 0.52f), ViewGroup.LayoutParams.WRAP_CONTENT);

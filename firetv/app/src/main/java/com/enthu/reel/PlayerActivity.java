@@ -80,16 +80,21 @@ public class PlayerActivity extends Activity {
         c.startActivity(i);
     }
 
+    /** The play queue (a shuffled library, say). It outlives each video's screen, so it carries on to the next. */
+    private static final List<Plex.Item> sQueue = new ArrayList<>();
+
     static void startQueue(Context c, List<Plex.Item> items, int startIndex) {
         if (items == null || items.isEmpty()) return;
-        ArrayList<String> keys = new ArrayList<>();
-        for (Plex.Item it : items) if (it != null && it.key != null && !it.key.isEmpty()) keys.add(it.key);
-        if (keys.isEmpty()) return;
-        int start = Math.max(0, Math.min(startIndex, keys.size() - 1));
+        List<Plex.Item> good = new ArrayList<>();
+        for (Plex.Item it : items) if (it != null && it.key != null && !it.key.isEmpty()) good.add(it);
+        if (good.isEmpty()) return;
+        sQueue.clear();
+        sQueue.addAll(good);
+        int start = Math.max(0, Math.min(startIndex, sQueue.size() - 1));
         Intent i = new Intent(c, PlayerActivity.class);
-        i.putExtra("key", keys.get(start));
+        i.putExtra("key", sQueue.get(start).key);
         i.putExtra("start", 0L);
-        i.putStringArrayListExtra("queue", keys);
+        i.putExtra("inQueue", true);
         i.putExtra("queueIndex", start);
         c.startActivity(i);
     }
@@ -102,6 +107,7 @@ public class PlayerActivity extends Activity {
 
     // Playback
     private PlayerView view;
+    private int fitMode = 0; // picture fit for this film only: 0 fit, 1 fill (crop), 2 stretch. Not saved.
     private ExoPlayer player;
     private Plex.Item item;
     private String key;
@@ -125,8 +131,14 @@ public class PlayerActivity extends Activity {
     private LinearLayout epPanel;
     private androidx.recyclerview.widget.RecyclerView epList;
     private final List<Plex.Item> episodes = new java.util.ArrayList<>();
-    private final List<String> queue = new java.util.ArrayList<>();
     private int queueIndex = -1;
+    private PosterAdapter epEpisodeAdapter;
+    private PosterAdapter epQueueAdapter;
+    private TextView epTitle;
+    private TextView epPrev;
+    private TextView epNext;
+    private String moveKey;               // the queue entry being moved (picked up with a long press)
+    private boolean moveReleased = false; // OK has been let go since picking it up
 
     // ------------------------------------------------ Up next (auto-play)
     private static volatile Plex.Item preloaded; // the next episode's details, fetched ahead
@@ -154,14 +166,34 @@ public class PlayerActivity extends Activity {
     }
 
     private boolean queueActive() {
-        return !queue.isEmpty() && queueIndex >= 0 && queueIndex < queue.size();
+        return !sQueue.isEmpty() && queueIndex >= 0 && queueIndex < sQueue.size();
+    }
+
+    /** Starts the queue entry at [index] on a fresh player screen and leaves this one. */
+    private void playQueueAt(int index) {
+        if (index < 0 || index >= sQueue.size()) return;
+        Intent i = new Intent(this, PlayerActivity.class);
+        i.putExtra("key", sQueue.get(index).key);
+        i.putExtra("start", 0L);
+        i.putExtra("inQueue", true);
+        i.putExtra("queueIndex", index);
+        startActivity(i);
+        finish();
     }
 
     private void playQueueNext() {
-        if (!queueActive() || queueIndex + 1 >= queue.size()) return;
-        queueIndex++;
-        PlayerActivity.start(this, queue.get(queueIndex), 0);
-        finish();
+        if (!queueActive() || queueIndex + 1 >= sQueue.size()) return;
+        playQueueAt(queueIndex + 1);
+    }
+
+    private int queuePos(String k) {
+        for (int i = 0; i < sQueue.size(); i++) if (sQueue.get(i).key.equals(k)) return i;
+        return -1;
+    }
+
+    /** Is there a row to pull up with Down: the queue, or a show's episodes. */
+    private boolean hasPanelList() {
+        return queueActive() ? sQueue.size() > 1 : !episodes.isEmpty();
     }
 
     /** Where the end credits begin: Plex's credits marker, or 30 seconds before the end. */
@@ -350,6 +382,8 @@ public class PlayerActivity extends Activity {
     private int ioRetries = 0;
     private int bufferCapMb = 0;
     private String plan = "";
+    private boolean tunnelOff = false;  // tunnelled playback was refused (or can't work with this sound)
+    private boolean tunnelUsed = false; // the current player was built with tunnelling on
     private boolean forceCompat = false; // set after the receiver refused an audio format
     private boolean subChosen = false;   // only burn subtitles if the user picked one while transcoding
     /** What the TV says it can show, e.g. "Dolby Vision, HDR10, HLG", or "SDR only". */
@@ -423,10 +457,58 @@ public class PlayerActivity extends Activity {
         return getSharedPreferences("reel_ui", MODE_PRIVATE).getInt("output", 0) == 1;
     }
 
+    /** Encodings (AudioFormat numbers) the HDMI / ARC outputs say they accept. */
+    private static java.util.Set<Integer> hdmiEncodings(Context c) {
+        java.util.Set<Integer> out = new java.util.HashSet<>();
+        try {
+            android.media.AudioManager am = (android.media.AudioManager) c.getSystemService(Context.AUDIO_SERVICE);
+            for (android.media.AudioDeviceInfo d : am.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)) {
+                int t = d.getType();
+                if (t != android.media.AudioDeviceInfo.TYPE_HDMI && t != android.media.AudioDeviceInfo.TYPE_HDMI_ARC
+                        && t != 29 && t != android.media.AudioDeviceInfo.TYPE_LINE_DIGITAL) continue;
+                for (int e : d.getEncodings()) out.add(e);
+            }
+        } catch (Throwable ignored) {
+        }
+        return out;
+    }
+
+    /**
+     * What the player may send to the receiver as it is. Starts from what the Fire TV reports, then fixes
+     * two things it gets wrong on some set-ups: Dolby Digital / Digital Plus the HDMI output says it
+     * accepts but the summary leaves out, and a channel limit (often 2) that makes a 5.1 Dolby track
+     * fail the check, so it was decoded to PCM instead of passed through.
+     */
+    private static AudioCapabilities effectiveCaps(Context c) {
+        AudioCapabilities real = AudioCapabilities.getCapabilities(c);
+        try {
+            java.util.LinkedHashSet<Integer> enc = new java.util.LinkedHashSet<>();
+            int[] known = {C.ENCODING_PCM_16BIT, C.ENCODING_PCM_24BIT, C.ENCODING_PCM_32BIT, C.ENCODING_PCM_FLOAT,
+                    C.ENCODING_AC3, C.ENCODING_E_AC3, C.ENCODING_E_AC3_JOC, C.ENCODING_DTS, C.ENCODING_DTS_HD,
+                    C.ENCODING_DOLBY_TRUEHD};
+            for (int e : known) if (real.supportsEncoding(e)) enc.add(e);
+            java.util.Set<Integer> hdmi = hdmiEncodings(c);
+            if (hdmi.contains(C.ENCODING_AC3)) enc.add(C.ENCODING_AC3);
+            if (hdmi.contains(C.ENCODING_E_AC3) || hdmi.contains(C.ENCODING_E_AC3_JOC)) enc.add(C.ENCODING_E_AC3);
+            if (hdmi.contains(C.ENCODING_E_AC3_JOC)) enc.add(C.ENCODING_E_AC3_JOC);
+            boolean dolby = enc.contains(C.ENCODING_AC3) || enc.contains(C.ENCODING_E_AC3);
+            int max = dolby ? Math.max(8, real.getMaxChannelCount()) : real.getMaxChannelCount();
+            int[] arr = new int[enc.size()];
+            int i = 0;
+            for (int e : enc) arr[i++] = e;
+            AudioCapabilities fixed = new AudioCapabilities(arr, max);
+            android.util.Log.d("ReelPlayer", "Audio capabilities as reported: " + real + "  used: " + fixed
+                    + "  HDMI says: " + hdmi);
+            return fixed;
+        } catch (Throwable t) {
+            return real;
+        }
+    }
+
     /** True when the Fire TV says the chain to the receiver can carry Dolby Digital Plus as it is. */
     private boolean sinkEac3() {
         try {
-            return AudioCapabilities.getCapabilities(this).supportsEncoding(C.ENCODING_E_AC3);
+            return effectiveCaps(this).supportsEncoding(C.ENCODING_E_AC3);
         } catch (Throwable t) {
             return true;
         }
@@ -535,6 +617,37 @@ public class PlayerActivity extends Activity {
         }
     };
 
+    // Frozen-picture watchdog: sound still playing but no new video frame for several seconds
+    // (the decoder has stalled). Restart playback from the same spot, up to twice.
+    private long wdLastRendered = -1;
+    private int wdStalled = 0;
+    private int wdRestarts = 0;
+    private final Runnable frameWatch = new Runnable() {
+        @Override
+        public void run() {
+            handler.postDelayed(this, 1000);
+            if (player == null) return;
+            androidx.media3.exoplayer.DecoderCounters dc = player.getVideoDecoderCounters();
+            if (dc == null || !player.isPlaying() || player.getVideoSize().width <= 0 || seekingTo >= 0) {
+                wdStalled = 0;
+                wdLastRendered = -1;
+                return;
+            }
+            dc.ensureUpdated();
+            long r = dc.renderedOutputBufferCount;
+            if (r == wdLastRendered) wdStalled++;
+            else wdStalled = 0;
+            wdLastRendered = r;
+            if (wdStalled >= 4 && wdRestarts < 2) {
+                wdRestarts++;
+                wdStalled = 0;
+                wdLastRendered = -1;
+                android.util.Log.w("ReelPlayer", "Picture froze while the sound played: restarting at " + currentMs());
+                begin(currentMs(), transcoding);
+            }
+        }
+    };
+
     private final Runnable debugTick = new Runnable() {
         @Override
         public void run() {
@@ -558,12 +671,7 @@ public class PlayerActivity extends Activity {
         root = new FrameLayout(this);
         root.setBackgroundColor(0xFF000000);
 
-        view = new PlayerView(this);
-        view.setKeepScreenOn(true);
-        view.setControllerShowTimeoutMs(4000);
-        view.setShowSubtitleButton(false);
-        view.setUseController(false); // our own Plex-style controls (PlayerOsd)
-        applySubStyle();
+        configureView();
         root.addView(view, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -656,7 +764,10 @@ public class PlayerActivity extends Activity {
             }
         });
         osd.setVisibilityListener(vis -> {
-            hint.setVisibility(vis && !panelOpen ? View.VISIBLE : View.GONE);
+            hint.setText(hasPanelList()
+                    ? "\u25B2  Audio & subtitles      \u25BC  " + (queueActive() ? "Queue" : "Episodes")
+                    : "\u25B2  Audio & subtitles");
+            hint.setVisibility(vis && !panelOpen && !epOpen ? View.VISIBLE : View.GONE);
             titleBox.setVisibility(vis ? View.VISIBLE : View.GONE);
         });
 
@@ -684,12 +795,12 @@ public class PlayerActivity extends Activity {
 
         key = getIntent().getStringExtra("key");
         final long startMs = getIntent().getLongExtra("start", 0);
-        ArrayList<String> queued = getIntent().getStringArrayListExtra("queue");
-        if (queued != null) {
-            queue.clear();
-            queue.addAll(queued);
-            queueIndex = getIntent().getIntExtra("queueIndex", queue.indexOf(key));
-            if (queueIndex < 0 && !queue.isEmpty()) queueIndex = 0;
+        if (getIntent().getBooleanExtra("inQueue", false)) {
+            queueIndex = getIntent().getIntExtra("queueIndex", queuePos(key));
+            if (queueIndex < 0 || queueIndex >= sQueue.size()) queueIndex = sQueue.isEmpty() ? -1 : 0;
+        } else {
+            sQueue.clear(); // playing something on its own ends any queue
+            queueIndex = -1;
         }
 
         Plex.async(() -> {
@@ -729,6 +840,7 @@ public class PlayerActivity extends Activity {
                 }
                 pickInitialTracks();
                 osd.loadThumbnails(it.partKey);
+                osd.loadChapterThumbnails(it.key);
                 if ("episode".equals(it.type) && it.gpKey != null) loadEpisodes(it.gpKey);
                 begin(startMs, false);
             }
@@ -851,14 +963,38 @@ public class PlayerActivity extends Activity {
         float[] sizes = {0.8f, 1f, 1.25f, 1.5f};
         int size = Math.max(0, Math.min(3, p.getInt("subSize", 1)));
         int look = p.getInt("subLook", 0); // 0 outline, 1 translucent box, 2 solid box
+        int colour = Math.max(0, Math.min(SUB_COLOURS.length - 1, p.getInt("subColour", 0)));
         sv.setApplyEmbeddedFontSizes(false);
-        sv.setApplyEmbeddedStyles(look == 0);
+        sv.setApplyEmbeddedStyles(look == 0 && colour == 0);
         sv.setFractionalTextSize(androidx.media3.ui.SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * sizes[size]);
         int bg = look == 1 ? 0x99000000 : look == 2 ? 0xFF000000 : 0x00000000;
         int edge = look == 0 ? androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE
                 : androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE;
-        sv.setStyle(new androidx.media3.ui.CaptionStyleCompat(0xFFFFFFFF, bg, 0x00000000, edge, 0xFF000000,
+        sv.setStyle(new androidx.media3.ui.CaptionStyleCompat(SUB_COLOURS[colour], bg, 0x00000000, edge, 0xFF000000,
                 UiUtil.font(UiUtil.SEMIBOLD)));
+        sv.setBottomPaddingFraction(subBase());
+    }
+
+    private static final String[] SUB_SIZE_NAMES = {"Small", "Medium", "Large", "Extra large"};
+    private static final String[] SUB_COLOUR_NAMES = {"White", "Yellow", "Cyan", "Green"};
+    private static final int[] SUB_COLOURS = {0xFFFFFFFF, 0xFFFFE066, 0xFF7FE9FF, 0xFF8CFF9E};
+    private static final String[] SUB_POS_NAMES = {"Lowest", "Low", "Default", "High", "Highest"};
+    private static final float[] SUB_POS = {0.02f, 0.05f, 0.08f, 0.16f, 0.26f};
+    private int subFocusRow = -1; // row to put focus back on after a subtitle setting changes
+
+    /** How far up from the bottom edge the subtitles sit, from the saved position. */
+    private float subBase() {
+        int pos = getSharedPreferences("reel_ui", MODE_PRIVATE).getInt("subPos", 2);
+        return SUB_POS[Math.max(0, Math.min(SUB_POS.length - 1, pos))];
+    }
+
+    private void cycleSubSetting(String prefKey, int count, int def, View row) {
+        android.content.SharedPreferences p = getSharedPreferences("reel_ui", MODE_PRIVATE);
+        p.edit().putInt(prefKey, (p.getInt(prefKey, def) + 1) % count).apply();
+        applySubStyle();
+        applyFit(); // keeps subtitles clear of the edge when the picture is zoomed
+        subFocusRow = list.indexOfChild(row);
+        showTab(TAB_SUBS);
     }
 
     /** A copy of the subtitle file with every time moved by subDelayMs, once it's been made. */
@@ -1001,6 +1137,16 @@ public class PlayerActivity extends Activity {
         }
     }
 
+    /** Tunnelled playback asks the Fire TV for a direct, hardware-synced sound output, which it refuses
+     *  to open for 5.1 sound that the app has to decode itself (AAC, FLAC, PCM...). */
+    private boolean tunnelBreaksSound() {
+        if (curAudio == null || curAudio.codec == null || curAudio.channels <= 2) return false;
+        String c = curAudio.codec.toLowerCase(Locale.ROOT);
+        return c.contains("aac") || c.contains("flac") || c.contains("pcm") || c.contains("opus")
+                || c.contains("vorbis") || c.contains("mp3") || c.contains("mp2") || c.contains("alac")
+                || c.contains("wma");
+    }
+
     private void begin(final long positionMs, final boolean wantTranscode) {
         autoToneMap();
         final boolean willTranscode = wantTranscode || quality != 0 || needsAc3(curAudio);
@@ -1037,6 +1183,7 @@ public class PlayerActivity extends Activity {
             Plex.activeSession = null;
         }
         releasePlayer();
+        PreviewHandoff.releaseLeftover(); // a preview's audio output must not still be open
         if (quality != 0) transcode = true; // a lower quality was chosen in the Video tab
         if (!transcode && needsAc3(curAudio)) {
             // TrueHD can't be turned into a core stream, so Plex converts just the sound to Dolby Digital.
@@ -1093,10 +1240,12 @@ public class PlayerActivity extends Activity {
                                 new androidx.media3.exoplayer.audio.DefaultAudioSink.Builder(context)
                                         .setEnableFloatOutput(enableFloatOutput)
                                         .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams);
-                        if (compat) {
+                        if (!compat) {
+                            b.setAudioCapabilities(effectiveCaps(context));
+                        } else {
                             // Compatible mode: only offer Dolby Digital(+) and plain DTS. A DTS-HD / DTS:X
                             // track then goes out as its DTS core, and Atmos as Dolby Digital Plus.
-                            AudioCapabilities real = AudioCapabilities.getCapabilities(context);
+                            AudioCapabilities real = effectiveCaps(context);
                             int[] all = {C.ENCODING_PCM_16BIT, C.ENCODING_PCM_24BIT, C.ENCODING_PCM_32BIT,
                                     C.ENCODING_PCM_FLOAT, C.ENCODING_AC3, C.ENCODING_E_AC3, C.ENCODING_DTS};
                             int n = 0;
@@ -1121,6 +1270,8 @@ public class PlayerActivity extends Activity {
                                 eventHandler, eventListener, allowedVideoJoiningTimeMs, out);
                     }
                 }.setEnableDecoderFallback(true);
+        // Don't let the sound start before the first picture is ready (the default lets the video join up to 5 s late)
+        rf.setAllowedVideoJoiningTimeMs(0);
         ExoPlayer.Builder pb = new ExoPlayer.Builder(this, rf);
         // The Fire TV Cube has little spare memory and a 4K picture needs most of it for the video decoder.
         // Holding a huge buffer starves the decoder (green lines, stutter, "low memory" in the system log),
@@ -1166,7 +1317,10 @@ public class PlayerActivity extends Activity {
         // Jump to the nearest keyframe when skipping. Exact seeks on 4K HEVC make the picture decode for
         // seconds while the sound is already playing.
         player.setSeekParameters(androidx.media3.exoplayer.SeekParameters.CLOSEST_SYNC);
-        if (getSharedPreferences("reel_ui", MODE_PRIVATE).getBoolean("tunneled", false) && !IecDtsHdSink.enabled) {
+        tunnelUsed = false;
+        if (getSharedPreferences("reel_ui", MODE_PRIVATE).getBoolean("tunneled", false) && !IecDtsHdSink.enabled
+                && !tunnelOff && !tunnelBreaksSound()) {
+            tunnelUsed = true;
             android.util.Log.d("ReelPlayer", "tunneled video playback on");
             androidx.media3.exoplayer.trackselection.TrackSelector tsel = player.getTrackSelector();
             if (tsel instanceof androidx.media3.exoplayer.trackselection.DefaultTrackSelector) {
@@ -1198,6 +1352,11 @@ public class PlayerActivity extends Activity {
         }
         player.setAudioAttributes(new androidx.media3.common.AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true);
+        freshView();
+        handler.removeCallbacks(frameWatch);
+        wdStalled = 0;
+        wdLastRendered = -1;
+        handler.postDelayed(frameWatch, 4000);
         view.setPlayer(player);
         player.setMediaItem(buildItem(transcode));
         if (!transcode && positionMs > 0) player.seekTo(positionMs);
@@ -1222,6 +1381,13 @@ public class PlayerActivity extends Activity {
                         if (rf0 != null && rf0.sampleMimeType != null && !rf0.sampleMimeType.startsWith("audio/")) {
                             audioProblem = false;
                         }
+                    }
+                    if (audioProblem && tunnelUsed && !tunnelOff) {
+                        // The sound output wouldn't open in tunnelled mode: carry on without tunnelling
+                        tunnelOff = true;
+                        android.util.Log.d("ReelPlayer", "audio refused while tunnelled, retrying without tunnelling");
+                        begin(currentMs(), false);
+                        return;
                     }
                     if (audioProblem && !forceCompat) {
                         // First retry still direct, offering only DTS core / Dolby Digital to the receiver.
@@ -1291,7 +1457,7 @@ public class PlayerActivity extends Activity {
                     return;
                 }
                 if (state == Player.STATE_ENDED) {
-                    if (queueActive() && queueIndex + 1 < queue.size()) {
+                    if (queueActive() && queueIndex + 1 < sQueue.size()) {
                         playQueueNext();
                         return;
                     }
@@ -1367,6 +1533,8 @@ public class PlayerActivity extends Activity {
         if (player == null) return;
         ms = Math.max(0, ms);
         lastGood = ms;
+        // Jump to the nearest keyframe: exact seeks on big 4K files make the decoder stall (sound with a frozen picture)
+        player.setSeekParameters(androidx.media3.exoplayer.SeekParameters.CLOSEST_SYNC);
         if (!transcoding) {
             player.seekTo(ms);
             return;
@@ -1394,7 +1562,38 @@ public class PlayerActivity extends Activity {
         Plex.timeline(key, state, currentMs(), item.duration);
     }
 
+    private boolean viewUsed;
+
+    /** Makes a fresh PlayerView with our settings (also used to get a clean picture surface after a restart). */
+    private void configureView() {
+        view = new PlayerView(this);
+        view.setKeepScreenOn(true);
+        view.setControllerShowTimeoutMs(4000);
+        view.setShowSubtitleButton(false);
+        view.setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS); // spinner while the picture catches up
+        view.setUseController(false); // our own Plex-style controls (PlayerOsd)
+        applySubStyle();
+    }
+
+    /** After a restart (new quality, track...) the old picture surface can stay tied to the released
+     *  decoder, giving sound with no picture. Swap in a brand new one. */
+    private void freshView() {
+        if (!viewUsed) {
+            viewUsed = true;
+            return;
+        }
+        ViewGroup parent = (ViewGroup) view.getParent();
+        if (parent == null) return;
+        int idx = parent.indexOfChild(view);
+        parent.removeView(view);
+        configureView();
+        parent.addView(view, idx, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        applyFit();
+    }
+
     private void releasePlayer() {
+        handler.removeCallbacks(frameWatch);
         handler.removeCallbacks(ticker);
         handler.removeCallbacks(skipTick);
         try {
@@ -1712,12 +1911,27 @@ public class PlayerActivity extends Activity {
         epPanel.setPadding(0, (int) (H * 0.08f), 0, (int) (H * 0.04f));
 
         TextView label = new TextView(this);
+        epTitle = label;
         label.setText("Episodes");
         label.setTextColor(0xFFFFFFFF);
         label.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.03f);
         label.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
         label.setPadding((int) (W * 0.045f) + 8, 0, 0, (int) (H * 0.006f));
-        epPanel.addView(label);
+        // Header: the title, then Previous / Next
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        head.addView(label, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        epPrev = makePill("\u00AB   Previous", v -> skipTo(-1));
+        epNext = makePill("Next   \u00BB", v -> skipTo(1));
+        head.addView(epPrev);
+        LinearLayout.LayoutParams nlp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        nlp.leftMargin = (int) (W * 0.01f);
+        nlp.rightMargin = (int) (W * 0.045f);
+        head.addView(epNext, nlp);
+        epPanel.addView(head, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         epList = new androidx.recyclerview.widget.RecyclerView(this);
         epList.setLayoutManager(new androidx.recyclerview.widget.LinearLayoutManager(this,
@@ -1742,7 +1956,7 @@ public class PlayerActivity extends Activity {
                         episodes.clear();
                         episodes.addAll(list);
                         int ph = (int) (H * 0.20f);
-                        epList.setAdapter(new PosterAdapter(episodes, (int) (ph * 16f / 9f), ph, true,
+                        epEpisodeAdapter = new PosterAdapter(episodes, (int) (ph * 16f / 9f), ph, true,
                                 new PosterAdapter.Listener() {
                                     @Override
                                     public void onFocused(Plex.Item it) {
@@ -1756,7 +1970,7 @@ public class PlayerActivity extends Activity {
                                         PlayerActivity.start(PlayerActivity.this, it.key, it.viewOffset);
                                         finish();
                                     }
-                                }));
+                                });
                     }
 
                     @Override
@@ -1766,14 +1980,106 @@ public class PlayerActivity extends Activity {
                 });
     }
 
+    private TextView makePill(String text, View.OnClickListener click) {
+        final TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.028f);
+        t.setTypeface(UiUtil.font(UiUtil.SEMIBOLD));
+        t.setGravity(Gravity.CENTER);
+        t.setMinWidth((int) (W * 0.11f));
+        t.setPadding((int) (W * 0.025f), (int) (H * 0.016f), (int) (W * 0.025f), (int) (H * 0.016f));
+        t.setFocusable(true);
+        t.setClickable(true);
+        final float r = H * 0.04f;
+        UiUtil.stylePill(t, false, r);
+        t.setOnFocusChangeListener((v, f) -> {
+            UiUtil.stylePill(t, f, r);
+            if (f) SoundFx.move();
+        });
+        t.setOnClickListener(click);
+        return t;
+    }
+
+    /** The video before (-1) or after (+1) this one: in the queue, or among a show's episodes. */
+    private Plex.Item neighbour(int dir) {
+        if (queueActive()) {
+            int to = queueIndex + dir;
+            return to >= 0 && to < sQueue.size() ? sQueue.get(to) : null;
+        }
+        if (item == null || !"episode".equals(item.type)) return null;
+        for (int i = 0; i < episodes.size(); i++) {
+            if (episodes.get(i).key.equals(key)) {
+                int to = i + dir;
+                return to >= 0 && to < episodes.size() ? episodes.get(to) : null;
+            }
+        }
+        return null;
+    }
+
+    private void skipTo(int dir) {
+        Plex.Item n = neighbour(dir);
+        if (n == null) {
+            Toast.makeText(this, dir > 0 ? "That's the last one" : "That's the first one",
+                    Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (queueActive()) {
+            playQueueAt(queueIndex + dir);
+        } else {
+            PlayerActivity.start(this, n.key, 0);
+            finish();
+        }
+    }
+
     private void openEpisodes() {
-        if (episodes.isEmpty() || panelOpen) return;
+        if (!hasPanelList() || panelOpen) return;
         epOpen = true;
-        if (osd != null) osd.hide();
+        // The timeline stays up, lifted above the row
+        if (osd != null) {
+            osd.show();
+            osd.pin(true);
+            osd.lift(H * 0.40f);
+        }
         hint.setVisibility(View.GONE);
+        epPrev.setAlpha(neighbour(-1) == null ? 0.4f : 1f);
+        epNext.setAlpha(neighbour(1) == null ? 0.4f : 1f);
+        final boolean q = queueActive();
+        if (q) {
+            moveKey = null;
+            epTitle.setText(QUEUE_HELP);
+            int ph = (int) (H * 0.20f);
+            epQueueAdapter = new PosterAdapter(sQueue, (int) (ph * 16f / 9f), ph, true,
+                    new PosterAdapter.Listener() {
+                        @Override
+                        public void onFocused(Plex.Item it) {
+                        }
+
+                        @Override
+                        public void onClicked(Plex.Item it) {
+                            int at = queuePos(it.key);
+                            if (at < 0) return;
+                            closeEpisodes();
+                            if (!it.key.equals(key)) playQueueAt(at);
+                        }
+
+                        @Override
+                        public boolean onLongClicked(Plex.Item it) {
+                            // Pick it up: Left / Right move it, Down removes it, OK puts it down
+                            moveKey = it.key;
+                            moveReleased = false;
+                            epTitle.setText(MOVE_HELP);
+                            return true;
+                        }
+                    });
+            epList.setAdapter(epQueueAdapter);
+        } else {
+            epTitle.setText("Episodes");
+            if (epEpisodeAdapter != null) epList.setAdapter(epEpisodeAdapter);
+        }
         epPanel.setVisibility(View.VISIBLE);
         int idx = 0;
-        for (int i = 0; i < episodes.size(); i++) if (episodes.get(i).key.equals(key)) idx = i;
+        List<Plex.Item> src = q ? sQueue : episodes;
+        for (int i = 0; i < src.size(); i++) if (src.get(i).key.equals(key)) idx = i;
         final int at = idx;
         ((androidx.recyclerview.widget.LinearLayoutManager) epList.getLayoutManager())
                 .scrollToPositionWithOffset(at, (int) (W * 0.045f));
@@ -1783,7 +2089,76 @@ public class PlayerActivity extends Activity {
         }, 150);
     }
 
+    private static final String QUEUE_HELP = "Queue  \u00B7  hold OK on a video to move or remove it";
+    private static final String MOVE_HELP =
+            "Moving  \u00B7  \u25C0 \u25B6 to move  \u00B7  \u25BC to remove  \u00B7  OK to drop";
+
+    private void endMove() {
+        moveKey = null;
+        moveReleased = false;
+        if (epTitle != null) epTitle.setText(QUEUE_HELP);
+    }
+
+    private void refocusQueue(final int pos) {
+        epList.postDelayed(() -> {
+            if (epList == null || sQueue.isEmpty()) return;
+            int p = Math.max(0, Math.min(pos, sQueue.size() - 1));
+            androidx.recyclerview.widget.RecyclerView.ViewHolder vh = epList.findViewHolderForAdapterPosition(p);
+            if (vh != null) vh.itemView.requestFocus();
+        }, 90);
+    }
+
+    /** Keys while a queue entry is picked up. Everything is used up so nothing else reacts. */
+    private void handleMoveKey(KeyEvent event) {
+        int kc = event.getKeyCode();
+        boolean ok = kc == KeyEvent.KEYCODE_DPAD_CENTER || kc == KeyEvent.KEYCODE_ENTER;
+        if (ok && event.getAction() == KeyEvent.ACTION_UP) {
+            moveReleased = true; // the long press that picked it up has been let go
+            return;
+        }
+        if (event.getAction() != KeyEvent.ACTION_DOWN) return;
+        int idx = queuePos(moveKey);
+        if (idx < 0) {
+            endMove();
+            return;
+        }
+        if (kc == KeyEvent.KEYCODE_DPAD_LEFT || kc == KeyEvent.KEYCODE_DPAD_RIGHT) {
+            int to = idx + (kc == KeyEvent.KEYCODE_DPAD_LEFT ? -1 : 1);
+            if (to < 0 || to >= sQueue.size()) {
+                SoundFx.edge();
+                return;
+            }
+            java.util.Collections.swap(sQueue, idx, to);
+            epQueueAdapter.notifyItemMoved(idx, to);
+            int cur = queuePos(key);
+            if (cur >= 0) queueIndex = cur;
+            epList.scrollToPosition(to);
+            SoundFx.move();
+        } else if (kc == KeyEvent.KEYCODE_DPAD_DOWN) {
+            if (moveKey.equals(key)) {
+                Toast.makeText(this, "That one is playing now, so it can't be removed", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            sQueue.remove(idx);
+            epQueueAdapter.notifyItemRemoved(idx);
+            int cur = queuePos(key);
+            if (cur >= 0) queueIndex = cur;
+            endMove();
+            Toast.makeText(this, "Removed from the queue", Toast.LENGTH_SHORT).show();
+            refocusQueue(idx);
+        } else if (ok) {
+            if (moveReleased) endMove();
+        } else if (kc == KeyEvent.KEYCODE_BACK || kc == KeyEvent.KEYCODE_DPAD_UP) {
+            endMove();
+        }
+    }
+
     private void closeEpisodes() {
+        endMove();
+        if (osd != null) {
+            osd.pin(false);
+            osd.lift(0);
+        }
         epOpen = false;
         epPanel.setVisibility(View.GONE);
         view.requestFocus();
@@ -1828,6 +2203,23 @@ public class PlayerActivity extends Activity {
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         int kc = event.getKeyCode();
+        if (epOpen && moveKey != null) {
+            handleMoveKey(event);
+            return true;
+        }
+        if (panelOpen && !inSubView && kc == KeyEvent.KEYCODE_DPAD_UP && event.getAction() == KeyEvent.ACTION_DOWN) {
+            // Up from the list lands on the tab you are in, not whichever tab happens to be closest
+            View f = getCurrentFocus();
+            if (f != null && f.getParent() == list) {
+                View n = f.focusSearch(View.FOCUS_UP);
+                for (TextView tv : tabViews) {
+                    if (n == tv) {
+                        tabViews[tabIndex].requestFocus();
+                        return true;
+                    }
+                }
+            }
+        }
         if (!panelOpen && !epOpen && upNextShowing()) {
             boolean ok = kc == KeyEvent.KEYCODE_DPAD_CENTER || kc == KeyEvent.KEYCODE_ENTER;
             if (ok) {
@@ -1850,24 +2242,49 @@ public class PlayerActivity extends Activity {
                 return true;
             }
             if (kc == KeyEvent.KEYCODE_DPAD_UP) {
-                if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) openPanel();
+                if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                    // First press only brings up the controls; a second press opens settings
+                    if (!osd.isVisible()) osd.show();
+                    else openPanel();
+                }
                 return true;
             }
             if (osd.handleKey(event)) return true;
-            if (kc == KeyEvent.KEYCODE_DPAD_DOWN && episodes.isEmpty()) {
+            if (kc == KeyEvent.KEYCODE_DPAD_DOWN && !hasPanelList()) {
                 if (event.getAction() == KeyEvent.ACTION_DOWN) osd.show();
                 return true;
             }
         }
         if (event.getAction() == KeyEvent.ACTION_DOWN && !panelOpen) {
-            if (!epOpen && event.getKeyCode() == KeyEvent.KEYCODE_DPAD_DOWN && !episodes.isEmpty()) {
+            if (!epOpen && event.getKeyCode() == KeyEvent.KEYCODE_DPAD_DOWN && hasPanelList()) {
                 openEpisodes();
                 return true;
             }
             if (epOpen && event.getKeyCode() == KeyEvent.KEYCODE_DPAD_UP) {
-                closeEpisodes();
+                // From the row, Up goes to Previous / Next; from those, Up closes the row
+                if (epList.hasFocus() && epPrev != null) {
+                    // Land on whichever button actually has somewhere to go (Next first)
+                    if (neighbour(1) != null) epNext.requestFocus();
+                    else epPrev.requestFocus();
+                } else {
+                    closeEpisodes();
+                }
                 return true;
             }
+        }
+        if ((panelOpen || epOpen) && player != null && (kc == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+                || kc == KeyEvent.KEYCODE_MEDIA_PLAY || kc == KeyEvent.KEYCODE_MEDIA_PAUSE)) {
+            // Play/Pause on the remote still works with a settings panel or the episode row open
+            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                boolean play = kc == KeyEvent.KEYCODE_MEDIA_PLAY
+                        || (kc != KeyEvent.KEYCODE_MEDIA_PAUSE && !player.getPlayWhenReady());
+                player.setPlayWhenReady(play);
+            }
+            return true;
+        }
+        if (kc == KeyEvent.KEYCODE_MEDIA_NEXT || kc == KeyEvent.KEYCODE_MEDIA_PREVIOUS) {
+            if (event.getAction() == KeyEvent.ACTION_UP) skipTo(kc == KeyEvent.KEYCODE_MEDIA_NEXT ? 1 : -1);
+            return true;
         }
         if (event.getKeyCode() == KeyEvent.KEYCODE_MENU) {
             if (event.getAction() == KeyEvent.ACTION_UP) {
@@ -1962,7 +2379,43 @@ public class PlayerActivity extends Activity {
 
     // ------------------------------------------------------------ Tabs
 
+    /** Fit / Fill / Stretch for this film. Fill zooms in until the screen is full, cropping the edges. */
+    private void applyFit() {
+        int mode = fitMode == 1 ? androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                : fitMode == 2 ? androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL
+                : androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT;
+        view.setResizeMode(mode);
+        // Subtitles are laid out inside the zoomed picture, so lift them back above the screen's bottom edge
+        androidx.media3.ui.SubtitleView sv = view.getSubtitleView();
+        if (sv == null) return;
+        float lift = 0f;
+        androidx.media3.common.VideoSize vs = player == null ? null : player.getVideoSize();
+        if (fitMode == 1 && vs != null && vs.width > 0 && vs.height > 0 && W > 0 && H > 0) {
+            float ar = vs.width * (vs.pixelWidthHeightRatio > 0 ? vs.pixelWidthHeightRatio : 1f) / vs.height;
+            float screenAr = (float) W / H;
+            if (ar < screenAr) { // taller than the screen: the zoomed picture runs off the top and bottom
+                float frameH = W / ar;
+                lift = (frameH - H) / 2f / frameH;
+            }
+        }
+        sv.setBottomPaddingFraction(subBase() + lift);
+    }
+
     private void showVideoTab() {
+        addHeading("Picture size, for this film only. Fill zooms in to remove black bars (it crops the edges); "
+                + "Stretch pulls the picture to the screen's shape.");
+        String[] fitNames = {"Fit", "Fill", "Stretch"};
+        String[] fitNotes = {"The whole picture, black bars if the shapes differ", "Fills the screen, crops the edges",
+                "Fills the screen, squashes the picture"};
+        for (int i = 0; i < fitNames.length; i++) {
+            final int f = i;
+            list.addView(makeRow(fitNames[i], fitNotes[i], i == fitMode, false, v -> {
+                fitMode = f;
+                applyFit();
+                showTab(TAB_VIDEO);
+            }));
+        }
+        addHeading("");
         addHeading("Pick a lower quality and Plex converts the picture to match. "
                 + "Original plays the file as it is.");
         for (int i = 0; i < QUALITIES.length; i++) {
@@ -1978,6 +2431,40 @@ public class PlayerActivity extends Activity {
         }
     }
 
+    /** Plain track names: the language (plus Commentary / SDH / Forced when it applies), numbered if
+     *  several tracks share one. The file's own track title, often a release-group tag, is dropped. */
+    private java.util.Map<Integer, String> trackNames(List<Plex.Stream> streams) {
+        java.util.Map<Integer, String> out = new java.util.HashMap<>();
+        java.util.Map<String, Integer> total = new java.util.HashMap<>();
+        java.util.Map<Integer, String> base = new java.util.HashMap<>();
+        for (Plex.Stream s : streams) {
+            String lang = !s.lang.isEmpty() ? s.lang : !s.langCode.isEmpty() ? s.langCode.toUpperCase(Locale.ROOT) : "";
+            if (lang.isEmpty()) {
+                base.put(s.id, s.label());
+                continue;
+            }
+            String all = (s.extTitle + " " + s.title + " " + s.displayTitle).toLowerCase(Locale.ROOT);
+            String tag = all.contains("commentary") ? "Commentary"
+                    : all.contains("descriptive") || all.contains("audio description") ? "Audio description"
+                    : all.contains("sdh") || all.contains("hearing impaired") ? "SDH"
+                    : s.forced || all.contains("forced") ? "Forced" : "";
+            String b = tag.isEmpty() ? lang : lang + "  ·  " + tag;
+            base.put(s.id, b);
+            total.merge(b, 1, Integer::sum);
+        }
+        java.util.Map<String, Integer> seen = new java.util.HashMap<>();
+        for (Plex.Stream s : streams) {
+            String b = base.get(s.id);
+            Integer t = total.get(b);
+            if (t != null && t > 1) {
+                int n = seen.merge(b, 1, Integer::sum);
+                b = b + " " + n;
+            }
+            out.put(s.id, b);
+        }
+        return out;
+    }
+
     private void showAudioTab() {
         if (transcoding) {
             addHeading("Plex is converting the stream. Picking a track restarts it from here.");
@@ -1985,6 +2472,7 @@ public class PlayerActivity extends Activity {
         View selected = null;
         List<Plex.Stream> audios = item.streamsOf(2);
         if (audios.isEmpty()) addHeading("No audio tracks reported");
+        final java.util.Map<Integer, String> names = trackNames(audios);
         for (final Plex.Stream s : audios) {
             boolean isCur = curAudio != null && curAudio.id == s.id;
             String sub = Badges.audioName(s);
@@ -1995,7 +2483,7 @@ public class PlayerActivity extends Activity {
                 Tracks.Group g = audioGroupFor(s);
                 if (g != null && !g.isTrackSupported(0)) sub += "  ·  needs transcoding";
             }
-            View row = makeRow(s.label(), sub, isCur, false, v -> {
+            View row = makeRow(names.get(s.id), sub, isCur, false, v -> {
                 selectAudio(s);
                 showTab(TAB_AUDIO);
             });
@@ -2019,12 +2507,13 @@ public class PlayerActivity extends Activity {
         list.addView(off);
         if (curSub == null || !subsActive) selected = off;
 
+        final java.util.Map<Integer, String> subNames = trackNames(item.streamsOf(3));
         for (final Plex.Stream s : item.streamsOf(3)) {
             boolean isCur = subsActive && curSub != null && curSub.id == s.id;
             String sub = (s.isExternal() ? "File" : "Built in") + (s.forced ? "  ·  forced" : "")
                     + (s.codec.isEmpty() ? "" : "  ·  " + s.codec.toUpperCase(Locale.ROOT))
                     + (transcoding && isPicture(s) ? "  ·  burns in, re-encodes the video" : "");
-            View row = makeRow(s.label(), sub, isCur, false, v -> {
+            View row = makeRow(subNames.get(s.id), sub, isCur, false, v -> {
                 selectSub(s);
                 showTab(TAB_SUBS);
             });
@@ -2036,21 +2525,26 @@ public class PlayerActivity extends Activity {
         list.addView(makeRow("Find subtitles online…", "Searches through your Plex server", false, false,
                 v -> showLanguagePicker()));
 
-        // Timing, for subtitles that are out of sync
+        // How the subtitles look: size, colour and where they sit. Applies at once.
         addHeading("");
-        timingLabel = new TextView(this);
-        timingLabel.setText(delayText());
-        timingLabel.setTextColor(0xFFFFFFFF);
-        timingLabel.setTypeface(UiUtil.font(UiUtil.SEMIBOLD));
-        timingLabel.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.026f);
-        timingLabel.setPadding((int) (W * 0.014f), (int) (H * 0.01f), 0, (int) (H * 0.006f));
-        list.addView(timingLabel);
-        list.addView(makeRow("Earlier by 0.25 s", "Subtitles show up too late", false, false, v -> nudgeDelay(-250)));
-        list.addView(makeRow("Later by 0.25 s", "Subtitles show up too early", false, false, v -> nudgeDelay(250)));
-        list.addView(makeRow("Earlier by 1 s", null, false, false, v -> nudgeDelay(-1000)));
-        list.addView(makeRow("Later by 1 s", null, false, false, v -> nudgeDelay(1000)));
-        list.addView(makeRow("Reset timing", null, false, false, v -> nudgeDelay(0)));
-        focusFirstOrSelected(selected);
+        addHeading("How subtitles look");
+        android.content.SharedPreferences lp = getSharedPreferences("reel_ui", MODE_PRIVATE);
+        int size = Math.max(0, Math.min(SUB_SIZE_NAMES.length - 1, lp.getInt("subSize", 1)));
+        int colour = Math.max(0, Math.min(SUB_COLOUR_NAMES.length - 1, lp.getInt("subColour", 0)));
+        int pos = Math.max(0, Math.min(SUB_POS_NAMES.length - 1, lp.getInt("subPos", 2)));
+        list.addView(makeRow("Size: " + SUB_SIZE_NAMES[size], "Press to change", false, false,
+                v -> cycleSubSetting("subSize", SUB_SIZE_NAMES.length, 1, v)));
+        list.addView(makeRow("Colour: " + SUB_COLOUR_NAMES[colour], "Press to change", false, false,
+                v -> cycleSubSetting("subColour", SUB_COLOUR_NAMES.length, 0, v)));
+        list.addView(makeRow("Position: " + SUB_POS_NAMES[pos], "Press to move them up the screen", false, false,
+                v -> cycleSubSetting("subPos", SUB_POS_NAMES.length, 2, v)));
+        if (subFocusRow >= 0 && subFocusRow < list.getChildCount() && list.getChildAt(subFocusRow).isFocusable()) {
+            list.getChildAt(subFocusRow).requestFocus();
+            subFocusRow = -1;
+        } else {
+            subFocusRow = -1;
+            focusFirstOrSelected(selected);
+        }
     }
 
     private void showLanguagePicker() {
@@ -2104,25 +2598,48 @@ public class PlayerActivity extends Activity {
     }
 
     private void downloadSub(final Plex.SubResult r) {
+        // Pause while the file is fetched, then switch it on and carry on from the same spot
+        final boolean wasPlaying = player != null && player.getPlayWhenReady();
+        if (player != null) player.pause();
+        final java.util.Set<Integer> had = new java.util.HashSet<>();
+        for (Plex.Stream st : item.streamsOf(3)) had.add(st.id);
         list.removeAllViews();
-        addHeading("Downloading…");
+        addHeading("Downloading… the video is paused until the subtitles are ready.");
         Plex.async(() -> {
             Plex.downloadSubtitle(key, r);
-            Thread.sleep(2500); // give the server a moment to attach the file
-            return Plex.metadata(key);
+            Plex.Item latest = null;
+            for (int i = 0; i < 10; i++) {
+                Thread.sleep(1200); // give the server a moment to attach the file
+                latest = Plex.metadata(key);
+                if (latest.streamsOf(3).size() > had.size()) break;
+            }
+            return latest;
         }, new Plex.Callback<Plex.Item>() {
             @Override
             public void ok(Plex.Item fresh) {
                 if (isDestroyed()) return;
                 item.streams = fresh.streams;
-                Toast.makeText(PlayerActivity.this, "Subtitles added. Pick them from the list.",
-                        Toast.LENGTH_LONG).show();
-                if (panelOpen) showTab(TAB_SUBS);
+                Plex.Stream added = null;
+                for (Plex.Stream st : item.streamsOf(3)) {
+                    if (!had.contains(st.id)) added = st;
+                }
+                if (panelOpen) closePanel();
+                if (added != null) {
+                    selectSub(added);
+                    Toast.makeText(PlayerActivity.this, "Subtitles added and switched on", Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(PlayerActivity.this,
+                            "Downloaded, but they haven't appeared yet. Check the Subtitles list.",
+                            Toast.LENGTH_LONG).show();
+                }
+                if (player != null && wasPlaying) player.play();
             }
 
             @Override
             public void fail(Exception e) {
-                if (isDestroyed() || !panelOpen) return;
+                if (isDestroyed()) return;
+                if (player != null && wasPlaying) player.play();
+                if (!panelOpen) return;
                 list.removeAllViews();
                 addHeading("Couldn't download that one (" + e.getMessage() + ").");
                 list.addView(makeRow("Back", null, false, false, v -> showTab(TAB_SUBS)));
@@ -2226,6 +2743,16 @@ public class PlayerActivity extends Activity {
     }
 
     // -------------------------------------------------------- Lifecycle
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        // Leaving for good: give the audio output back now, so the next film can open its own
+        if (isFinishing()) {
+            finishReporting();
+            releasePlayer();
+        }
+    }
 
     @Override
     protected void onStop() {

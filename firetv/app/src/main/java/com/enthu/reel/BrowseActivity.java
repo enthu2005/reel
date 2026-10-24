@@ -24,7 +24,8 @@ import java.util.List;
 public class BrowseActivity extends ReelActivity implements PosterAdapter.Listener {
 
     private static final String[][] SORTS = {
-            {"A to Z", "titleSort"}, {"Recently added", "addedAt:desc"}, {"Newest first", "year:desc"}};
+            {"A to Z", "titleSort"}, {"Recently added", "addedAt:desc"},
+            {"Release date", "originallyAvailableAt:desc"}, {"Rating", "audienceRating:desc"}};
 
     private final List<Plex.Item> items = new ArrayList<>();
     private int W;
@@ -39,6 +40,7 @@ public class BrowseActivity extends ReelActivity implements PosterAdapter.Listen
     private TextView message;
     private TextView count;
     private TextView sortBtn;
+    private TextView shuffleBtn;
     private boolean landscape;
 
     @Override
@@ -77,6 +79,29 @@ public class BrowseActivity extends ReelActivity implements PosterAdapter.Listen
         count.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.028f);
         count.setPadding((int) (W * 0.015f), 0, 0, 0);
         head.addView(count, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        if (section != null && type.equals("movie")) {
+            // Plays everything in this library in a random order, with a queue you can reorder
+            shuffleBtn = new TextView(this);
+            shuffleBtn.setText("Shuffle");
+            shuffleBtn.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.028f);
+            shuffleBtn.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+            shuffleBtn.setPadding((int) (W * 0.018f), (int) (H * 0.012f), (int) (W * 0.018f), (int) (H * 0.012f));
+            shuffleBtn.setFocusable(true);
+            shuffleBtn.setClickable(true);
+            styleShuffle(false);
+            shuffleBtn.setOnFocusChangeListener((v, f) -> {
+                styleShuffle(f);
+                if (f) SoundFx.move();
+            });
+            shuffleBtn.setOnClickListener(v -> {
+                SoundFx.click();
+                shufflePlay();
+            });
+            LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            slp.rightMargin = (int) (W * 0.012f);
+            head.addView(shuffleBtn, slp);
+        }
         if (section != null) {
             sortBtn = new TextView(this);
             sortBtn.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.028f);
@@ -117,6 +142,22 @@ public class BrowseActivity extends ReelActivity implements PosterAdapter.Listen
         setContentView(root);
         preview = new PreviewCard(this, root, PreviewCard::plexTrailer); // live previews on the posters
         load();
+    }
+
+    private void styleShuffle(boolean focused) {
+        shuffleBtn.setBackground(UiUtil.rounded(focused ? 0xFFFFFFFF : 0x33FFFFFF, H * 0.04f));
+        shuffleBtn.setTextColor(focused ? 0xFF000000 : Color.WHITE);
+    }
+
+    private void shufflePlay() {
+        List<Plex.Item> queue = new ArrayList<>();
+        for (Plex.Item it : items) if (it.isPlayable()) queue.add(it);
+        if (queue.isEmpty()) {
+            android.widget.Toast.makeText(this, "Nothing to play in here yet", android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        java.util.Collections.shuffle(queue, new java.util.Random());
+        PlayerActivity.startQueue(this, queue, 0);
     }
 
     private void styleSort(boolean focused) {
@@ -185,6 +226,12 @@ public class BrowseActivity extends ReelActivity implements PosterAdapter.Listen
     }
 
     @Override
+    protected void onPause() {
+        super.onPause();
+        if (preview != null) preview.stop();
+    }
+
+    @Override
     protected void onStop() {
         super.onStop();
         if (preview != null) preview.stop();
@@ -208,9 +255,13 @@ public class BrowseActivity extends ReelActivity implements PosterAdapter.Listen
                 || it.type.equals("season")) {
             final Intent i = new Intent(this, DetailActivity.class);
             i.putExtra("key", it.key);
-            if (preview != null && preview.openFullThen(it.key, () -> startActivity(i))) return;
+            if (preview != null && preview.openFullThen(it.key, () -> {
+                startActivity(i);
+                overridePendingTransition(R.anim.reel_fade_in, R.anim.reel_hold);
+            })) return;
             if (preview != null) preview.handOff(it.key);
             startActivity(i);
+            overridePendingTransition(R.anim.reel_fade_in, R.anim.reel_hold);
         } else {
             // Albums and folders open as another grid.
             Intent i = new Intent(this, BrowseActivity.class);

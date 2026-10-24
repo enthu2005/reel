@@ -24,6 +24,8 @@
 
         <activity
             android:name=".HomeActivity"
+            android:banner="@drawable/banner_reel"
+            android:icon="@drawable/banner_reel"
             android:exported="true"
             android:theme="@style/Reel.Splash"
             android:screenOrientation="landscape">
@@ -41,6 +43,11 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <activity
+            android:name=".ProfilesActivity"
+            android:exported="false"
+            android:screenOrientation="landscape" />
 
         <activity
             android:name=".SeerrActivity"
@@ -69,6 +76,11 @@
 
         <activity
             android:name=".BrowseActivity"
+            android:exported="false"
+            android:screenOrientation="landscape" />
+
+        <activity
+            android:name=".PersonActivity"
             android:exported="false"
             android:screenOrientation="landscape" />
 

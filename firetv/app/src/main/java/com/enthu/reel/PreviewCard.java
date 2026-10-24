@@ -114,7 +114,12 @@ final class PreviewCard {
         String k = it.type.equals("episode") && it.gpKey != null ? it.gpKey : it.key;
         String url = Plex.trailerUrl(k);
         if (url != null) return new String[]{"direct", url, "trailer"};
-        if (it.type.equals("show")) return new String[]{"none"};
+        if (it.type.equals("show")) {
+            // No trailer: use a scene from the first episode instead.
+            Plex.Item ep = Plex.firstEpisode(it.key);
+            if (ep == null) return new String[]{"none"};
+            return new String[]{"hls", ep.key, String.valueOf(Plex.sceneOffset(ep.key, ep.duration)), "clip"};
+        }
         return new String[]{"hls", it.key, String.valueOf(Plex.sceneOffset(it.key, it.duration)), "clip"};
     }
 
@@ -550,13 +555,29 @@ final class PreviewCard {
         YouTubeEmbed.pause(web, paused);
     }
 
-    /** While full screen: OK pauses, anything else goes back to the card. True if it used the key. */
+    /**
+     * While full screen: OK opens the title's page (which fades in over the video), Play/Pause pauses,
+     * anything else goes back to the card. True if it used the key.
+     */
     boolean handleKey(KeyEvent e) {
         if (!full) return false;
         if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
             int k = e.getKeyCode();
-            if (k == KeyEvent.KEYCODE_DPAD_CENTER || k == KeyEvent.KEYCODE_ENTER
-                    || k == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
+            boolean ok = k == KeyEvent.KEYCODE_DPAD_CENTER || k == KeyEvent.KEYCODE_ENTER;
+            if (ok && item != null && item.key != null && !item.key.startsWith("seerr:")) {
+                final String openKey = item.key;
+                full = false;
+                if (paused) togglePause();
+                if (openFullThen(openKey, () -> {
+                    android.content.Intent i = new android.content.Intent(act, DetailActivity.class);
+                    i.putExtra("key", openKey);
+                    act.startActivity(i);
+                })) {
+                    return true;
+                }
+                full = true;
+            }
+            if (k == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE || ok) {
                 togglePause();
                 android.widget.Toast.makeText(act, paused ? "Paused · Back to return" : "Playing",
                         android.widget.Toast.LENGTH_SHORT).show();

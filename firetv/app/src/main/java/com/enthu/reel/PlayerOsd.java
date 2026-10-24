@@ -80,6 +80,7 @@ final class PlayerOsd {
     private final PlayMark mark;
 
     private boolean visible = false;
+    private boolean pinned = false; // kept on screen (while the queue is open) instead of fading away
     private long lastTouch = 0;
     private long scrubTarget = -1;
     private int thumbToken = 0;
@@ -102,7 +103,7 @@ final class PlayerOsd {
             if (!visible) return;
             update();
             boolean idle = SystemClock.uptimeMillis() - lastTouch > HIDE_MS;
-            if (idle && host.playing() && scrubTarget < 0) {
+            if (idle && !pinned && host.playing() && scrubTarget < 0) {
                 hide();
                 return;
             }
@@ -231,6 +232,19 @@ final class PlayerOsd {
 
     boolean isVisible() {
         return visible;
+    }
+
+    /** Keep the timeline up (true) or let it fade away again as usual (false). */
+    void pin(boolean on) {
+        pinned = on;
+        touch();
+        if (on) show();
+    }
+
+    /** Slides the timeline up by [px] (out of the way of a row along the bottom), or back with 0. */
+    void lift(float px) {
+        bottom.animate().cancel();
+        bottom.animate().translationY(-px).setDuration(220).start();
     }
 
     private void touch() {
@@ -462,8 +476,73 @@ final class PlayerOsd {
         return (b[o] & 0xFF) | ((b[o + 1] & 0xFF) << 8) | ((b[o + 2] & 0xFF) << 16) | ((b[o + 3] & 0xFF) << 24);
     }
 
+    // Fallback when the server has no preview thumbnails: the chapter pictures instead.
+    private final ExecutorService chapterPool = Executors.newSingleThreadExecutor();
+    private long[] chapStart;
+    private String[] chapThumb;
+    private final java.util.Map<Integer, Bitmap> chapBitmaps = new java.util.HashMap<>();
+
+    void loadChapterThumbnails(final String ratingKey) {
+        if (ratingKey == null) return;
+        chapterPool.execute(() -> {
+            final java.util.List<String[]> list = Plex.chapterThumbs(ratingKey);
+            if (list.isEmpty()) return;
+            final long[] st = new long[list.size()];
+            final String[] th = new String[list.size()];
+            for (int i = 0; i < st.length; i++) {
+                try {
+                    st[i] = Long.parseLong(list.get(i)[0]);
+                } catch (Exception e) {
+                    st[i] = 0;
+                }
+                th[i] = list.get(i)[1];
+            }
+            handler.post(() -> {
+                chapStart = st;
+                chapThumb = th;
+            });
+        });
+    }
+
+    private void showChapterThumb(long ms) {
+        if (chapStart == null || chapStart.length == 0) return;
+        int idx = 0;
+        for (int i = 0; i < chapStart.length; i++) if (chapStart[i] <= ms) idx = i;
+        final int i = idx;
+        final int token = ++thumbToken;
+        Bitmap have = chapBitmaps.get(i);
+        if (have != null) {
+            previewImg.setImageBitmap(have);
+            previewImg.setVisibility(View.VISIBLE);
+            return;
+        }
+        final String path = chapThumb[i];
+        chapterPool.execute(() -> {
+            try {
+                HttpURLConnection c = (HttpURLConnection) new URL(Plex.raw(path)).openConnection();
+                c.setConnectTimeout(10000);
+                c.setReadTimeout(15000);
+                if (c.getResponseCode() != 200) return;
+                try (InputStream in = c.getInputStream()) {
+                    final Bitmap bmp = BitmapFactory.decodeStream(in);
+                    if (bmp == null) return;
+                    handler.post(() -> {
+                        chapBitmaps.put(i, bmp);
+                        if (token != thumbToken) return;
+                        previewImg.setImageBitmap(bmp);
+                        previewImg.setVisibility(View.VISIBLE);
+                    });
+                }
+            } catch (Exception ignored) {
+            }
+        });
+    }
+
     private void showThumb(long ms) {
-        if (bifFile == null || bifCount == 0 || bifTimes == null) return;
+        if (bifFile == null || bifCount == 0 || bifTimes == null) {
+            showChapterThumb(ms);
+            return;
+        }
         // The last frame taken at or before this moment (frames aren't always one per interval).
         int lo = 0;
         int hi = bifCount - 1;
@@ -472,6 +551,7 @@ final class PlayerOsd {
             if (bifTimes[mid] <= ms) lo = mid;
             else hi = mid - 1;
         }
+        if (lo + 1 < bifCount && bifTimes[lo + 1] - ms < ms - bifTimes[lo]) lo++; // the closest frame, not just the one before
         final int i = lo;
         final long a = bifOffsets[i];
         final long b = bifOffsets[i + 1];
@@ -498,6 +578,7 @@ final class PlayerOsd {
     void release() {
         handler.removeCallbacksAndMessages(null);
         thumbs.shutdownNow();
+        chapterPool.shutdownNow();
     }
 
     /** Big translucent play / pause symbol in the middle of the picture. */

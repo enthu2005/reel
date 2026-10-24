@@ -11,6 +11,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -28,6 +29,9 @@ public class LibrariesActivity extends ReelActivity {
     private int W;
     private int H;
     private final List<Plex.Section> sections = new ArrayList<>();
+    private final java.util.Map<String, Integer> counts = new java.util.HashMap<>();
+    private final java.util.Map<String, String> arts = new java.util.HashMap<>();
+    private Adapter adapter;
     private RecyclerView grid;
     private TextView message;
 
@@ -75,14 +79,48 @@ public class LibrariesActivity extends ReelActivity {
             public void ok(List<Plex.Section> list) {
                 if (isDestroyed()) return;
                 sections.clear();
-                sections.addAll(list);
-                message.setVisibility(list.isEmpty() ? View.VISIBLE : View.GONE);
-                if (list.isEmpty()) message.setText("No libraries found");
-                grid.setAdapter(new Adapter());
+                for (Plex.Section s : list) {
+                    if (!s.type.equals("artist")) sections.add(s); // music libraries aren't shown here
+                }
+                message.setVisibility(sections.isEmpty() ? View.VISIBLE : View.GONE);
+                if (sections.isEmpty()) message.setText("No libraries found");
+                adapter = new Adapter();
+                grid.setAdapter(adapter);
                 grid.post(() -> {
                     RecyclerView.ViewHolder vh = grid.findViewHolderForAdapterPosition(0);
                     if (vh != null) vh.itemView.requestFocus();
                 });
+                // How many titles each library holds, filled in as the answers arrive
+                for (final Plex.Section s : sections) {
+                    Plex.async(() -> Plex.sectionLatest(s.key), new Plex.Callback<Plex.Item>() {
+                        @Override
+                        public void ok(Plex.Item latest) {
+                            if (isDestroyed() || adapter == null || latest == null) return;
+                            String path = latest.art != null ? latest.art : latest.poster();
+                            if (path == null) return;
+                            arts.put(s.key, path);
+                            int at = sections.indexOf(s);
+                            if (at >= 0) adapter.notifyItemChanged(at);
+                        }
+
+                        @Override
+                        public void fail(Exception e) {
+                        }
+                    });
+                    Plex.async(() -> Plex.sectionCount(s.key), new Plex.Callback<Integer>() {
+                        @Override
+                        public void ok(Integer n) {
+                            if (isDestroyed() || adapter == null) return;
+                            counts.put(s.key, n);
+                            int at = sections.indexOf(s);
+                            if (at >= 0) adapter.notifyItemChanged(at);
+                        }
+
+                        @Override
+                        public void fail(Exception e) {
+                        }
+                    });
+                }
             }
 
             @Override
@@ -111,18 +149,62 @@ public class LibrariesActivity extends ReelActivity {
     private final class Adapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         @Override
         public RecyclerView.ViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
-            final LinearLayout card = new LinearLayout(LibrariesActivity.this);
-            card.setOrientation(LinearLayout.VERTICAL);
-            card.setGravity(Gravity.BOTTOM);
-            int pad = (int) (H * 0.03f);
-            card.setPadding(pad, pad, pad, pad);
+            final float r = H * 0.022f;
+            final FrameLayout card = new FrameLayout(LibrariesActivity.this);
             card.setFocusable(true);
             card.setClickable(true);
+            card.setBackground(UiUtil.rounded(UiUtil.CARD, r));
+            UiUtil.clipRounded(card, r);
             RecyclerView.LayoutParams lp = new RecyclerView.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, (int) (H * 0.26f));
+                    ViewGroup.LayoutParams.MATCH_PARENT, (int) (H * 0.27f));
             int m = (int) (H * 0.012f);
             lp.setMargins(m, m, m, m);
             card.setLayoutParams(lp);
+
+            ImageView art = new ImageView(LibrariesActivity.this);
+            art.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            card.addView(art, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+            View shade = new View(LibrariesActivity.this);
+            shade.setBackground(new android.graphics.drawable.GradientDrawable(
+                    android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                    new int[]{0x66000000, 0xE6000000}));
+            card.addView(shade, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+            LinearLayout text = new LinearLayout(LibrariesActivity.this);
+            text.setOrientation(LinearLayout.VERTICAL);
+            text.setGravity(Gravity.BOTTOM);
+            int pad = (int) (H * 0.026f);
+            text.setPadding(pad, pad, pad, pad);
+            TextView kindView = new TextView(LibrariesActivity.this);
+            kindView.setTextColor(0xCCFFFFFF);
+            kindView.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.022f);
+            kindView.setTypeface(UiUtil.font(UiUtil.MEDIUM));
+            text.addView(kindView);
+            TextView name = new TextView(LibrariesActivity.this);
+            name.setTextColor(Color.WHITE);
+            name.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.04f);
+            name.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+            name.setSingleLine(true);
+            name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            text.addView(name);
+            TextView count = new TextView(LibrariesActivity.this);
+            count.setTextColor(0xCCFFFFFF);
+            count.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.024f);
+            count.setTypeface(UiUtil.font(UiUtil.MEDIUM));
+            text.addView(count);
+            card.addView(text, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+            card.setOnFocusChangeListener((v, f) -> {
+                card.setForeground(f ? UiUtil.sheen(r) : null);
+                card.setElevation(f ? H * 0.025f : 0f);
+                float sc = f ? 1.05f : 1f;
+                v.animate().scaleX(sc).scaleY(sc).setDuration(150).start();
+                if (f) SoundFx.move();
+            });
             return new RecyclerView.ViewHolder(card) {
             };
         }
@@ -130,33 +212,21 @@ public class LibrariesActivity extends ReelActivity {
         @Override
         public void onBindViewHolder(RecyclerView.ViewHolder vh, int position) {
             final Plex.Section s = sections.get(position);
-            final LinearLayout card = (LinearLayout) vh.itemView;
-            card.removeAllViews();
-            final float r = H * 0.03f;
-            final int color = COLORS[position % COLORS.length];
-            card.setBackground(UiUtil.rounded(color, r));
+            final FrameLayout card = (FrameLayout) vh.itemView;
+            ImageView art = (ImageView) card.getChildAt(0);
+            LinearLayout text = (LinearLayout) card.getChildAt(2);
+            ((TextView) text.getChildAt(0)).setText(kind(s.type));
+            ((TextView) text.getChildAt(1)).setText(s.title);
+            Integer n = counts.get(s.key);
+            ((TextView) text.getChildAt(2)).setText(n == null ? "" : n + (n == 1 ? " title" : " titles"));
 
-            final TextView name = new TextView(LibrariesActivity.this);
-            name.setText(s.title);
-            name.setTextColor(Color.WHITE);
-            name.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.04f);
-            name.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
-            name.setMaxLines(2);
-            card.addView(name);
-            final TextView sub = new TextView(LibrariesActivity.this);
-            sub.setText(kind(s.type));
-            sub.setTextColor(0xCCFFFFFF);
-            sub.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.026f);
-            card.addView(sub);
+            String path = arts.get(s.key);
+            if (path != null) {
+                com.bumptech.glide.Glide.with(art).load(Plex.img(path, 640, 360)).centerCrop().into(art);
+            } else {
+                art.setImageDrawable(new android.graphics.drawable.ColorDrawable(COLORS[position % COLORS.length]));
+            }
 
-            card.setOnFocusChangeListener((v, f) -> {
-                card.setBackground(UiUtil.rounded(f ? 0xFFFFFFFF : color, r));
-                name.setTextColor(f ? 0xFF000000 : Color.WHITE);
-                sub.setTextColor(f ? 0xFF444444 : 0xCCFFFFFF);
-                float sc = f ? 1.05f : 1f;
-                v.animate().scaleX(sc).scaleY(sc).setDuration(130).start();
-                if (f) SoundFx.move();
-            });
             card.setOnClickListener(v -> {
                 SoundFx.click();
                 Intent i = new Intent(LibrariesActivity.this, BrowseActivity.class);

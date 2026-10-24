@@ -49,6 +49,12 @@ final class PreviewHandoff {
                         .setBufferDurationsMs(6_000, 20_000, 2_500, 2_500).build())
                 .setMediaSourceFactory(new androidx.media3.exoplayer.source.DefaultMediaSourceFactory(http))
                 .build();
+        // Previews are background: with the sound off there is no audio output at all
+        // (a big PCM 5.1 track could otherwise fail to open one: AUDIO_TRACK_INIT_FAILED).
+        if (HomeActivity.previewVolume(ctx) <= 0f) {
+            p.setTrackSelectionParameters(p.getTrackSelectionParameters().buildUpon()
+                    .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, true).build());
+        }
         p.addListener(new androidx.media3.common.Player.Listener() {
             @Override
             public void onPlayerError(androidx.media3.common.PlaybackException e) {

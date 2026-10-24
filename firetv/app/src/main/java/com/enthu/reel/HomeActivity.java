@@ -53,8 +53,8 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     private static final int TAB_MOVIES = 1;
     private static final int TAB_SHOWS = 2;
     private static final String[] TAB_NAMES = {"Home", "Movies", "TV Shows", "Libraries", "Discover", "Search"};
-    private static final long SPOTLIGHT_MS = 9000L;
-    private static final int SPOTLIGHT_COUNT = 7;
+    private static final long SPOTLIGHT_MS = 12000L;
+    private static final int SPOTLIGHT_COUNT = 10;
 
     private static class Row {
         final String title;
@@ -99,8 +99,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     private TextView heroMeta;
     private TextView heroSummary;
     private TextView playBtn;
-    private TextView infoBtn;
-    private TextView nextBtn;
+
     private LinearLayout dots;
 
     private TextView status;
@@ -125,6 +124,12 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     private FrameLayout rootView;
     private View focusedCardRoot;  // the focused card's whole item view
     private View focusedCard;      // its picture
+    private View hiddenCardRoot;   // the original card, hidden while its preview card is up
+
+    private void showHiddenCard() {
+        if (hiddenCardRoot != null) hiddenCardRoot.setAlpha(1f);
+        hiddenCardRoot = null;
+    }
     private Plex.Item focusedItem;
     private FrameLayout pCard;     // the grown card
     private android.view.TextureView pTex;
@@ -154,6 +159,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     @Override
     public void onFocusedView(Plex.Item item, View card) {
         if (focusedCardRoot == card.getParent() && focusedItem == item) return;
+        stopHeroPreview(); // moving down into the rows: the spotlight preview stops
         stopPreview();
         focusedCard = card;
         focusedCardRoot = (View) card.getParent();
@@ -371,6 +377,20 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         pCard.setAlpha(0.6f);
         pCard.animate().scaleX(1f).scaleY(1f).translationX(0f).translationY(0f).alpha(1f)
                 .setDuration(320).setInterpolator(new DecelerateInterpolator(1.6f)).start();
+        showHiddenCard();
+        if (focusedCardRoot != null) {
+            hiddenCardRoot = focusedCardRoot;
+            hiddenCardRoot.setAlpha(0f);
+        }
+        dimBackdrop(true);
+    }
+
+    /** While a card preview plays the page behind it goes to a plain dark colour (the backdrop
+     *  picture there no longer matches what is on screen); it comes back when the preview ends. */
+    private void dimBackdrop(boolean on) {
+        if (bgBox == null) return;
+        bgBox.animate().cancel();
+        bgBox.animate().alpha(on ? 0f : 1f).setDuration(on ? 350 : 450).start();
     }
 
     /** Fills the TextureView with the video, cropping the edges (like a centre-crop picture). */
@@ -480,6 +500,8 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         final FrameLayout c = pCard;
         pCard = null;
         pTex = null;
+        dimBackdrop(false);
+        showHiddenCard();
         if (c == null) return;
         if (pFrom != null && c.getWidth() > 0) {
             ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) c.getLayoutParams();
@@ -494,6 +516,8 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     }
 
     private void removeCard() {
+        dimBackdrop(false);
+        showHiddenCard();
         removeYoutube();
         if (pCard != null && pCard.getParent() != null) ((ViewGroup) pCard.getParent()).removeView(pCard);
         pCard = null;
@@ -511,6 +535,219 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         }
     }
 
+    // ---- Spotlight preview: after 3 seconds the backdrop turns into the title's trailer / a scene.
+    // The video is found and loaded during those 3 seconds, so it can start the moment they're up.
+    private androidx.media3.exoplayer.ExoPlayer heroPlayer;
+    private android.view.TextureView heroTex;
+    private String heroSession;
+    private int heroPrevToken;
+    private boolean heroPrevDue;
+    private boolean heroPrevReady;
+    private boolean heroPrevShowing;
+    private boolean rowsPushed;
+    private boolean heroFull;
+    private final java.util.HashMap<View, Float> heroFullAlphas = new java.util.HashMap<>();
+
+    /** Holding OK on the spotlight button while its preview plays: just the video, nothing on top. */
+    private boolean enterHeroFull() {
+        if (heroFull || !heroPrevShowing || heroPlayer == null || rootView == null) return false;
+        heroFull = true;
+        heroFullAlphas.clear();
+        for (int i = 0; i < rootView.getChildCount(); i++) {
+            View v = rootView.getChildAt(i);
+            if (v == bgBox || v == heroTex) continue;
+            heroFullAlphas.put(v, v.getAlpha());
+            v.animate().alpha(0f).setDuration(300).start();
+        }
+        handler.removeCallbacks(heroEnd);
+        if (heroPrevClip) handler.postDelayed(heroEnd, 90_000); // a clip of the film still stops
+        return true;
+    }
+
+    private void exitHeroFull() {
+        if (!heroFull) return;
+        heroFull = false;
+        for (java.util.Map.Entry<View, Float> en : heroFullAlphas.entrySet()) {
+            en.getKey().animate().alpha(en.getValue()).setDuration(300).start();
+        }
+        heroFullAlphas.clear();
+        if (heroPrevShowing) {
+            handler.removeCallbacks(heroEnd);
+            handler.postDelayed(heroEnd, PREVIEW_MAX_MS);
+        }
+    }
+
+    /** While the spotlight preview plays the rows slide down out of the way; title, nav and button stay. */
+    private void pushRows(boolean down) {
+        if (rowsView == null || rowsPushed == down) return;
+        rowsPushed = down;
+        rowsView.animate().cancel();
+        rowsView.animate().translationY(down ? H * 0.34f : 0f).setDuration(down ? 600 : 400)
+                .setInterpolator(new DecelerateInterpolator()).start();
+    }
+    private static final long HERO_PREVIEW_MS = 3000;
+    private final Runnable heroDue = () -> {
+        heroPrevDue = true;
+        if (heroPrevReady && heroPlayer != null) heroPlayer.play();
+    };
+    private final Runnable heroEnd = this::stopHeroPreview;
+    private boolean heroPrevActive;
+    private boolean heroPrevClip;
+
+    private void maybeStartHeroPreview() {
+        if (spotlightMode && !heroPrevActive && current != null) startHeroPreview(current);
+    }
+
+    /** OK on the spotlight while its preview plays: the same player carries on in the title page. */
+    private boolean handOffHero(Plex.Item it) {
+        if (heroPlayer == null || !heroPrevReady || current == null || it == null
+                || !it.key.equals(current.key)) return false;
+        PreviewHandoff.releaseLeftover();
+        PreviewHandoff.player = heroPlayer;
+        PreviewHandoff.session = heroSession;
+        PreviewHandoff.key = it.key;
+        PreviewHandoff.clip = heroPrevClip;
+        PreviewHandoff.rendered = heroPrevShowing;
+        heroPlayer = null;
+        heroSession = null;
+        heroPrevToken++; // the old callbacks must not touch it any more
+        heroPrevReady = false;
+        heroPrevActive = false;
+        handler.removeCallbacks(heroDue);
+        handler.removeCallbacks(heroEnd);
+        Intent i = new Intent(this, DetailActivity.class);
+        i.putExtra("key", it.key);
+        startActivity(i);
+        overridePendingTransition(R.anim.reel_fade_in, R.anim.reel_hold); // dissolve; the video carries on
+        final android.view.TextureView tx = heroTex;
+        handler.postDelayed(() -> {
+            pushRows(false);
+            if (tx != null) tx.setAlpha(0f);
+        }, 800);
+        return true;
+    }
+
+    private void startHeroPreview(final Plex.Item it) {
+        if (it == null || isFinishing() || !previewsOn() || isRequest(it)) return;
+        if (playBtn == null || !playBtn.hasFocus()) return; // only while the spotlight button is selected
+        if (!it.type.equals("movie") && !it.type.equals("show") && !it.type.equals("episode")) return;
+        heroPrevActive = true;
+        final int token = ++heroPrevToken;
+        handler.postDelayed(heroDue, HERO_PREVIEW_MS);
+        String[] known = previewSources.get(it.key);
+        if (known != null) {
+            useHeroSource(known, token);
+            return;
+        }
+        Plex.async(() -> PreviewCard.plexSource(it), new Plex.Callback<String[]>() {
+            @Override
+            public void ok(String[] src) {
+                previewSources.put(it.key, src);
+                if (token == heroPrevToken && !isFinishing()) useHeroSource(src, token);
+            }
+
+            @Override
+            public void fail(Exception e) {
+            }
+        });
+    }
+
+    private void useHeroSource(String[] src, final int token) {
+        if (src[0].equals("none") || src[0].equals("yt") || heroTex == null) return;
+        java.util.Map<String, String> hdr = null;
+        androidx.media3.common.MediaItem mi;
+        heroPrevClip = src[0].equals("hls") && !(src.length > 3 && "trailer".equals(src[3]));
+        if (src[0].equals("direct")) {
+            mi = androidx.media3.common.MediaItem.fromUri(src[1]);
+        } else {
+            hdr = new java.util.HashMap<>();
+            hdr.put("X-Plex-Client-Profile-Extra", Plex.previewProfile());
+            hdr.put("X-Plex-Client-Identifier", Plex.clientId());
+            hdr.put("X-Plex-Product", "Reel");
+            hdr.put("X-Plex-Client-Profile-Name", "Konvergo");
+            long off = 0;
+            try {
+                off = Long.parseLong(src[2]);
+            } catch (Exception ignored) {
+            }
+            heroSession = java.util.UUID.randomUUID().toString();
+            mi = new androidx.media3.common.MediaItem.Builder()
+                    .setUri(Plex.previewUrl(src[1], off, heroSession))
+                    .setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8).build();
+        }
+        releaseHeroPlayer();
+        heroPlayer = PreviewHandoff.newPlayer(this, hdr);
+        heroPlayer.setVolume(0f);
+        heroPlayer.addListener(new androidx.media3.common.Player.Listener() {
+            @Override
+            public void onVideoSizeChanged(androidx.media3.common.VideoSize vs) {
+                if (token != heroPrevToken || heroTex == null || vs.width <= 0 || vs.height <= 0) return;
+                float vw = heroTex.getWidth(), vh = heroTex.getHeight();
+                if (vw <= 0 || vh <= 0) return;
+                float videoW = vs.width * (vs.pixelWidthHeightRatio > 0 ? vs.pixelWidthHeightRatio : 1f);
+                float sc = Math.max(vw / videoW, vh / vs.height);
+                android.graphics.Matrix mx = new android.graphics.Matrix();
+                mx.setScale(videoW * sc / vw, vs.height * sc / vh, vw / 2f, vh / 2f);
+                heroTex.setTransform(mx);
+            }
+
+            @Override
+            public void onRenderedFirstFrame() {
+                if (token != heroPrevToken || heroTex == null) return;
+                heroPrevShowing = true;
+                if (bgDrift != null) bgDrift.pause();
+                pushRows(true);
+                heroTex.animate().alpha(1f).setDuration(600).start();
+                fadeVolume(heroPlayer, previewVolume(HomeActivity.this), 1800);
+                handler.removeCallbacks(heroEnd);
+                handler.postDelayed(heroEnd, PREVIEW_MAX_MS);
+            }
+
+            @Override
+            public void onPlaybackStateChanged(int state) {
+                if (token == heroPrevToken && state == androidx.media3.common.Player.STATE_ENDED) stopHeroPreview();
+            }
+
+            @Override
+            public void onPlayerError(androidx.media3.common.PlaybackException error) {
+                if (token == heroPrevToken) stopHeroPreview();
+            }
+        });
+        heroPlayer.setVideoTextureView(heroTex);
+        heroPlayer.setMediaItem(mi);
+        heroPlayer.setPlayWhenReady(false); // load now; play once the 3 seconds are up
+        heroPlayer.prepare();
+        heroPrevReady = true;
+        if (heroPrevDue) heroPlayer.play();
+    }
+
+    private void releaseHeroPlayer() {
+        if (heroPlayer != null) {
+            heroPlayer.release();
+            heroPlayer = null;
+        }
+        if (heroSession != null) {
+            Plex.stopTranscode(heroSession);
+            heroSession = null;
+        }
+    }
+
+    private void stopHeroPreview() {
+        exitHeroFull();
+        heroPrevActive = false;
+        heroPrevToken++;
+        heroPrevDue = false;
+        heroPrevReady = false;
+        heroPrevShowing = false;
+        if (bgDrift != null && bgDrift.isPaused() && pCard == null) bgDrift.resume();
+        pushRows(false);
+        handler.removeCallbacks(heroDue);
+        handler.removeCallbacks(heroEnd);
+        if (heroTex != null) heroTex.animate().cancel();
+        if (heroTex != null) heroTex.setAlpha(0f);
+        releaseHeroPlayer();
+    }
+
     private int heroToken = 0;
     private boolean spotlightMode = true;
     private int spotIndex = 0;
@@ -519,7 +756,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     private final Runnable spotTick = new Runnable() {
         @Override
         public void run() {
-            if (spotlightMode && spotlight.size() > 1) stepSpotlight(1);
+            if (spotlightMode && spotlight.size() > 1 && !heroPrevShowing) stepSpotlight(1);
             handler.postDelayed(this, SPOTLIGHT_MS);
         }
     };
@@ -536,6 +773,17 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
             startActivity(new Intent(this, LoginActivity.class));
             finish();
             return;
+        }
+        // Netflix style "Who's watching?" when the app starts, unless Automatic sign in is on
+        if (!Plex.profileChosen) {
+            Plex.profileChosen = true;
+            if (!getSharedPreferences("reel_ui", MODE_PRIVATE).getBoolean("autoSignIn", false)) {
+                Intent pi = new Intent(this, ProfilesActivity.class);
+                pi.putExtra("startup", true);
+                startActivity(pi);
+                finish();
+                return;
+            }
         }
         DisplayMetrics dm = getResources().getDisplayMetrics();
         W = dm.widthPixels;
@@ -677,12 +925,21 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     }
 
     @Override
+    protected void onPause() {
+        super.onPause();
+        // Free the preview players' audio before another screen (the movie) opens its own
+        stopHeroPreview();
+        stopPreview();
+    }
+
+    @Override
     protected void onStop() {
         super.onStop();
         stoppedAt = android.os.SystemClock.uptimeMillis();
         if (rowsView != null) saveFocus();
         handler.removeCallbacks(spotTick);
         handler.removeCallbacks(requestsTick);
+        stopHeroPreview();
         stopPreview();
     }
 
@@ -708,6 +965,11 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         bgBox.addView(bgA);
 
         root.addView(bgBox, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        heroTex = new android.view.TextureView(this);
+        heroTex.setAlpha(0f);
+        root.addView(heroTex, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         View scrimLeft = new View(this);
@@ -842,21 +1104,18 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         buttons.setOrientation(LinearLayout.HORIZONTAL);
         buttons.setGravity(Gravity.CENTER_VERTICAL);
         buttons.setClipChildren(false);
-        playBtn = makeButton("Play", true);
-        infoBtn = makeButton("Details", false);
-        nextBtn = makeButton("›", false);
-        playBtn.setOnClickListener(v -> playCurrent());
-        infoBtn.setOnClickListener(v -> openDetail(current));
-        nextBtn.setOnClickListener(v -> stepSpotlight(1));
-        // Left on Play = previous spotlight, right on the arrow = next spotlight
+        buttons.setPadding((int) (W * 0.012f), 0, 0, 0);
+        hero.setClipChildren(false);
+        hero.setClipToPadding(false);
+        // One button that opens the title's page. Left / Right on it steps through the spotlight.
+        playBtn = makeButton("Go to movie", true);
+        playBtn.setOnClickListener(v -> openDetail(current));
+        playBtn.setOnLongClickListener(v -> enterHeroFull());
         playBtn.setOnKeyListener((v, code, e) -> {
             if (e.getAction() == KeyEvent.ACTION_DOWN && code == KeyEvent.KEYCODE_DPAD_LEFT) {
                 stepSpotlight(-1);
                 return true;
             }
-            return false;
-        });
-        nextBtn.setOnKeyListener((v, code, e) -> {
             if (e.getAction() == KeyEvent.ACTION_DOWN && code == KeyEvent.KEYCODE_DPAD_RIGHT) {
                 stepSpotlight(1);
                 return true;
@@ -864,14 +1123,6 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
             return false;
         });
         buttons.addView(playBtn);
-        LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        gap.leftMargin = (int) (W * 0.01f);
-        buttons.addView(infoBtn, gap);
-        LinearLayout.LayoutParams gap2 = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        gap2.leftMargin = (int) (W * 0.01f);
-        buttons.addView(nextBtn, gap2);
         LinearLayout.LayoutParams btnRowLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         btnRowLp.topMargin = (int) (H * 0.025f);
@@ -879,6 +1130,8 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
 
         // The outer box carries the scroll fade, the inner group carries the swap animation
         heroOuter = new FrameLayout(this);
+        heroOuter.setClipChildren(false);
+        heroOuter.setClipToPadding(false);
         heroOuter.addView(hero, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         FrameLayout.LayoutParams heroLp = new FrameLayout.LayoutParams(
@@ -923,6 +1176,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         UiUtil.clipRounded(glass, navR);
 
         blurImg = new ImageView(this);
+        blurImg.setVisibility(View.GONE); // no shrunk copy of the backdrop behind the bar any more
         blurImg.setScaleType(ImageView.ScaleType.CENTER_CROP);
         glass.addView(blurImg, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -952,8 +1206,9 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         edge.setColor(Color.TRANSPARENT);
         edge.setCornerRadius(navR);
         edge.setStroke(Math.max(1, (int) (H * 0.0015f)), 0x26FFFFFF);
+        // Same look as the Windows app: a plain translucent dark bar (the real picture shows through)
         GradientDrawable tint = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{0x33FFFFFF, 0x4D000000});
+                new int[]{0x8C1C1C1E, 0x8C1C1C1E});
         tint.setCornerRadius(navR);
         glass.setForeground(new android.graphics.drawable.LayerDrawable(
                 new Drawable[]{tint, edge}));
@@ -969,6 +1224,13 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         navLp.topMargin = (int) (H * 0.04f);
         root.addView(glass, navLp);
         styleTabs();
+        // Coming up from the page onto the top bar lands on the tab you are on, not on the first one
+        root.getViewTreeObserver().addOnGlobalFocusChangeListener((oldF, newF) -> {
+            if (newF == null || tab < 0 || tab >= tabViews.length || tabViews[tab] == null) return;
+            if (!isNavTab(newF) || isNavTab(oldF) || oldF == cornerSettings || newF == tabViews[tab]) return;
+            final View target = tabViews[tab];
+            handler.post(target::requestFocus);
+        });
 
         LinearLayout corner = new LinearLayout(this);
         corner.setOrientation(LinearLayout.HORIZONTAL);
@@ -1017,6 +1279,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
             if (focused) {
                 SoundFx.move();
                 enterSpotlight();
+                maybeStartHeroPreview();
             }
         });
         return t;
@@ -1042,6 +1305,9 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
             v.animate().scaleX(s).scaleY(s).setDuration(130).start();
             if (focused) {
                 SoundFx.move();
+                // On the top bar nothing plays in the background: the quick way to get the app quiet
+                stopPreview();
+                stopHeroPreview();
                 t.setBackground(UiUtil.rounded(0xFFFFFFFF, H * 0.05f));
                 t.setTextColor(0xFF000000);
                 t.setAlpha(1f);
@@ -1052,6 +1318,12 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
             }
         });
         return t;
+    }
+
+    private boolean isNavTab(View v) {
+        if (v == null) return false;
+        for (TextView t : tabViews) if (t == v) return true;
+        return false;
     }
 
     private boolean isSelectedTab(TextView t) {
@@ -1118,8 +1390,21 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                         recents.add(recent);
                     }
                 }
+                // What you're partway through is worth a spot in the banner too
+                if (!onDeck.isEmpty()) recents.add(onDeck);
             } else {
                 String type = whichTab == TAB_MOVIES ? "movie" : "show";
+                // Continue Watching: only this kind of thing (films here, episodes under TV Shows)
+                try {
+                    List<Plex.Item> deck = Plex.items(Plex.paged("/library/onDeck", 40));
+                    List<Plex.Item> keep = new ArrayList<>();
+                    for (Plex.Item d : deck) {
+                        if (type.equals("movie") ? d.type.equals("movie") : d.type.equals("episode")) keep.add(d);
+                    }
+                    if (!keep.isEmpty()) out.rows.add(new Row("Continue Watching", keep, true));
+                } catch (Exception ignored) {
+                    // no Continue Watching row if the server won't say
+                }
                 for (Plex.Section s : sections) {
                     if (!s.type.equals(type)) continue;
                     List<Plex.Item> recent = Plex.items(Plex.paged(
@@ -1199,6 +1484,18 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
             public void fail(Exception e) {
                 if (mine != loadToken || isDestroyed()) return;
                 String msg = String.valueOf(e.getMessage());
+                if (msg.contains("401") && Plex.profileName != null && Plex.mainToken != null) {
+                    // This profile isn't allowed on the server: go back to the main account and ask again
+                    Plex.useMainAccount();
+                    android.widget.Toast.makeText(HomeActivity.this,
+                            "That profile can't open this server. Check its access in Plex.",
+                            android.widget.Toast.LENGTH_LONG).show();
+                    Intent back = new Intent(HomeActivity.this, ProfilesActivity.class);
+                    back.putExtra("recover", true);
+                    startActivity(back);
+                    finish();
+                    return;
+                }
                 if (msg.contains("401")) {
                     Plex.signOut();
                     startActivity(new Intent(HomeActivity.this, LoginActivity.class));
@@ -1321,11 +1618,15 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 try {
                     List<Plex.Item> last = Plex.items(Plex.paged(
                             "/library/sections/" + s.key + "/all?sort=lastViewedAt:desc", 10));
+                    int seeds = 0;
                     for (Plex.Item w : last) {
                         if (w.viewCount <= 0 && w.viewOffset <= 0) continue;
-                        List<Plex.Item> like = Plex.related(w.key);
-                        if (like.size() >= 3) out.add(new Row("Because you watched " + w.displayTitle(), like, false));
-                        break;
+                        List<Plex.Item> like = new ArrayList<>();
+                        for (Plex.Item x : Plex.related(w.key)) {
+                            if (x.viewCount == 0 && like.size() < 20) like.add(x); // only things you haven't seen
+                        }
+                        if (like.size() >= 4) out.add(new Row("Because you watched " + w.displayTitle(), like, false));
+                        if (++seeds >= 2) break;
                     }
                 } catch (Exception ignored) {
                 }
@@ -1393,12 +1694,11 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 boolean inRows = focusedRow >= 0;
 
                 int topAt = 0;
-                if (whichTab == TAB_HOME) {
-                    for (int i = 0; i < rows.size(); i++) {
-                        String t = rows.get(i).title;
-                        if (t.equals("Up Next") || t.equals("Currently Watching") || t.equals("Your requests")) {
-                            topAt = i + 1;
-                        }
+                for (int i = 0; i < rows.size(); i++) {
+                    String t = rows.get(i).title;
+                    if (t.equals("Up Next") || t.equals("Currently Watching") || t.equals("Your requests")
+                            || t.equals("Continue Watching")) {
+                        topAt = i + 1;
                     }
                 }
                 if (inRows) topAt = Math.max(topAt, focusedRow + 1);
@@ -1528,6 +1828,8 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     private void applyHero(final Plex.Item it, boolean animate) {
         current = it;
         final int token = ++heroToken;
+        stopHeroPreview();
+        if (spotlightMode) startHeroPreview(it);
 
         setBackdrop(Plex.img(it.heroArt() != null ? it.heroArt() : it.poster(), 1920, 1080));
 
@@ -1554,7 +1856,9 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         heroMeta.setText(it.metaLine());
         heroSummary.setText(it.summary);
         playBtn.setText(isRequest(it) ? "View request"
-                : it.isPlayable() ? (it.viewOffset > 0 ? "Continue" : "Play") : "View");
+                : it.type.equals("show") ? "Go to show"
+                : it.type.equals("episode") ? "Go to episode"
+                : it.type.equals("movie") ? "Go to movie" : "Go to title");
 
         if (it.logo != null) {
             // Show the title as a logo when the server has one; keep the text if loading fails.
@@ -1625,7 +1929,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     private GradientDrawable navEdge;
     private View navGlass;
     private TextView cornerSettings;
-    private int[] navColors = {0x33FFFFFF, 0x4D000000};
+    private int[] navColors = {0x8C1C1C1E, 0x8C1C1C1E};
     private android.animation.ValueAnimator navAnim;
 
     /** Average brightness (0 dark .. 1 bright) of the top middle of the picture, where the bar sits. */
@@ -1650,19 +1954,10 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         final int[] to;
         int edgeColor;
         float shadow;
-        if (lum > 0.6f) {
-            to = new int[]{0x99000000, 0xA6000000};
-            edgeColor = 0x40FFFFFF;
-            shadow = 8f;
-        } else if (lum > 0.35f) {
-            to = new int[]{0x66000000, 0x80000000};
-            edgeColor = 0x33FFFFFF;
-            shadow = 6f;
-        } else {
-            to = new int[]{0x33FFFFFF, 0x4D000000};
-            edgeColor = 0x26FFFFFF;
-            shadow = 0f;
-        }
+        // Same bar over every picture (like Windows); only the text shadow grows over bright ones
+        to = new int[]{0x8C1C1C1E, 0x8C1C1C1E};
+        edgeColor = 0x26FFFFFF;
+        shadow = lum > 0.6f ? 8f : lum > 0.35f ? 6f : 0f;
         navEdge.setStroke(Math.max(1, (int) (H * 0.0015f)), edgeColor);
         for (TextView t : tabViews) if (t != null) t.setShadowLayer(shadow, 0, shadow / 3f, 0xCC000000);
         if (cornerSettings != null) cornerSettings.setShadowLayer(Math.max(shadow, 6f), 0, 2f, 0xCC000000);
@@ -1703,7 +1998,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         if (bgDrift != null) bgDrift.cancel();
         bgDrift = drift;
         drift.start();
-        if (pCard != null) drift.pause(); // a preview is playing: keep the graphics chip free for it
+        if (pCard != null || heroPrevShowing) drift.pause(); // a preview is playing: keep the graphics chip free for it
     }
 
     private boolean previewFullscreen;
@@ -1738,11 +2033,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 android.animation.PropertyValuesHolder.ofFloat(View.TRANSLATION_X, c.getTranslationX(),
                         W / 2f - (lp.leftMargin + cw / 2f)),
                 android.animation.PropertyValuesHolder.ofFloat(View.TRANSLATION_Y, c.getTranslationY(),
-                        H / 2f - (lp.topMargin + chh / 2f)),
-                android.animation.PropertyValuesHolder.ofKeyframe(View.ROTATION_Y,
-                        android.animation.Keyframe.ofFloat(0f, 0f),
-                        android.animation.Keyframe.ofFloat(0.45f, -16f),
-                        android.animation.Keyframe.ofFloat(1f, 0f)));
+                        H / 2f - (lp.topMargin + chh / 2f)));
         grow.setDuration(460);
         grow.setInterpolator(new android.view.animation.AccelerateDecelerateInterpolator());
         grow.start();
@@ -1780,6 +2071,31 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent e) {
+        if (heroFull) {
+            // Full-screen spotlight preview: OK opens the title, anything else goes back to the page
+            if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
+                int k = e.getKeyCode();
+                boolean ok = k == KeyEvent.KEYCODE_DPAD_CENTER || k == KeyEvent.KEYCODE_ENTER;
+                exitHeroFull();
+                if (ok) openDetail(current);
+            }
+            return true;
+        }
+        // Back from anywhere on the page goes up to the top bar (on the tab you are on), silent;
+        // Back on the top bar behaves as before.
+        if (e.getKeyCode() == KeyEvent.KEYCODE_BACK && !previewFullscreen && tabViews[tab] != null) {
+            boolean onBar = cornerSettings != null && cornerSettings.hasFocus();
+            for (TextView tv : tabViews) if (tv != null && tv.hasFocus()) onBar = true;
+            if (!onBar) {
+                if (e.getAction() == KeyEvent.ACTION_UP) {
+                    stopPreview();
+                    stopHeroPreview();
+                    if (rowsView != null) rowsView.smoothScrollToPosition(0);
+                    tabViews[tab].requestFocus();
+                }
+                return true;
+            }
+        }
         if (previewFullscreen) {
             // OK opens the title card; while the preview is paused it resumes instead.
             if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
@@ -1852,13 +2168,9 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 android.animation.PropertyValuesHolder.ofFloat(View.TRANSLATION_X, c.getTranslationX(),
                         W / 2f - (lp.leftMargin + cw / 2f)),
                 android.animation.PropertyValuesHolder.ofFloat(View.TRANSLATION_Y, c.getTranslationY(),
-                        H / 2f - (lp.topMargin + chh / 2f)),
-                android.animation.PropertyValuesHolder.ofKeyframe(View.ROTATION_Y,
-                        android.animation.Keyframe.ofFloat(0f, 0f),
-                        android.animation.Keyframe.ofFloat(0.45f, -10f),
-                        android.animation.Keyframe.ofFloat(1f, 0f)));
-        grow.setDuration(300); // quick, so the title page follows straight on
-        grow.setInterpolator(new android.view.animation.AccelerateDecelerateInterpolator());
+                        H / 2f - (lp.topMargin + chh / 2f)));
+        grow.setDuration(420);
+        grow.setInterpolator(new android.view.animation.PathInterpolator(0.2f, 0f, 0f, 1f));
         grow.addListener(new android.animation.AnimatorListenerAdapter() {
             @Override
             public void onAnimationEnd(android.animation.Animator animation) {
@@ -1880,9 +2192,9 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         Intent i = new Intent(this, DetailActivity.class);
         i.putExtra("key", it.key);
         startActivity(i);
-        // No fade between screens: the video already fills the screen and simply carries on.
-        overridePendingTransition(0, 0);
-        handler.postDelayed(this::removeCard, 800);
+        // The title page dissolves in over the full-screen card; the video carries on underneath.
+        overridePendingTransition(R.anim.reel_fade_in, R.anim.reel_hold);
+        handler.postDelayed(this::removeCard, 1000);
     }
 
     private static boolean isRequest(Plex.Item it) {
@@ -1902,6 +2214,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
 
     private void openDetail(Plex.Item it) {
         if (it == null) return;
+        if (!isRequest(it) && handOffHero(it)) return;
         if (!isRequest(it) && previewsOn() && focusedItem != null && focusedCard != null
                 && it.key.equals(focusedItem.key)) {
             // Grow the card to full screen even if the preview hasn't started yet; whatever is

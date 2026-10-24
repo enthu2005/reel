@@ -71,12 +71,12 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
 
     @Override
     public void onFocusedView(Plex.Item item, View card) {
-        if (preview != null && media.containsKey(item.key)) preview.onFocused(item, card);
+        // No live preview on Discover cards: the trailer only plays from the title's page (Watch trailer)
     }
 
     @Override
     public boolean onLongClicked(Plex.Item item) {
-        return preview != null && preview.longPress(item);
+        return false;
     }
 
     @Override
@@ -741,6 +741,9 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
         watch.setVisibility(View.GONE);
         buttons.addView(watch, gap(buttons));
         final Object[] tr = new Object[2]; // {ExoPlayer or null, WebView or null}
+        final String[][] found = new String[1][];
+        final boolean[] launched = {false};
+        final Runnable[] launch = new Runnable[1];
         final boolean[] full = {false};
         final boolean[] paused = {false};
         final Runnable showTrailer = () -> {
@@ -755,12 +758,13 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
                 v.animate().alpha(full[0] ? 0f : 1f).setDuration(300).start();
             }
             float vol = HomeActivity.previewVolume(this);
-            if (tr[0] != null) HomeActivity.fadeVolume((androidx.media3.exoplayer.ExoPlayer) tr[0], Math.min(0.8f, vol), 500);
-            YouTubeEmbed.setVolume((android.webkit.WebView) tr[1], Math.min(0.8f, vol));
+            if (tr[0] != null) HomeActivity.fadeVolume((androidx.media3.exoplayer.ExoPlayer) tr[0], 0.8f, 500);
+            YouTubeEmbed.setVolume((android.webkit.WebView) tr[1], 0.8f);
             if (!full[0]) watch.requestFocus();
         };
         watch.setOnClickListener(v -> {
             SoundFx.click();
+            if (launch[0] != null) launch[0].run();
             full[0] = true;
             setFull[0].run();
         });
@@ -783,13 +787,24 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
             }
             return true;
         });
-        final float bgVol = HomeActivity.previewVolume(this);
+        final float bgVol = 0.8f; // plays only when asked for, so at a proper level
         String[] cachedSrc = preview != null ? preview.cached(m.key()) : null;
         final Plex.Callback<String[]> startTrailer = new Plex.Callback<String[]>() {
             @Override
             public void ok(String[] src) {
                 if (!d.isShowing() || src == null || src[0].equals("none")) return;
-                if (!getSharedPreferences("reel_ui", MODE_PRIVATE).getBoolean("detailTrailer", true)) return;
+                // Nothing plays until "Watch trailer" is pressed
+                found[0] = src;
+                watch.setVisibility(View.VISIBLE);
+            }
+
+            @Override
+            public void fail(Exception e) {
+            }
+        };
+        final Plex.Callback<String[]> startNow = new Plex.Callback<String[]>() {
+            @Override
+            public void ok(String[] src) {
                 if (src[0].equals("direct")) {
                     final androidx.media3.exoplayer.ExoPlayer p = PreviewHandoff.newPlayer(SeerrActivity.this);
                     tr[0] = p;
@@ -850,6 +865,11 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
             @Override
             public void fail(Exception e) {
             }
+        };
+        launch[0] = () -> {
+            if (launched[0] || found[0] == null) return;
+            launched[0] = true;
+            startNow.ok(found[0]);
         };
         if (cachedSrc != null) {
             ui.postDelayed(() -> startTrailer.ok(cachedSrc), 500);

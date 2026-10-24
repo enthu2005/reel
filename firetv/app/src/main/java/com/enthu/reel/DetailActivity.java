@@ -73,8 +73,8 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
     private LinearLayout moreBox;
     private RecyclerView moreRow;
     private TextView moreLabel;
-    private FrameLayout.LayoutParams castLp;
-    private FrameLayout.LayoutParams moreLp;
+    private LinearLayout.LayoutParams castLp;
+    private LinearLayout.LayoutParams moreLp;
     private final List<Plex.Item> related = new ArrayList<>();
     private final List<Plex.Item> sameLibrary = new ArrayList<>();
     private TextView shuffleBtn;
@@ -125,6 +125,13 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         root.addView(ytBox, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
+        // A light all-over tint while a preview plays, so text stays readable on bright scenes
+        tint = new View(this);
+        tint.setBackgroundColor(0x59000000);
+        tint.setAlpha(0f);
+        root.addView(tint, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
         scrimLeft = new View(this);
         scrimLeft.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
                 new int[]{0xEE000000, 0x99000000, 0x00000000}));
@@ -155,11 +162,15 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         title.setMaxLines(2);
         title.setEllipsize(TextUtils.TruncateAt.END);
         title.setShadowLayer(12, 0, 2, 0x99000000);
+        // Long titles shrink to fit the box instead of being cut off at the bottom
+        title.setGravity(Gravity.BOTTOM | Gravity.START);
+        title.setAutoSizeTextTypeUniformWithConfiguration((int) (H * 0.032f), (int) (H * 0.065f), 1,
+                TypedValue.COMPLEX_UNIT_PX);
         logoBox.addView(title, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
                 Gravity.BOTTOM | Gravity.START));
         col.addView(logoBox, new LinearLayout.LayoutParams(
-                (int) (W * 0.42f), (int) (H * 0.17f)));
+                (int) (W * 0.42f), (int) (H * 0.11f)));
 
         meta = new TextView(this);
         meta.setTextColor(UiUtil.TEXT2);
@@ -199,14 +210,16 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         // Play, then the preview and trailer, then the rest. The row sizes to its buttons so
         // none of them get squeezed or cut off.
         buttons.addView(playBtn);
-        previewBtn = makeButton("⤢", false);
+        // A small "expand" icon (four corner brackets) instead of a word; it takes the button's text colour
+        previewBtn = makeButton("", false);
+        previewBtn.setCompoundDrawablesRelativeWithIntrinsicBounds(
+                new ExpandIcon(previewBtn, (int) (H * 0.034f)), null, null, null);
+        previewBtn.setContentDescription("Full preview");
         previewBtn.setVisibility(View.GONE);
         previewBtn.setOnClickListener(v -> expandPreview());
         buttons.addView(previewBtn, buttonGap());
-        trailerBtn = makeButton("Trailer", false);
+        trailerBtn = makeButton("Trailer", false); // kept out of the page: the trailer just plays behind it
         trailerBtn.setVisibility(View.GONE);
-        trailerBtn.setOnClickListener(v -> playTrailer());
-        buttons.addView(trailerBtn, buttonGap());
         shuffleBtn = makeButton("Shuffle", false);
         shuffleBtn.setVisibility(View.GONE);
         shuffleBtn.setOnClickListener(v -> shuffleQueue());
@@ -226,7 +239,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         FrameLayout.LayoutParams colLp = new FrameLayout.LayoutParams(
                 (int) (W * 0.92f), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.START);
         colLp.leftMargin = (int) (W * 0.05f);
-        colLp.topMargin = (int) (H * 0.10f);
+        colLp.topMargin = (int) (H * 0.05f);
         root.addView(col, colLp);
 
         // Episodes, along the bottom
@@ -267,6 +280,12 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         epLp.bottomMargin = (int) (H * 0.05f);
         root.addView(epBox, epLp);
 
+        // Cast and Similar stack in one box along the bottom, so they can never sit on top of each other
+        final LinearLayout lowerBox = new LinearLayout(this);
+        lowerBox.setOrientation(LinearLayout.VERTICAL);
+        lowerBox.setClipChildren(false);
+        lowerBox.setClipToPadding(false);
+
         // Cast, along the bottom of movie pages
         castBox = new LinearLayout(this);
         castBox.setOrientation(LinearLayout.VERTICAL);
@@ -287,10 +306,9 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         castRow.setPadding((int) (W * 0.045f), 0, (int) (W * 0.045f), 0);
         castBox.addView(castRow, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        castLp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM);
-        castLp.bottomMargin = (int) (H * 0.04f);
-        root.addView(castBox, castLp);
+        castLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lowerBox.addView(castBox, castLp);
 
         moreBox = new LinearLayout(this);
         moreBox.setOrientation(LinearLayout.VERTICAL);
@@ -311,10 +329,13 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         moreRow.setPadding((int) (W * 0.045f), 0, (int) (W * 0.045f), 0);
         moreBox.addView(moreRow, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        moreLp = new FrameLayout.LayoutParams(
+        moreLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lowerBox.addView(moreBox, moreLp);
+        FrameLayout.LayoutParams lowerLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM);
-        moreLp.bottomMargin = (int) (H * 0.04f);
-        root.addView(moreBox, moreLp);
+        lowerLp.bottomMargin = (int) (H * 0.025f);
+        root.addView(lowerBox, lowerLp);
 
         setContentView(root);
         rootView = root;
@@ -324,6 +345,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
     private androidx.media3.ui.PlayerView previewView;
     private FrameLayout ytBox;
     private View scrimLeft;
+    private View tint;
     private View scrimBottom;
     private LinearLayout infoCol;
 
@@ -334,18 +356,14 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
     private void previewOn(boolean on) {
         previewBtn.setVisibility(on ? View.VISIBLE : View.GONE);
         if (scrimLeft == null) return;
-        scrimLeft.animate().alpha(on ? 0.55f : 1f).setDuration(600).start();
-        scrimBottom.animate().alpha(on ? 0.6f : 1f).setDuration(600).start();
-        if (!previewFull) {
-            for (int i = 0; i < infoCol.getChildCount(); i++) {
-                View v = infoCol.getChildAt(i);
-                if (v instanceof LinearLayout && v.findFocus() != null) continue; // buttons with focus stay solid
-                v.animate().alpha(on ? 0.78f : 1f).setDuration(600).start();
-            }
-        }
+        // The side and bottom shading stay mostly there (text must stay readable) and fade to clear
+        // where there is nothing on the page; the whole picture also gets a light tint.
+        scrimLeft.animate().alpha(on ? 0.85f : 1f).setDuration(600).start();
+        scrimBottom.animate().alpha(on ? 0.85f : 1f).setDuration(600).start();
+        if (tint != null && !previewFull) tint.animate().alpha(on ? 1f : 0f).setDuration(600).start();
     }
     private android.webkit.WebView previewWeb; // a YouTube trailer playing behind the page
-    private static final long BEHIND_DELAY_MS = 2000;
+    private static final long BEHIND_DELAY_MS = 2500;
     private boolean behindStarted;
 
     private boolean previewPlaying() {
@@ -540,13 +558,14 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         if (rootView == null) return;
         for (int i = 0; i < rootView.getChildCount(); i++) {
             View v = rootView.getChildAt(i);
-            if (v == bg || v == previewView || v == ytBox) continue;
+            if (v == bg || v == previewView || v == ytBox || v == tint) continue;
             v.animate().alpha(1f).setDuration(300).start();
         }
         if (previewPlaying() && scrimLeft != null) {
             // still playing behind the page: keep the lighter shading
-            scrimLeft.animate().alpha(0.55f).setDuration(300).start();
-            scrimBottom.animate().alpha(0.6f).setDuration(300).start();
+            scrimLeft.animate().alpha(0.85f).setDuration(300).start();
+            scrimBottom.animate().alpha(0.85f).setDuration(300).start();
+            if (tint != null) tint.animate().alpha(1f).setDuration(300).start();
         }
         if (preview != null) {
             float vol = HomeActivity.previewVolume(this);
@@ -587,8 +606,18 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
     private boolean webPaused;
 
     @Override
+    protected void onPause() {
+        super.onPause();
+        releasePreviewNow();
+    }
+
+    @Override
     protected void onStop() {
         super.onStop();
+        releasePreviewNow();
+    }
+
+    private void releasePreviewNow() {
         handler.removeCallbacks(startTrailerBehind);
         if (previewWeb != null) {
             YouTubeEmbed.destroy(previewWeb);
@@ -622,13 +651,13 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             card.setGravity(Gravity.CENTER_HORIZONTAL);
             card.setFocusable(true);
             card.setClickable(true);
-            int w = (int) (H * 0.17f);
+            int w = (int) (H * 0.12f);
             RecyclerView.LayoutParams lp = new RecyclerView.LayoutParams(w, ViewGroup.LayoutParams.WRAP_CONTENT);
             int m = (int) (H * 0.008f);
             lp.setMargins(m, m, m, m);
             card.setLayoutParams(lp);
 
-            int d = (int) (H * 0.125f);
+            int d = (int) (H * 0.08f);
             ImageView face = new ImageView(DetailActivity.this);
             face.setScaleType(ImageView.ScaleType.CENTER_CROP);
             face.setBackground(UiUtil.rounded(UiUtil.CARD, d / 2f));
@@ -637,7 +666,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
 
             TextView name = new TextView(DetailActivity.this);
             name.setTextColor(Color.WHITE);
-            name.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.022f);
+            name.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.02f);
             name.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
             name.setSingleLine(true);
             name.setEllipsize(TextUtils.TruncateAt.END);
@@ -648,7 +677,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
 
             TextView role = new TextView(DetailActivity.this);
             role.setTextColor(UiUtil.TEXT2);
-            role.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.019f);
+            role.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.017f);
             role.setSingleLine(true);
             role.setEllipsize(TextUtils.TruncateAt.END);
             role.setGravity(Gravity.CENTER);
@@ -672,7 +701,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             } else {
                 face.setImageDrawable(null);
             }
-            final int d = (int) (H * 0.125f);
+            final int d = (int) (H * 0.08f);
             card.setOnFocusChangeListener((v, f) -> {
                 face.setForeground(f ? UiUtil.sheen(d / 2f) : null);
                 face.setElevation(f ? H * 0.02f : 0f);
@@ -685,10 +714,10 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             });
             card.setOnClickListener(v -> {
                 SoundFx.click();
-                Intent i = new Intent(DetailActivity.this, BrowseActivity.class);
-                i.putExtra("path", "/library/all?" + c.filter);
-                i.putExtra("title", c.name);
-                i.putExtra("type", "");
+                Intent i = new Intent(DetailActivity.this, PersonActivity.class);
+                i.putExtra("filter", c.filter);
+                i.putExtra("name", c.name);
+                i.putExtra("thumb", c.thumb);
                 startActivity(i);
             });
         }
@@ -696,6 +725,72 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         @Override
         public int getItemCount() {
             return cast.size();
+        }
+    }
+
+    /** Four corner brackets, the usual "expand to full screen" symbol, drawn in the button's text colour. */
+    private static final class ExpandIcon extends android.graphics.drawable.Drawable {
+        private final TextView host;
+        private final int size;
+        private final android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+
+        ExpandIcon(TextView host, int size) {
+            this.host = host;
+            this.size = size;
+            paint.setStyle(android.graphics.Paint.Style.STROKE);
+            paint.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+            paint.setStrokeJoin(android.graphics.Paint.Join.ROUND);
+            paint.setStrokeWidth(size * 0.12f);
+        }
+
+        @Override
+        public int getIntrinsicWidth() {
+            return size;
+        }
+
+        @Override
+        public int getIntrinsicHeight() {
+            return size;
+        }
+
+        @Override
+        public void draw(android.graphics.Canvas c) {
+            paint.setColor(host.getCurrentTextColor());
+            android.graphics.Rect b = getBounds();
+            float inset = paint.getStrokeWidth() / 2f;
+            float l = b.left + inset;
+            float t = b.top + inset;
+            float r = b.right - inset;
+            float bo = b.bottom - inset;
+            float a = (r - l) * 0.38f;
+            android.graphics.Path path = new android.graphics.Path();
+            path.moveTo(l, t + a);
+            path.lineTo(l, t);
+            path.lineTo(l + a, t);
+            path.moveTo(r - a, t);
+            path.lineTo(r, t);
+            path.lineTo(r, t + a);
+            path.moveTo(r, bo - a);
+            path.lineTo(r, bo);
+            path.lineTo(r - a, bo);
+            path.moveTo(l + a, bo);
+            path.lineTo(l, bo);
+            path.lineTo(l, bo - a);
+            c.drawPath(path, paint);
+        }
+
+        @Override
+        public void setAlpha(int alpha) {
+            paint.setAlpha(alpha);
+        }
+
+        @Override
+        public void setColorFilter(android.graphics.ColorFilter colorFilter) {
+        }
+
+        @Override
+        public int getOpacity() {
+            return android.graphics.PixelFormat.TRANSLUCENT;
         }
     }
 
@@ -745,6 +840,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         queue.removeIf(it -> it.key.equals(item.key));
         if (queue.isEmpty()) return;
         java.util.Collections.shuffle(queue, new java.util.Random());
+        queue.add(0, item); // this video plays first and stays in the queue with the rest
         PlayerActivity.startQueue(this, queue, 0);
     }
 
@@ -870,7 +966,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             castBox.setVisibility(View.VISIBLE);
             if (!related.isEmpty()) {
                 moreLabel.setText("Similar");
-                moreRow.setAdapter(new PosterAdapter(related, (int) (H * 0.20f * 16f / 9f), (int) (H * 0.20f), true,
+                moreRow.setAdapter(new PosterAdapter(related, (int) (H * 0.13f * 16f / 9f), (int) (H * 0.13f), true,
                         new PosterAdapter.Listener() {
                             @Override public void onFocused(Plex.Item it) {}
                             @Override public void onClicked(Plex.Item it) {
@@ -887,7 +983,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             castBox.setVisibility(View.GONE);
             if (!sameLibrary.isEmpty()) {
                 moreLabel.setText("More in this library");
-                moreRow.setAdapter(new PosterAdapter(sameLibrary, (int) (H * 0.20f * 16f / 9f), (int) (H * 0.20f), true,
+                moreRow.setAdapter(new PosterAdapter(sameLibrary, (int) (H * 0.13f * 16f / 9f), (int) (H * 0.13f), true,
                         new PosterAdapter.Listener() {
                             @Override public void onFocused(Plex.Item it) {}
                             @Override public void onClicked(Plex.Item it) {
@@ -904,19 +1000,11 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
 
         boolean castVisible = castBox.getVisibility() == View.VISIBLE;
         boolean moreVisible = moreBox.getVisibility() == View.VISIBLE;
-        if (castVisible && moreVisible) {
-            castLp.bottomMargin = (int) (H * 0.21f);
-            moreLp.bottomMargin = (int) (H * 0.04f);
-            moreLp.topMargin = (int) (H * 0.012f);
-        } else if (castVisible) {
-            castLp.bottomMargin = (int) (H * 0.04f);
-            moreLp.bottomMargin = (int) (H * 0.04f);
-            moreLp.topMargin = 0;
-        } else {
-            castLp.bottomMargin = (int) (H * 0.04f);
-            moreLp.bottomMargin = (int) (H * 0.04f);
-            moreLp.topMargin = 0;
-        }
+        moreLp.topMargin = castVisible && moreVisible ? (int) (H * 0.012f) : 0;
+        castBox.setLayoutParams(castLp);
+        moreBox.setLayoutParams(moreLp);
+        // Less room is needed up top when there are rows underneath
+        summary.setMaxLines(castVisible ? 2 : 3);
 
         shuffleBtn.setVisibility(shouldShowShuffle() ? View.VISIBLE : View.GONE);
 
@@ -1052,9 +1140,12 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         }, new Plex.Callback<String>() {
             @Override
             public void ok(String t) {
-                if (isDestroyed() || t.isEmpty()) return;
+                if (isDestroyed()) return;
+                if (t.isEmpty()) {
+                    startBehindWhenReady(); // no trailer: a scene from the film instead
+                    return;
+                }
                 trailerKey = t;
-                trailerBtn.setVisibility(View.VISIBLE);
                 // No preview came with us from the home screen: start the trailer behind the page,
                 // about a second after the page opened.
                 startBehindWhenReady();
@@ -1062,6 +1153,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
 
             @Override
             public void fail(Exception e) {
+                if (!isDestroyed()) startBehindWhenReady();
             }
         });
     }

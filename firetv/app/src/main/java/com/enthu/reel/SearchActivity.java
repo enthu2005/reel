@@ -33,6 +33,10 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
     private int W;
     private int H;
     private TextView queryView;
+    private LinearLayout suggBox;
+    private Runnable pendingSugg;
+    private int suggToken = 0;
+    private static final int SUGG_ROW_H_DIV = 16; // row height = screen height / this
     private TextView message;
     private RecyclerView grid;
     private int token = 0;
@@ -71,11 +75,8 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
         // Voice and the Fire TV keyboard (which can take dictation on some sticks)
         LinearLayout top = new LinearLayout(this);
         top.setOrientation(LinearLayout.HORIZONTAL);
-        TextView voice = key("Voice search", keyW * 3);
-        voice.setOnClickListener(v -> voiceSearch());
-        TextView kb = key("Fire TV keyboard", keyW * 3);
+        TextView kb = key("Fire TV keyboard", keyW * 6);
         kb.setOnClickListener(v -> systemKeyboard());
-        top.addView(voice);
         top.addView(kb);
         LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -129,6 +130,16 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
         FrameLayout.LayoutParams gLp = new FrameLayout.LayoutParams(
                 (int) (W * 0.58f), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END);
         root.addView(grid, gLp);
+
+        // Suggestions as you type (like YouTube): tap one to search for it
+        suggBox = new LinearLayout(this);
+        suggBox.setOrientation(LinearLayout.VERTICAL);
+        suggBox.setVisibility(View.GONE);
+        FrameLayout.LayoutParams sLp = new FrameLayout.LayoutParams(
+                (int) (W * 0.52f), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END | Gravity.TOP);
+        sLp.topMargin = (int) (H * 0.08f);
+        sLp.rightMargin = (int) (W * 0.03f);
+        root.addView(suggBox, sLp);
 
         message = new TextView(this);
         message.setTextColor(0x99FFFFFF);
@@ -207,7 +218,7 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
         box.setSingleLine(true);
         box.setText(query.toString());
         box.setSelection(box.getText().length());
-        box.setHint("Search movies and episodes");
+        box.setHint("Search titles, shows and actors");
         box.setTextColor(Color.WHITE);
         box.setHintTextColor(0x66FFFFFF);
         box.setTypeface(UiUtil.font(UiUtil.MEDIUM));
@@ -260,6 +271,80 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
         return super.dispatchKeyEvent(e);
     }
 
+    private void loadSuggestions(final String q) {
+        if (pendingSugg != null) handler.removeCallbacks(pendingSugg);
+        final int mine = ++suggToken;
+        if (q.isEmpty()) {
+            showSuggestions(new ArrayList<>());
+            return;
+        }
+        pendingSugg = () -> Plex.async(() -> Plex.suggest(q), new Plex.Callback<List<String>>() {
+            @Override
+            public void ok(List<String> list) {
+                if (isDestroyed() || mine != suggToken) return;
+                showSuggestions(list);
+            }
+
+            @Override
+            public void fail(Exception e) {
+            }
+        });
+        handler.postDelayed(pendingSugg, 200);
+    }
+
+    private void showSuggestions(List<String> list) {
+        suggBox.removeAllViews();
+        final String cur = query.toString().trim().toLowerCase();
+        int shown = 0;
+        int rowH = H / SUGG_ROW_H_DIV;
+        for (final String s : list) {
+            if (s.toLowerCase().equals(cur) || shown >= 5) continue;
+            shown++;
+            final TextView t = new TextView(this);
+            t.setText(s);
+            t.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.03f);
+            t.setTypeface(UiUtil.font(UiUtil.MEDIUM));
+            t.setTextColor(Color.WHITE);
+            t.setSingleLine(true);
+            t.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            t.setGravity(Gravity.CENTER_VERTICAL);
+            int px = (int) (H * 0.022f);
+            t.setPadding(px, 0, px, 0);
+            t.setFocusable(true);
+            t.setClickable(true);
+            final float r = H * 0.02f;
+            t.setBackground(UiUtil.rounded(0x14FFFFFF, r));
+            t.setOnFocusChangeListener((v, f) -> {
+                t.setBackground(UiUtil.rounded(f ? 0xFFFFFFFF : 0x14FFFFFF, r));
+                t.setTextColor(f ? 0xFF000000 : Color.WHITE);
+                if (f) SoundFx.move();
+            });
+            t.setOnClickListener(v -> {
+                SoundFx.click();
+                query.setLength(0);
+                query.append(s.length() > 40 ? s.substring(0, 40) : s);
+                // search for it straight away
+                changed();
+                suggBox.removeAllViews();
+                suggBox.setVisibility(View.GONE);
+                updateGridTop();
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, rowH);
+            lp.bottomMargin = (int) (H * 0.008f);
+            suggBox.addView(t, lp);
+        }
+        suggBox.setVisibility(shown > 0 ? View.VISIBLE : View.GONE);
+        updateGridTop();
+    }
+
+    /** Pushes the results grid below the suggestions. */
+    private void updateGridTop() {
+        int n = suggBox.getChildCount();
+        int top = (int) (H * 0.08f) + (n == 0 ? 0 : n * (H / SUGG_ROW_H_DIV + (int) (H * 0.008f)) + (int) (H * 0.02f));
+        grid.setPadding(grid.getPaddingLeft(), top, grid.getPaddingRight(), grid.getPaddingBottom());
+    }
+
     private void type(String c) {
         SoundFx.click();
         if (query.length() < 40) query.append(c.toLowerCase());
@@ -268,7 +353,7 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
 
     private void changed() {
         if (query.length() == 0) {
-            queryView.setText("Search movies and episodes");
+            queryView.setText("Search titles, shows and actors");
             queryView.setTextColor(0x66FFFFFF);
         } else {
             queryView.setText(query.toString());
@@ -277,10 +362,11 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
         if (pending != null) handler.removeCallbacks(pending);
         final String q = query.toString().trim();
         final int mine = ++token;
+        loadSuggestions(q);
         if (q.length() < 2) {
             results.clear();
             grid.setAdapter(null);
-            message.setText(q.isEmpty() ? "Type to search your library" : "Keep typing…");
+            message.setText(q.isEmpty() ? "Type a title or an actor" : "Keep typing…");
             message.setVisibility(View.VISIBLE);
             return;
         }

@@ -98,6 +98,7 @@ public final class Plex {
         public String key;
         public String type;
         public String title;
+        public List<String> paths = new ArrayList<>(); // the folders on the server this library reads from
     }
 
     public static class Cast {
@@ -192,6 +193,10 @@ public final class Plex {
     private static SharedPreferences prefs;
     private static String clientId;
     public static String token;
+    public static String serverToken; // the token this server wants (for a shared server it differs from your account token)
+    public static String mainToken;   // the account owner's token (kept so other profiles can be switched to)
+    public static String profileName; // the profile in use (null = the main account)
+    public static boolean profileChosen; // "Who's watching?" already handled in this run of the app
     public static String serverUri;
     public static String serverName;
 
@@ -207,6 +212,9 @@ public final class Plex {
             prefs.edit().putString("cid", clientId).apply();
         }
         token = prefs.getString("token", null);
+        mainToken = prefs.getString("mainToken", token);
+        profileName = prefs.getString("profileName", null);
+        serverToken = prefs.getString("serverToken", null);
         serverUri = prefs.getString("server", null);
         serverName = prefs.getString("serverName", null);
     }
@@ -215,16 +223,136 @@ public final class Plex {
         return token != null && serverUri != null;
     }
 
+    private static String st() {
+        return serverToken != null && !serverToken.isEmpty() ? serverToken : token;
+    }
+
     public static void signOut() {
+        serverToken = null;
         token = null;
+        mainToken = null;
+        profileName = null;
+        profileChosen = false;
         serverUri = null;
         serverName = null;
-        prefs.edit().remove("token").remove("server").remove("serverName").apply();
+        prefs.edit().remove("token").remove("mainToken").remove("profileName").remove("profileId")
+                .remove("server").remove("serverName").remove("serverToken").apply();
     }
 
     public static void saveToken(String t) {
         token = t;
-        prefs.edit().putString("token", t).apply();
+        mainToken = t;
+        serverToken = null;
+        profileName = null;
+        profileChosen = true; // just signed in: no need to ask who is watching
+        prefs.edit().putString("token", t).putString("mainToken", t)
+                .remove("profileName").remove("profileId").apply();
+    }
+
+    // ---------------------------------------------------- Profiles (Plex Home users)
+
+    public static class Profile {
+        public String id = "";
+        public String title = "";
+        public String thumb = "";
+        public boolean hasPin;
+        public boolean admin;
+    }
+
+    private static String plexTv(String method, String url, String tk) throws Exception {
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        c.setRequestMethod(method);
+        c.setConnectTimeout(15000);
+        c.setReadTimeout(15000);
+        c.setRequestProperty("Accept", "application/xml");
+        c.setRequestProperty("X-Plex-Client-Identifier", clientId);
+        c.setRequestProperty("X-Plex-Product", "Reel");
+        c.setRequestProperty("X-Plex-Version", "0.1");
+        c.setRequestProperty("X-Plex-Platform", "Android");
+        c.setRequestProperty("X-Plex-Device", "Fire TV");
+        c.setRequestProperty("X-Plex-Device-Name", "Reel");
+        if (tk != null) c.setRequestProperty("X-Plex-Token", tk);
+        if (method.equals("POST")) {
+            c.setDoOutput(true);
+            c.getOutputStream().close();
+        }
+        int code = c.getResponseCode();
+        InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
+        StringBuilder sb = new StringBuilder();
+        if (in != null) {
+            BufferedReader r = new BufferedReader(new InputStreamReader(in, "UTF-8"));
+            String line;
+            while ((line = r.readLine()) != null) sb.append(line).append('\n');
+            r.close();
+        }
+        if (code >= 400) throw new Exception("HTTP " + code);
+        return sb.toString();
+    }
+
+    private static String xmlUnescape(String v) {
+        return v.replace("&quot;", "\"").replace("&apos;", "'").replace("&#39;", "'")
+                .replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&");
+    }
+
+    private static java.util.Map<String, String> xmlAttrs(String tagBody) {
+        java.util.Map<String, String> m = new java.util.HashMap<>();
+        java.util.regex.Matcher a = java.util.regex.Pattern.compile("([\\w:-]+)=\"([^\"]*)\"").matcher(tagBody);
+        while (a.find()) m.put(a.group(1), xmlUnescape(a.group(2)));
+        return m;
+    }
+
+    /** The people in your Plex Home (the profiles). */
+    public static List<Profile> homeUsers() throws Exception {
+        String body = plexTv("GET", "https://plex.tv/api/home/users", mainToken != null ? mainToken : token);
+        List<Profile> out = new ArrayList<>();
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("<User\\s([^>]*?)/?>").matcher(body);
+        while (m.find()) {
+            java.util.Map<String, String> a = xmlAttrs(m.group(1));
+            if (!a.containsKey("id")) continue;
+            Profile p = new Profile();
+            p.id = a.get("id");
+            p.title = a.containsKey("title") && !a.get("title").isEmpty() ? a.get("title")
+                    : a.containsKey("username") ? a.get("username") : "Profile";
+            p.thumb = a.containsKey("thumb") ? a.get("thumb") : "";
+            p.hasPin = "1".equals(a.get("protected"));
+            p.admin = "1".equals(a.get("admin"));
+            out.add(p);
+        }
+        return out;
+    }
+
+    /** Switches to a profile (with its PIN if it has one) and returns that profile's token. */
+    public static String switchProfile(Profile p, String pin) throws Exception {
+        String url = "https://plex.tv/api/home/users/" + p.id + "/switch"
+                + (pin != null && !pin.isEmpty() ? "?pin=" + enc(pin) : "");
+        String body = plexTv("POST", url, mainToken != null ? mainToken : token);
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("<user\\s([^>]*?)/?>",
+                java.util.regex.Pattern.CASE_INSENSITIVE).matcher(body);
+        if (m.find()) {
+            String t = xmlAttrs(m.group(1)).get("authenticationToken");
+            if (t != null && !t.isEmpty()) return t;
+        }
+        throw new Exception("No token came back");
+    }
+
+    public static void useProfile(String tok, Profile p) {
+        token = tok;
+        serverToken = null;
+        profileName = p.title;
+        profileChosen = true;
+        serverUri = null; // look the server up again for this profile
+        prefs.edit().putString("token", tok).putString("profileName", p.title).putString("profileId", p.id)
+                .remove("server").remove("serverToken").apply();
+    }
+
+    /** Back to the account owner's own sign-in (used when a profile can't open the server). */
+    public static void useMainAccount() {
+        token = mainToken;
+        serverToken = null;
+        serverUri = null;
+        profileName = null;
+        prefs.edit().putString("token", mainToken).remove("profileName").remove("profileId")
+                .remove("server").remove("serverToken").apply();
     }
 
     /** The signed-in Plex token (used to sign in to Seerr with the same account). */
@@ -265,7 +393,9 @@ public final class Plex {
         c.setRequestProperty("X-Plex-Platform", "Android");
         c.setRequestProperty("X-Plex-Device", "Fire TV");
         c.setRequestProperty("X-Plex-Device-Name", "Reel");
-        if (token != null) c.setRequestProperty("X-Plex-Token", token);
+        String tk = token;
+        if (serverToken != null && !serverToken.isEmpty() && serverUri != null && url.startsWith(serverUri)) tk = serverToken;
+        if (tk != null) c.setRequestProperty("X-Plex-Token", tk);
         if (method.equals("POST") || method.equals("PUT")) {
             c.setDoOutput(true);
             c.getOutputStream().close();
@@ -333,6 +463,7 @@ public final class Plex {
                 boolean owned = r.optBoolean("owned", false);
                 if ((pass == 0) != owned) continue;
                 String name = r.optString("name", "Plex");
+                final String acc = owned ? "" : r.optString("accessToken", "");
                 JSONArray conns = r.optJSONArray("connections");
                 if (conns == null) continue;
 
@@ -352,9 +483,9 @@ public final class Plex {
                         remote.add(uri);
                     }
                 }
-                for (String u : local) candidates.add(new String[]{u, name});
-                for (String u : remote) candidates.add(new String[]{u, name});
-                for (String u : relay) candidates.add(new String[]{u, name});
+                for (String u : local) candidates.add(new String[]{u, name, acc});
+                for (String u : remote) candidates.add(new String[]{u, name, acc});
+                for (String u : relay) candidates.add(new String[]{u, name, acc});
             }
         }
 
@@ -362,13 +493,14 @@ public final class Plex {
         // home NAS at 192.168.0.199, which plex.tv doesn't always list (it only knows what the server reports).
         List<String[]> pinned = new ArrayList<>();
         String nasName = candidates.isEmpty() ? "Plex" : candidates.get(0)[1];
+        String nasAcc = candidates.isEmpty() ? "" : candidates.get(0)[2];
         String manual = prefs == null ? "" : prefs.getString("manualServer", "");
         if (!manual.isEmpty()) {
             if (!manual.startsWith("http")) manual = "http://" + manual;
             if (manual.indexOf(':', 7) < 0) manual = manual + ":32400";
-            pinned.add(new String[]{manual, nasName});
+            pinned.add(new String[]{manual, nasName, nasAcc});
         }
-        pinned.add(new String[]{"http://192.168.0.199:32400", nasName});
+        pinned.add(new String[]{"http://192.168.0.199:32400", nasName, nasAcc});
         candidates.addAll(0, pinned);
 
         // Test every address at the same time, then take the best one that answered
@@ -405,7 +537,11 @@ public final class Plex {
             if (answered[i]) {
                 serverUri = tryList.get(i)[0];
                 serverName = tryList.get(i)[1];
-                prefs.edit().putString("server", serverUri).putString("serverName", serverName).apply();
+                serverToken = tryList.get(i)[2].isEmpty() ? null : tryList.get(i)[2];
+                SharedPreferences.Editor ed = prefs.edit().putString("server", serverUri).putString("serverName", serverName);
+                if (serverToken == null) ed.remove("serverToken");
+                else ed.putString("serverToken", serverToken);
+                ed.apply();
                 return;
             }
         }
@@ -425,9 +561,34 @@ public final class Plex {
             s.key = o.optString("key");
             s.type = o.optString("type");
             s.title = o.optString("title");
+            JSONArray loc = o.optJSONArray("Location");
+            if (loc != null) {
+                for (int j = 0; j < loc.length(); j++) {
+                    String path = loc.getJSONObject(j).optString("path");
+                    if (!path.isEmpty()) s.paths.add(path);
+                }
+            }
             out.add(s);
         }
         return out;
+    }
+
+    /** How many titles a library holds. */
+    public static int sectionCount(String sectionKey) throws Exception {
+        JSONObject mc = get(paged("/library/sections/" + sectionKey + "/all", 0)).getJSONObject("MediaContainer");
+        return mc.optInt("totalSize", mc.optInt("size", 0));
+    }
+
+    /** The newest title in a library (its artwork stands in for the library), or null if it's empty. */
+    public static Item sectionLatest(String sectionKey) throws Exception {
+        List<Item> l = items(paged("/library/sections/" + sectionKey + "/all?sort=addedAt:desc", 1));
+        return l.isEmpty() ? null : l.get(0);
+    }
+
+    /** The first episode of a show (a preview can use it when the show has no trailer). */
+    public static Item firstEpisode(String showKey) throws Exception {
+        List<Item> l = items(paged("/library/metadata/" + showKey + "/allLeaves", 1));
+        return l.isEmpty() ? null : l.get(0);
     }
 
     /** Searches movies, shows and episodes. */
@@ -444,7 +605,60 @@ public final class Plex {
             if (md == null) continue;
             for (int i = 0; i < md.length(); i++) out.add(parse(md.getJSONObject(i)));
         }
+        // People: an actor (or director) whose name matches brings their titles in after the direct matches
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (Item it : out) seen.add(it.key);
+        int people = 0;
+        for (int h = 0; h < hubs.length() && people < 2; h++) {
+            JSONObject hub = hubs.getJSONObject(h);
+            String t = hub.optString("type");
+            if (!t.equals("actor") && !t.equals("director")) continue;
+            JSONArray dirs = hub.optJSONArray("Directory");
+            if (dirs == null) continue;
+            for (int i = 0; i < dirs.length() && people < 2; i++) {
+                JSONObject d = dirs.getJSONObject(i);
+                String f = d.optString("filter", "");
+                if (f.isEmpty() && d.has("id")) f = t + "=" + d.optString("id");
+                if (f.isEmpty()) continue;
+                people++;
+                try {
+                    for (Item it : items(paged("/library/all?" + f, 24))) {
+                        if (!it.type.equals("movie") && !it.type.equals("show")) continue;
+                        if (seen.add(it.key)) out.add(it);
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        }
         return out;
+    }
+
+    /** Search-as-you-type suggestions: titles and people matching the text, those starting with it first. */
+    public static List<String> suggest(String query) throws Exception {
+        JSONArray hubs = get("/hubs/search?query=" + enc(query) + "&limit=8&includeCollections=0")
+                .getJSONObject("MediaContainer").optJSONArray("Hub");
+        List<String> starts = new ArrayList<>();
+        List<String> others = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        String q = query.toLowerCase();
+        if (hubs != null) {
+            for (int h = 0; h < hubs.length(); h++) {
+                JSONObject hub = hubs.getJSONObject(h);
+                String t = hub.optString("type");
+                boolean person = t.equals("actor") || t.equals("director");
+                if (!person && !t.equals("movie") && !t.equals("show")) continue;
+                JSONArray arr = hub.optJSONArray(person ? "Directory" : "Metadata");
+                if (arr == null) continue;
+                for (int i = 0; i < arr.length(); i++) {
+                    JSONObject o = arr.getJSONObject(i);
+                    String name = person ? o.optString("tag") : o.optString("title");
+                    if (name.isEmpty() || !seen.add(name.toLowerCase())) continue;
+                    (name.toLowerCase().startsWith(q) ? starts : others).add(name);
+                }
+            }
+        }
+        starts.addAll(others);
+        return starts.size() > 6 ? new ArrayList<>(starts.subList(0, 6)) : starts;
     }
 
     public static List<Section> sections() throws Exception {
@@ -478,6 +692,18 @@ public final class Plex {
         else allowed.remove(sectionKey);
         if (allowed.isEmpty()) prefs.edit().remove("visibleLibraries").apply();
         else prefs.edit().putStringSet("visibleLibraries", allowed).apply();
+    }
+
+    /** A saved choice of libraries under [prefKey], or null when nothing has been chosen yet. */
+    public static Set<String> libraryChoice(String prefKey) {
+        if (prefs == null) return null;
+        Set<String> saved = prefs.getStringSet(prefKey, null);
+        return saved == null ? null : new HashSet<>(saved);
+    }
+
+    public static void saveLibraryChoice(String prefKey, Set<String> keys) {
+        if (prefs == null) return;
+        prefs.edit().putStringSet(prefKey, new HashSet<>(keys)).apply();
     }
 
     public static List<Section> visibleSections(List<Section> all) {
@@ -589,6 +815,26 @@ public final class Plex {
         } catch (Exception ignored) {
         }
         return null;
+    }
+
+    /** Chapter pictures for a title: {startMs, thumbPath} in order (empty if Plex has none). */
+    public static java.util.List<String[]> chapterThumbs(String ratingKey) {
+        java.util.List<String[]> out = new ArrayList<>();
+        try {
+            JSONObject mc = get("/library/metadata/" + ratingKey + "?includeChapters=1").getJSONObject("MediaContainer");
+            JSONArray m = mc.optJSONArray("Metadata");
+            if (m == null || m.length() == 0) return out;
+            JSONArray ch = m.getJSONObject(0).optJSONArray("Chapter");
+            if (ch == null) return out;
+            for (int i = 0; i < ch.length(); i++) {
+                JSONObject c = ch.getJSONObject(i);
+                String th = c.optString("thumb", "");
+                if (th.isEmpty()) continue;
+                out.add(new String[]{String.valueOf(c.optLong("startTimeOffset", 0)), th});
+            }
+        } catch (Exception ignored) {
+        }
+        return out;
     }
 
     /**
@@ -836,13 +1082,13 @@ public final class Plex {
         if (path != null && path.startsWith("http")) return path; // already a full address (e.g. TMDB)
         if (path == null || serverUri == null) return null;
         return serverUri + "/photo/:/transcode?width=" + w + "&height=" + h
-                + "&minSize=1&upscale=1&url=" + enc(path) + "&X-Plex-Token=" + token;
+                + "&minSize=1&upscale=1&url=" + enc(path) + "&X-Plex-Token=" + st();
     }
 
     /** The original image; used for logos so their transparency is kept. */
     public static String raw(String path) {
         if (path == null || serverUri == null) return null;
-        return serverUri + path + (path.contains("?") ? "&" : "?") + "X-Plex-Token=" + token;
+        return serverUri + path + (path.contains("?") ? "&" : "?") + "X-Plex-Token=" + st();
     }
 
     // ---------------------------------------------------------- Playback
@@ -894,7 +1140,7 @@ public final class Plex {
                 + "&X-Plex-Device=" + enc("Fire TV") + "&X-Plex-Device-Name=Reel"
                 + (audioId > 0 ? "&audioStreamID=" + audioId : "")
                 + (subId > 0 ? "&subtitleStreamID=" + subId + "&subtitles=burn" : "&subtitleStreamID=0&subtitles=none")
-                + "&X-Plex-Token=" + token;
+                + "&X-Plex-Token=" + st();
     }
 
     /** Sets which subtitle Plex treats as selected for this file (0 = none); it burns the selected one in. */
