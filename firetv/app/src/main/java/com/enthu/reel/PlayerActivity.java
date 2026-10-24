@@ -1316,11 +1316,22 @@ public class PlayerActivity extends Activity {
                             new androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(8)));
         }
         else {
-            pb.setMediaSourceFactory(new androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
-                    new androidx.media3.datasource.DefaultDataSource.Factory(this,
+            // Setting "Extra large buffer": read through a store on the device that a background task fills ahead
+            final boolean big = BigBuffer.enabled(this) && item != null && item.partKey != null;
+            androidx.media3.datasource.DataSource.Factory direct = big
+                    ? BigBuffer.factory(this, key)
+                    : new androidx.media3.datasource.DefaultDataSource.Factory(this,
                             new androidx.media3.datasource.DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
                                     .setConnectTimeoutMs(30000)
-                                    .setReadTimeoutMs(60000)),
+                                    .setReadTimeoutMs(60000));
+            if (big) {
+                if (bigBuffer == null) bigBuffer = new BigBuffer();
+                bigBuffer.start(this, key, Plex.directUrl(item), item.duration);
+                handler.removeCallbacks(bigTick);
+                handler.post(bigTick);
+            }
+            pb.setMediaSourceFactory(new androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
+                    direct,
                     new DtsCoreExtractors())
                     .setLoadErrorHandlingPolicy(
                             new androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(8)));
@@ -1682,7 +1693,22 @@ public class PlayerActivity extends Activity {
         applyFit();
     }
 
+    private BigBuffer bigBuffer;
+    private final Runnable bigTick = new Runnable() {
+        @Override
+        public void run() {
+            if (bigBuffer == null || player == null) return;
+            bigBuffer.position(currentMs());
+            handler.postDelayed(this, 1500);
+        }
+    };
+
     private void releasePlayer() {
+        handler.removeCallbacks(bigTick);
+        if (bigBuffer != null) {
+            bigBuffer.stop();
+            bigBuffer = null;
+        }
         trickDir = 0;
         handler.removeCallbacks(trickTick);
         handler.removeCallbacks(frameWatch);
@@ -2829,6 +2855,29 @@ public class PlayerActivity extends Activity {
         sb.append("Dropped   ").append(dropped).append(" frames\n");
         sb.append("Underruns ").append(underruns).append('\n');
         sb.append("Buffered  ").append(player.getTotalBufferedDuration() / 1000).append(" s\n");
+        try {
+            Runtime rt = Runtime.getRuntime();
+            long heapUsed = rt.totalMemory() - rt.freeMemory();
+            long nativeUsed = android.os.Debug.getNativeHeapAllocatedSize();
+            android.app.ActivityManager.MemoryInfo mi = new android.app.ActivityManager.MemoryInfo();
+            ((android.app.ActivityManager) getSystemService(Context.ACTIVITY_SERVICE)).getMemoryInfo(mi);
+            sb.append("RAM       app ").append((heapUsed + nativeUsed) >> 20).append(" MB  (heap ")
+                    .append(heapUsed >> 20).append(" of ").append(rt.maxMemory() >> 20).append(", native ")
+                    .append(nativeUsed >> 20).append(")\n");
+            sb.append("          device free ").append(mi.availMem >> 20).append(" of ").append(mi.totalMem >> 20)
+                    .append(" MB\n");
+            if (BigBuffer.enabled(this)) {
+                sb.append("Disk buf  ").append(String.format(Locale.US, "%.2f", BigBuffer.usedBytes() / 1073741824.0))
+                        .append(" of 3 GB stored");
+                if (bigBuffer != null && !transcoding) {
+                    sb.append("  (").append(bigBuffer.ahead() >> 20).append(" MB ahead)");
+                }
+                sb.append('\n');
+            } else {
+                sb.append("Disk buf  off (Settings > Extra large buffer)\n");
+            }
+        } catch (RuntimeException ignored) {
+        }
 
         sb.append("\nSound output can take (from your TV/receiver):\n");
         try {

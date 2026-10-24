@@ -318,6 +318,18 @@ public class SettingsActivity extends ReelActivity {
                     v -> chooseLibraries(libraryChoices, "screensaverLibraries", "Libraries for the screensaver", movieKeys));
         }
 
+        boolean bigBuf = prefs.getBoolean("bigBuffer", false);
+        row("Extra large buffer", bigBuf ? "On (up to 3 GB)" : "Off",
+                "While a film plays as it is, Reel keeps downloading ahead into storage on the Fire TV, up to 3 GB, "
+                        + "so a slow patch on the network or a big 4K file doesn't make it stall. It's cleared when you "
+                        + "start another film. It does nothing when Plex is converting the video. Press to change.",
+                v -> {
+                    boolean now = !prefs.getBoolean("bigBuffer", false);
+                    prefs.edit().putBoolean("bigBuffer", now).apply();
+                    if (!now) BigBuffer.clear(this);
+                    render(false);
+                });
+
         boolean tun = prefs.getBoolean("tunneled", false);
         row("Tunneled video", tun ? "On" : "Off",
                 "Sends the picture straight to the Fire TV's video chip, the way some other apps do. Try this if a 4K "

@@ -129,6 +129,20 @@ final class PosterAdapter extends RecyclerView.Adapter<PosterAdapter.VH> {
         card.addView(shade, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 (int) (h * 0.35f), Gravity.BOTTOM));
 
+        // Corner mark: a tick once watched, a "NEW" tag for things added this week
+        TextView mark = new TextView(c);
+        mark.setTag("mark");
+        mark.setTextColor(0xFFFFFFFF);
+        mark.setTypeface(UiUtil.font(UiUtil.BOLD));
+        mark.setTextSize(TypedValue.COMPLEX_UNIT_PX, sh * 0.016f);
+        mark.setGravity(Gravity.CENTER);
+        mark.setVisibility(View.GONE);
+        FrameLayout.LayoutParams mlp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.END);
+        mlp.topMargin = (int) (sh * 0.012f);
+        mlp.rightMargin = (int) (sh * 0.012f);
+        card.addView(mark, mlp);
+
         int barH = Math.max(4, (int) (sh * 0.0055f));
         FrameLayout track = new FrameLayout(c);
         track.setBackground(UiUtil.rounded(0x59FFFFFF, barH / 2f));
@@ -167,6 +181,43 @@ final class PosterAdapter extends RecyclerView.Adapter<PosterAdapter.VH> {
         return new VH(root, card, image, shade, track, bar, title, sub);
     }
 
+    /** A small dark circle with a white tick. */
+    private static final class CheckDrawable extends android.graphics.drawable.Drawable {
+        private final int size;
+        private final android.graphics.Paint fill = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final android.graphics.Paint line = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+
+        CheckDrawable(int size) {
+            this.size = size;
+            fill.setColor(0xB3000000);
+            line.setColor(0xFFFFFFFF);
+            line.setStyle(android.graphics.Paint.Style.STROKE);
+            line.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+            line.setStrokeJoin(android.graphics.Paint.Join.ROUND);
+            line.setStrokeWidth(Math.max(2f, size * 0.1f));
+        }
+
+        @Override
+        public void draw(android.graphics.Canvas c) {
+            android.graphics.Rect b = getBounds();
+            float cx = b.exactCenterX();
+            float cy = b.exactCenterY();
+            float r = Math.min(b.width(), b.height()) / 2f;
+            c.drawCircle(cx, cy, r, fill);
+            android.graphics.Path p = new android.graphics.Path();
+            p.moveTo(cx - r * 0.38f, cy + r * 0.02f);
+            p.lineTo(cx - r * 0.1f, cy + r * 0.3f);
+            p.lineTo(cx + r * 0.4f, cy - r * 0.26f);
+            c.drawPath(p, line);
+        }
+
+        @Override public void setAlpha(int a) { fill.setAlpha(a); line.setAlpha(a); }
+        @Override public void setColorFilter(android.graphics.ColorFilter cf) { }
+        @Override public int getOpacity() { return android.graphics.PixelFormat.TRANSLUCENT; }
+        @Override public int getIntrinsicWidth() { return size; }
+        @Override public int getIntrinsicHeight() { return size; }
+    }
+
     private static String left(Plex.Item it) {
         if (it.viewOffset <= 0 || it.duration <= 0) return null;
         long min = Math.max(1, (it.duration - it.viewOffset) / 60000L);
@@ -191,6 +242,29 @@ final class PosterAdapter extends RecyclerView.Adapter<PosterAdapter.VH> {
         }
         Glide.with(vh.image).load(Plex.img(path, w, h)).centerCrop()
                 .transition(DrawableTransitionOptions.withCrossFade(200)).into(vh.image);
+
+        TextView mark = (TextView) vh.card.findViewWithTag("mark");
+        if (mark != null) {
+            int md = (int) (sh * 0.032f);
+            if (it.isNew()) {
+                mark.setText("NEW");
+                mark.setCompoundDrawables(null, null, null, null);
+                mark.setPadding((int) (sh * 0.011f), (int) (sh * 0.004f), (int) (sh * 0.011f), (int) (sh * 0.004f));
+                mark.setBackground(UiUtil.rounded(0xFF0A84FF, sh * 0.012f));
+                mark.setMinWidth(0);
+                mark.setMinHeight(0);
+                mark.setVisibility(View.VISIBLE);
+            } else if (it.isWatched()) {
+                mark.setText("");
+                mark.setPadding(0, 0, 0, 0);
+                mark.setBackground(new CheckDrawable(md));
+                mark.setMinWidth(md);
+                mark.setMinHeight(md);
+                mark.setVisibility(View.VISIBLE);
+            } else {
+                mark.setVisibility(View.GONE);
+            }
+        }
 
         boolean progress = it.viewOffset > 0 && it.duration > 0;
         vh.track.setVisibility(progress ? View.VISIBLE : View.GONE);

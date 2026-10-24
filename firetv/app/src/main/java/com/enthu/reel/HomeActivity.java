@@ -116,7 +116,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     private boolean previewIsClip;
     private boolean previewShowing; // first frame is on screen
     private int previewToken = 0;
-    private static final long PREVIEW_DELAY_MS = 1400;
+    private static final long PREVIEW_DELAY_MS = 4000;
     private static final long PREVIEW_MAX_MS = 45_000;
     private final Runnable previewStart = () -> startPreview(this.focusedItem);
     private final Runnable previewEnd = this::stopPreview;
@@ -136,7 +136,12 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     private float[] pFrom;         // card rect the grown card came from {x, y, w, h}
 
     private boolean previewsOn() {
-        return getSharedPreferences("reel_ui", MODE_PRIVATE).getBoolean("previews", true);
+        return getSharedPreferences("reel_ui", MODE_PRIVATE).getBoolean("previews", true) && !quiet(this);
+    }
+
+    /** Quiet mode (the moon next to Settings): no previews, no auto-playing trailers, no preview sound. Stays until changed. */
+    static boolean quiet(android.content.Context c) {
+        return c.getSharedPreferences("reel_ui", MODE_PRIVATE).getBoolean("quiet", false);
     }
 
     // Where each title's preview comes from, remembered so a second visit starts at once:
@@ -462,6 +467,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
 
     /** Preview sound level from Settings: off, low (default) or medium. */
     static float previewVolume(android.content.Context c) {
+        if (quiet(c)) return 0f;
         int v = c.getSharedPreferences("reel_ui", MODE_PRIVATE).getInt("previewSound", 1);
         // One level for every preview and trailer (card, title page, full screen), so they match.
         return v == 0 ? 0f : v == 2 ? 0.5f : 0.3f;
@@ -837,7 +843,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
             public void ok(List<Plex.Item> fresh) {
                 if (mine != loadToken || isDestroyed()) return;
                 int idx = -1;
-                for (int i = 0; i < rows.size(); i++) if (rows.get(i).title.equals("Up Next")) { idx = i; break; }
+                for (int i = 0; i < rows.size(); i++) if (rows.get(i).title.equals("Continue Watching")) { idx = i; break; }
                 if (idx < 0) return;
                 List<Plex.Item> cur = rows.get(idx).items;
                 boolean same = cur.size() == fresh.size();
@@ -981,8 +987,9 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         View scrimLeft = new View(this);
-        scrimLeft.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
-                new int[]{0xE6000000, 0x99000000, 0x00000000}));
+        leftGrad = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{0xE6000000, 0x99000000, 0x00000000});
+        scrimLeft.setBackground(leftGrad);
         root.addView(scrimLeft, new FrameLayout.LayoutParams((int) (W * 0.70f),
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -993,8 +1000,9 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 ViewGroup.LayoutParams.MATCH_PARENT, (int) (H * 0.22f), Gravity.TOP));
 
         View scrimBottom = new View(this);
-        scrimBottom.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{0x00000000, 0xB3000000, 0xFF000000}));
+        bottomGrad = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{0x00000000, 0xB3000000, 0xFF000000});
+        scrimBottom.setBackground(bottomGrad);
         root.addView(scrimBottom, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, (int) (H * 0.6f), Gravity.BOTTOM));
 
@@ -1235,7 +1243,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         // Coming up from the page onto the top bar lands on the tab you are on, not on the first one
         root.getViewTreeObserver().addOnGlobalFocusChangeListener((oldF, newF) -> {
             if (newF == null || tab < 0 || tab >= tabViews.length || tabViews[tab] == null) return;
-            if (!isNavTab(newF) || isNavTab(oldF) || oldF == cornerSettings || newF == tabViews[tab]) return;
+            if (!isNavTab(newF) || isNavTab(oldF) || oldF == cornerSettings || oldF == cornerMoon || newF == tabViews[tab]) return;
             final View target = tabViews[tab];
             handler.post(target::requestFocus);
         });
@@ -1243,6 +1251,40 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         LinearLayout corner = new LinearLayout(this);
         corner.setOrientation(LinearLayout.HORIZONTAL);
         corner.setGravity(Gravity.CENTER_VERTICAL);
+
+        // Quiet mode: a small moon, easy to miss on purpose
+        final TextView moon = makeTab(" ");
+        cornerMoon = moon;
+        final float moonSize = H * 0.03f;
+        final MoonDrawable moonIcon = new MoonDrawable((int) moonSize);
+        moon.setCompoundDrawablesRelative(moonIcon, null, null, null);
+        moon.setCompoundDrawablePadding(0);
+        moon.setPadding((int) (W * 0.010f), (int) (H * 0.012f), (int) (W * 0.010f), (int) (H * 0.012f));
+        moon.setContentDescription("Quiet mode");
+        final Runnable paintMoon = () -> {
+            boolean q = quiet(this);
+            moonIcon.set(moon.hasFocus() ? 0xFF000000 : q ? 0xFFFFE9A8 : 0xFFFFFFFF, q);
+            moon.setAlpha(moon.hasFocus() ? 1f : q ? 1f : 0.45f);
+        };
+        final View.OnFocusChangeListener baseFocus = moon.getOnFocusChangeListener();
+        moon.setOnFocusChangeListener((v, f) -> {
+            if (baseFocus != null) baseFocus.onFocusChange(v, f);
+            paintMoon.run();
+        });
+        moon.setOnClickListener(v -> {
+            boolean now = !quiet(this);
+            getSharedPreferences("reel_ui", MODE_PRIVATE).edit().putBoolean("quiet", now).apply();
+            SoundFx.click();
+            if (now) {
+                stopPreview();
+                stopHeroPreview();
+            }
+            paintMoon.run();
+            android.widget.Toast.makeText(this, now ? "Quiet mode on" : "Quiet mode off",
+                    android.widget.Toast.LENGTH_SHORT).show();
+        });
+        paintMoon.run();
+        corner.addView(moon);
 
         TextView settings = makeTab("Settings");
         cornerSettings = settings;
@@ -1257,6 +1299,45 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         soLp.topMargin = (int) (H * 0.045f);
         soLp.rightMargin = (int) (W * 0.03f);
         root.addView(corner, soLp);
+    }
+
+    /** A crescent moon (outlined faintly when quiet mode is off, filled when on). */
+    private static final class MoonDrawable extends android.graphics.drawable.Drawable {
+        private final int size;
+        private final android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private boolean filled;
+
+        MoonDrawable(int size) {
+            this.size = size;
+            setBounds(0, 0, size, size);
+        }
+
+        void set(int color, boolean filled) {
+            paint.setColor(color);
+            this.filled = filled;
+            invalidateSelf();
+        }
+
+        @Override
+        public void draw(android.graphics.Canvas c) {
+            float r = size * 0.42f;
+            float cx = size / 2f;
+            float cy = size / 2f;
+            android.graphics.Path moon = new android.graphics.Path();
+            moon.addCircle(cx, cy, r, android.graphics.Path.Direction.CW);
+            android.graphics.Path bite = new android.graphics.Path();
+            bite.addCircle(cx + r * 0.55f, cy - r * 0.35f, r * 0.85f, android.graphics.Path.Direction.CW);
+            moon.op(bite, android.graphics.Path.Op.DIFFERENCE);
+            paint.setStyle(filled ? android.graphics.Paint.Style.FILL : android.graphics.Paint.Style.STROKE);
+            paint.setStrokeWidth(Math.max(2f, size * 0.09f));
+            c.drawPath(moon, paint);
+        }
+
+        @Override public void setAlpha(int a) { paint.setAlpha(a); }
+        @Override public void setColorFilter(android.graphics.ColorFilter cf) { paint.setColorFilter(cf); }
+        @Override public int getOpacity() { return android.graphics.PixelFormat.TRANSLUCENT; }
+        @Override public int getIntrinsicWidth() { return size; }
+        @Override public int getIntrinsicHeight() { return size; }
     }
 
     private static String aacLabel(boolean on) {
@@ -1381,7 +1462,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
 
             if (whichTab == TAB_HOME) {
                 List<Plex.Item> onDeck = Plex.items(Plex.paged("/library/onDeck", 20));
-                if (!onDeck.isEmpty()) out.rows.add(new Row("Up Next", onDeck, true));
+                if (!onDeck.isEmpty()) out.rows.add(new Row("Continue Watching", onDeck, true));
 
                 try {
                     List<Plex.Item> live = Plex.sessions();
@@ -1631,7 +1712,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 int at = 0;
                 for (int i = 0; i < rows.size(); i++) {
                     String t = rows.get(i).title;
-                    if (t.equals("Up Next") || t.equals("Currently Watching")) at = i + 1;
+                    if (t.equals("Continue Watching") || t.equals("Currently Watching")) at = i + 1;
                 }
                 rows.add(at, new Row("Your requests", items, true));
                 rowAdapter.notifyItemInserted(at);
@@ -1655,6 +1736,21 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
      * Second pass, so the screen appears quickly: "Because you watched", "Unwatched", genre and
      * collection rows. Each is optional; anything the server can't answer is skipped.
      */
+    /** A row of the library's titles with this person in them, unwatched ones first; skipped if there are fewer than 4. */
+    private static void addPersonRow(List<Row> out, String sectionKey, String prefix, Plex.Cast who, String exceptKey) {
+        if (who == null) return;
+        try {
+            List<Plex.Item> list = Plex.items(Plex.paged("/library/sections/" + sectionKey + "/all?" + who.filter
+                    + "&sort=year:desc", 40));
+            list.removeIf(x -> x.key.equals(exceptKey));
+            List<Plex.Item> sorted = new ArrayList<>();
+            for (Plex.Item x : list) if (!x.isWatched()) sorted.add(x);
+            for (Plex.Item x : list) if (x.isWatched()) sorted.add(x);
+            if (sorted.size() >= 4) out.add(new Row(prefix + who.name, sorted, false));
+        } catch (Exception ignored) {
+        }
+    }
+
     private void loadExtras(final int mine, final int whichTab) {
         Plex.async(() -> {
             List<Row> out = new ArrayList<>();
@@ -1683,6 +1779,16 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                         }
                         if (like.size() >= 4) out.add(new Row("Because you watched " + w.displayTitle(), like, false));
                         if (++seeds >= 2) break;
+                    }
+                    // ... and rows for the lead actor and the director of something you watched lately
+                    if (movie) {
+                        for (Plex.Item w : last) {
+                            if (w.viewCount <= 0) continue;
+                            Plex.Item full = Plex.metadata(w.key);
+                            addPersonRow(out, s.key, "More with ", full.cast.isEmpty() ? null : full.cast.get(0), w.key);
+                            addPersonRow(out, s.key, "Directed by ", full.directors.isEmpty() ? null : full.directors.get(0), w.key);
+                            break;
+                        }
                     }
                 } catch (Exception ignored) {
                 }
@@ -1737,7 +1843,8 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 List<Row> top = new ArrayList<>();
                 List<Row> rest = new ArrayList<>();
                 for (Row r : extra) {
-                    if (r.title.startsWith("Because you watched") || r.title.startsWith("Unwatched")) top.add(r);
+                    if (r.title.startsWith("Because you watched") || r.title.startsWith("Unwatched")
+                            || r.title.startsWith("More with ") || r.title.startsWith("Directed by ")) top.add(r);
                     else rest.add(r);
                 }
 
@@ -1752,7 +1859,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 int topAt = 0;
                 for (int i = 0; i < rows.size(); i++) {
                     String t = rows.get(i).title;
-                    if (t.equals("Up Next") || t.equals("Currently Watching") || t.equals("Your requests")
+                    if (t.equals("Continue Watching") || t.equals("Currently Watching") || t.equals("Your requests")
                             || t.equals("Continue Watching")) {
                         topAt = i + 1;
                     }
@@ -1881,7 +1988,60 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         openDetail(item);
     }
 
+    // ---- Ambient colour: the shading follows the colours of whichever poster is focused ----
+    private GradientDrawable leftGrad;
+    private GradientDrawable bottomGrad;
+    private int ambientCur = 0;
+    private String ambientFor;
+    private android.animation.ValueAnimator ambientAnim;
+    private final java.util.HashMap<String, Integer> ambientCache = new java.util.HashMap<>();
+
+    private void ambientFor(final Plex.Item it) {
+        final String path = it.poster();
+        if (path == null || leftGrad == null || path.equals(ambientFor)) return;
+        ambientFor = path;
+        Integer known = ambientCache.get(path);
+        if (known != null) {
+            ambientTo(known);
+            return;
+        }
+        Glide.with(this).asBitmap().load(Plex.img(path, 48, 72))
+                .into(new com.bumptech.glide.request.target.CustomTarget<android.graphics.Bitmap>(48, 72) {
+                    @Override
+                    public void onResourceReady(android.graphics.Bitmap bmp,
+                                                com.bumptech.glide.request.transition.Transition<? super android.graphics.Bitmap> t) {
+                        if (isDestroyed()) return;
+                        int c = DetailActivity.dominantColour(bmp);
+                        if (c == 0) return;
+                        ambientCache.put(path, c);
+                        if (path.equals(ambientFor)) ambientTo(c);
+                    }
+
+                    @Override
+                    public void onLoadCleared(android.graphics.drawable.Drawable placeholder) {
+                    }
+                });
+    }
+
+    private void ambientTo(final int target) {
+        if (ambientAnim != null) ambientAnim.cancel();
+        final int from = ambientCur != 0 ? ambientCur : target;
+        ambientCur = target;
+        ambientAnim = android.animation.ValueAnimator.ofFloat(0f, 1f);
+        ambientAnim.setDuration(Motion.LONG_MS * 2);
+        ambientAnim.setInterpolator(Motion.EASE);
+        ambientAnim.addUpdateListener(a -> {
+            int c = (Integer) new android.animation.ArgbEvaluator().evaluate(a.getAnimatedFraction(), from, target);
+            leftGrad.setColors(new int[]{DetailActivity.shade(c, 0.17f, 0xE6), DetailActivity.shade(c, 0.20f, 0x99),
+                    DetailActivity.shade(c, 0.20f, 0x00)});
+            bottomGrad.setColors(new int[]{DetailActivity.shade(c, 0.14f, 0x00), DetailActivity.shade(c, 0.12f, 0xB3),
+                    DetailActivity.shade(c, 0.07f, 0xFF)});
+        });
+        ambientAnim.start();
+    }
+
     private void applyHero(final Plex.Item it, boolean animate) {
+        ambientFor(it);
         current = it;
         final int token = ++heroToken;
         stopHeroPreview();
@@ -1985,6 +2145,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     private GradientDrawable navEdge;
     private View navGlass;
     private TextView cornerSettings;
+    private TextView cornerMoon;
     private int[] navColors = {0x8C1C1C1E, 0x8C1C1C1E};
     private android.animation.ValueAnimator navAnim;
 
@@ -2140,7 +2301,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         // Back from anywhere on the page goes up to the top bar (on the tab you are on), silent;
         // Back on the top bar behaves as before.
         if (e.getKeyCode() == KeyEvent.KEYCODE_BACK && !previewFullscreen && tabViews[tab] != null) {
-            boolean onBar = cornerSettings != null && cornerSettings.hasFocus();
+            boolean onBar = (cornerSettings != null && cornerSettings.hasFocus()) || (cornerMoon != null && cornerMoon.hasFocus());
             for (TextView tv : tabViews) if (tv != null && tv.hasFocus()) onBar = true;
             if (!onBar) {
                 if (e.getAction() == KeyEvent.ACTION_UP) {
@@ -2207,33 +2368,9 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 ch.animate().alpha(1f).setDuration(Motion.FOCUS_MS).setInterpolator(Motion.EASE).start();
             }
         }
-        ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) c.getLayoutParams();
-        // A card that was only just created hasn't been measured yet (width 0): use its planned size.
-        final float cw = c.getWidth() > 0 ? c.getWidth() : Math.max(1, lp.width);
-        final float chh = c.getHeight() > 0 ? c.getHeight() : Math.max(1, lp.height);
-        float s = Math.max((float) W / cw, (float) H / chh);
-        c.setOutlineProvider(null);
-        c.setClipToOutline(false);
-        // Swivel: the card turns a little in 3D as it grows to fill the screen.
-        c.setPivotX(cw / 2f);
-        c.setPivotY(chh / 2f);
-        c.setCameraDistance(cw * 10f);
-        android.animation.ObjectAnimator grow = android.animation.ObjectAnimator.ofPropertyValuesHolder(c,
-                android.animation.PropertyValuesHolder.ofFloat(View.SCALE_X, c.getScaleX(), s),
-                android.animation.PropertyValuesHolder.ofFloat(View.SCALE_Y, c.getScaleY(), s),
-                android.animation.PropertyValuesHolder.ofFloat(View.TRANSLATION_X, c.getTranslationX(),
-                        W / 2f - (lp.leftMargin + cw / 2f)),
-                android.animation.PropertyValuesHolder.ofFloat(View.TRANSLATION_Y, c.getTranslationY(),
-                        H / 2f - (lp.topMargin + chh / 2f)));
-        grow.setDuration(Motion.SLOW_MS);
-        grow.setInterpolator(new android.view.animation.PathInterpolator(0.2f, 0f, 0f, 1f));
-        grow.addListener(new android.animation.AnimatorListenerAdapter() {
-            @Override
-            public void onAnimationEnd(android.animation.Animator animation) {
-                handOffAndOpen(it);
-            }
-        });
-        grow.start();
+        // No growing animation: scaling a card with live video up to full screen is heavy and looked laggy.
+        // The title page just dissolves in over the card (the video carries on underneath).
+        handOffAndOpen(it);
     }
 
     private void handOffAndOpen(final Plex.Item it) {

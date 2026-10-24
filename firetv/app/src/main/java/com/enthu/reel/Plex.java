@@ -117,6 +117,13 @@ public final class Plex {
         public int librarySectionID;
         public String librarySectionTitle = "";
         public String contentRating = "";
+        public String tagline = "";
+        public long addedAt;          // seconds since 1970
+        public int leafCount;         // episodes in a show
+        public int viewedLeafCount;   // ...of which watched
+        public String collName = "";   // the collection / franchise it belongs to, if any
+        public String collFilter = ""; // e.g. "collection=123"
+        public final List<String[]> ratings = new ArrayList<>(); // {source, shown value}
         public String thumb;
         public String art;
         public String logo;
@@ -124,6 +131,7 @@ public final class Plex {
         public final List<long[]> intros = new ArrayList<>();  // {start, end} in ms
         public final List<long[]> credits = new ArrayList<>();
         public final List<Cast> cast = new ArrayList<>();
+        public final List<Cast> directors = new ArrayList<>();
         public String gpKey; // rating key of the show an episode belongs to
         public String gpThumb;
         public String gpArt;
@@ -142,6 +150,18 @@ public final class Plex {
             List<Stream> out = new ArrayList<>();
             for (Stream s : streams) if (s.type == type) out.add(s);
             return out;
+        }
+
+        /** Watched all the way through (a film or episode seen, or every episode of a show). */
+        public boolean isWatched() {
+            if (type.equals("show") || type.equals("season")) return leafCount > 0 && viewedLeafCount >= leafCount;
+            return viewCount > 0 && viewOffset <= 0;
+        }
+
+        /** Added in the last week and not started. */
+        public boolean isNew() {
+            if (addedAt <= 0 || isWatched() || viewOffset > 0 || viewedLeafCount > 0) return false;
+            return System.currentTimeMillis() / 1000L - addedAt < 7 * 24 * 3600L;
         }
 
         public boolean isPlayable() {
@@ -163,6 +183,10 @@ public final class Plex {
         }
 
         public String metaLine() {
+            return metaLine(true);
+        }
+
+        public String metaLine(boolean withRuntime) {
             List<String> p = new ArrayList<>();
             switch (type) {
                 case "movie":
@@ -183,7 +207,7 @@ public final class Plex {
             }
             if (!type.equals("episode") && year > 0) p.add(String.valueOf(year));
             if (!contentRating.isEmpty()) p.add(contentRating);
-            if (duration > 0 && isPlayable()) p.add(UiUtil.duration(duration));
+            if (withRuntime && duration > 0 && isPlayable()) p.add(UiUtil.duration(duration));
             return TextUtils.join(" · ", p);
         }
     }
@@ -977,6 +1001,27 @@ public final class Plex {
         return l.get(0);
     }
 
+    /** Turns Plex's rating + image id (e.g. rottentomatoes://image.rating.ripe) into a labelled score. */
+    private static void addRating(Item i, double v, String image) {
+        if (v < 0 || image == null) return;
+        String src;
+        String shown;
+        if (image.startsWith("rottentomatoes")) {
+            src = "RT";
+            shown = Math.round(v * 10) + "%";
+        } else if (image.startsWith("imdb")) {
+            src = "IMDb";
+            shown = String.format(java.util.Locale.US, "%.1f", v);
+        } else if (image.startsWith("themoviedb")) {
+            src = "TMDb";
+            shown = Math.round(v * 10) + "%";
+        } else {
+            return;
+        }
+        for (String[] r : i.ratings) if (r[0].equals(src)) return;
+        i.ratings.add(new String[]{src, shown});
+    }
+
     private static String opt(JSONObject o, String k) {
         return (!o.has(k) || o.isNull(k)) ? null : o.optString(k);
     }
@@ -987,14 +1032,46 @@ public final class Plex {
         i.type = m.optString("type");
         i.title = m.optString("title");
         i.summary = m.optString("summary");
+        i.tagline = m.optString("tagline", "");
+        i.addedAt = m.optLong("addedAt", 0);
+        i.leafCount = m.optInt("leafCount", 0);
+        i.viewedLeafCount = m.optInt("viewedLeafCount", 0);
         i.year = m.optInt("year", 0);
         i.librarySectionID = m.optInt("librarySectionID", 0);
         i.librarySectionTitle = opt(m, "librarySectionTitle");
         i.contentRating = m.optString("contentRating", "");
+        addRating(i, m.optDouble("rating", -1), opt(m, "ratingImage"));
+        addRating(i, m.optDouble("audienceRating", -1), opt(m, "audienceRatingImage"));
         i.thumb = opt(m, "thumb");
         i.art = opt(m, "art");
         i.gpTitle = opt(m, "grandparentTitle");
         i.gpKey = opt(m, "grandparentRatingKey");
+        JSONArray colls = m.optJSONArray("Collection");
+        if (colls != null) {
+            for (int k = 0; k < colls.length(); k++) {
+                JSONObject co = colls.optJSONObject(k);
+                if (co == null) continue;
+                String f = co.optString("filter", "");
+                String t = co.optString("tag", "");
+                if (f.startsWith("collection=") && !t.isEmpty()) {
+                    i.collName = t;
+                    i.collFilter = f;
+                    break;
+                }
+            }
+        }
+        JSONArray dirs = m.optJSONArray("Director");
+        if (dirs != null) {
+            for (int k = 0; k < dirs.length() && k < 3; k++) {
+                JSONObject d = dirs.optJSONObject(k);
+                if (d == null) continue;
+                Cast c = new Cast();
+                c.name = d.optString("tag");
+                c.filter = d.optString("filter");
+                c.thumb = opt(d, "thumb");
+                if (!c.name.isEmpty() && !c.filter.isEmpty()) i.directors.add(c);
+            }
+        }
         JSONArray roles = m.optJSONArray("Role");
         if (roles != null) {
             for (int k = 0; k < roles.length() && k < 30; k++) {
@@ -1160,7 +1237,7 @@ public final class Plex {
     }
 
     public static String previewUrl(String ratingKey, long offsetMs, String session) {
-        return transcodeUrl(ratingKey, offsetMs, session, 0, 0, false, 6000, "1920x1080")
+        return transcodeUrl(ratingKey, offsetMs, session, 0, 0, false, 3500, "1280x720")
                 .replace("X-Plex-Client-Profile-Extra=" + enc(profileExtra(false)),
                         "X-Plex-Client-Profile-Extra=" + enc(previewProfile()))
                 + "&directStreamAudio=0&audioChannelCount=2";

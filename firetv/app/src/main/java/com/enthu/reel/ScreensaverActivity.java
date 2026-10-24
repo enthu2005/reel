@@ -49,6 +49,9 @@ public class ScreensaverActivity extends Activity {
     private ImageView b;
     private ImageView front;
     private TextView title;
+    private ImageView logo;
+    private String shownKey = "";
+    private final java.util.HashMap<String, Plex.Item> details = new java.util.HashMap<>();
     private TextView sub;
     private int index = 0;
     private int W;
@@ -94,6 +97,10 @@ public class ScreensaverActivity extends Activity {
         title.setTypeface(UiUtil.font(UiUtil.SEMIBOLD));
         title.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.034f);
         title.setShadowLayer(12, 0, 2, 0x99000000);
+        logo = new ImageView(this);
+        logo.setScaleType(ImageView.ScaleType.FIT_START);
+        logo.setVisibility(View.GONE);
+        cap.addView(logo, new LinearLayout.LayoutParams((int) (W * 0.28f), (int) (H * 0.12f)));
         cap.addView(title);
         sub = new TextView(this);
         sub.setTextColor(UiUtil.TEXT2);
@@ -218,11 +225,48 @@ public class ScreensaverActivity extends Activity {
             if (v != a && v != b) v.bringToFront();
         }
         title.setText(it.displayTitle());
-        sub.setText(it.year > 0 ? String.valueOf(it.year) : "");
+        title.setVisibility(View.VISIBLE);
+        logo.setVisibility(View.GONE);
+        logo.setAlpha(0f);
+        sub.setText(!it.tagline.isEmpty() ? it.tagline : it.year > 0 ? String.valueOf(it.year) : "");
         title.setAlpha(0f);
         sub.setAlpha(0f);
         title.animate().alpha(1f).setDuration(900).start();
         sub.animate().alpha(1f).setDuration(900).start();
+        // The title's logo and one-line tagline, once the full details arrive
+        shownKey = it.key;
+        Plex.Item known = details.get(it.key);
+        if (known != null) {
+            applyDetails(known);
+        } else {
+            Plex.async(() -> Plex.metadata(it.key), new Plex.Callback<Plex.Item>() {
+                @Override
+                public void ok(Plex.Item full) {
+                    if (isDestroyed()) return;
+                    details.put(it.key, full);
+                    if (it.key.equals(shownKey)) applyDetails(full);
+                }
+
+                @Override
+                public void fail(Exception e) {
+                }
+            });
+        }
+    }
+
+    private void applyDetails(Plex.Item full) {
+        String line = !full.tagline.isEmpty() ? full.tagline : full.year > 0 ? String.valueOf(full.year) : "";
+        if (!line.contentEquals(sub.getText())) {
+            sub.setText(line);
+            sub.setAlpha(0f);
+            sub.animate().alpha(1f).setDuration(900).start();
+        }
+        String path = full.logo;
+        if (path == null) return;
+        Glide.with(this).load(Plex.raw(path)).into(logo);
+        logo.setVisibility(View.VISIBLE);
+        title.setVisibility(View.GONE);
+        logo.animate().alpha(1f).setDuration(900).start();
     }
 
     @Override

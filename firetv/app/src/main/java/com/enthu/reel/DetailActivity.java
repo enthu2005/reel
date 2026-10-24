@@ -36,6 +36,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         Plex.Item item;
         List<Plex.Item> episodes = new ArrayList<>();
         List<Plex.Item> related = new ArrayList<>();
+        List<Plex.Item> collection = new ArrayList<>();
         List<Plex.Item> sameLibrary = new ArrayList<>();
         String showLogo;
     }
@@ -54,6 +55,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
     private ImageView logo;
     private TextView title;
     private TextView meta;
+    private LinearLayout ratingRow;
     private LinearLayout badgeRow;
     private TextView summary;
     private TextView playBtn;
@@ -76,6 +78,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
     private LinearLayout.LayoutParams castLp;
     private LinearLayout.LayoutParams moreLp;
     private final List<Plex.Item> related = new ArrayList<>();
+    private final List<Plex.Item> collection = new ArrayList<>();
     private final List<Plex.Item> sameLibrary = new ArrayList<>();
     private TextView shuffleBtn;
 
@@ -182,6 +185,15 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
                 (int) (W * 0.5f), ViewGroup.LayoutParams.WRAP_CONTENT);
         metaLp.topMargin = (int) (H * 0.012f);
         col.addView(meta, metaLp);
+
+        ratingRow = new LinearLayout(this);
+        ratingRow.setOrientation(LinearLayout.HORIZONTAL);
+        ratingRow.setGravity(Gravity.CENTER_VERTICAL);
+        ratingRow.setVisibility(View.GONE);
+        LinearLayout.LayoutParams ratingLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        ratingLp.topMargin = (int) (H * 0.012f);
+        col.addView(ratingRow, ratingLp);
 
         badgeRow = new LinearLayout(this);
         badgeRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -334,7 +346,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         lowerBox.addView(moreBox, moreLp);
         FrameLayout.LayoutParams lowerLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM);
-        lowerLp.bottomMargin = (int) (H * 0.025f);
+        lowerLp.bottomMargin = (int) (H * 0.004f);
         root.addView(lowerBox, lowerLp);
 
         setContentView(root);
@@ -358,13 +370,18 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         if (scrimLeft == null) return;
         // The side and bottom shading stay mostly there (text must stay readable) and fade to clear
         // where there is nothing on the page; the whole picture also gets a light tint.
-        scrimLeft.animate().alpha(on ? 0.85f : 1f).setDuration(Motion.LONG_MS).setInterpolator(Motion.EASE).start();
-        scrimBottom.animate().alpha(on ? 0.85f : 1f).setDuration(Motion.LONG_MS).setInterpolator(Motion.EASE).start();
+        scrimLeft.animate().alpha(on ? 0.85f : 1f).setDuration(on ? FADE_MS : Motion.LONG_MS).setInterpolator(FADE_EASE).start();
+        scrimBottom.animate().alpha(on ? 0.85f : 1f).setDuration(on ? FADE_MS : Motion.LONG_MS).setInterpolator(FADE_EASE).start();
         if (tint != null && !previewFull) tint.animate().alpha(on ? 1f : 0f).setDuration(Motion.LONG_MS).setInterpolator(Motion.EASE).start();
     }
     private android.webkit.WebView previewWeb; // a YouTube trailer playing behind the page
     private static final long BEHIND_DELAY_MS = 4000;
+    // Poster -> video: a long, even dissolve (no quick start)
+    private static final long FADE_MS = 2200;
+    private static final android.view.animation.Interpolator FADE_EASE =
+            new android.view.animation.AccelerateDecelerateInterpolator();
     private boolean behindStarted;
+    private long behindHoldMs = 0; // how long a preloaded background preview waits before playing
 
     private boolean previewPlaying() {
         return preview != null || previewWeb != null;
@@ -385,7 +402,14 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             public void ok(final String[] src) {
                 if (isDestroyed() || src == null || src[0].equals("none")) return;
                 long wait = Math.max(0, BEHIND_DELAY_MS - (android.os.SystemClock.uptimeMillis() - openedAt));
-                handler.postDelayed(() -> playBehindSource(src), wait);
+                if (src[0].equals("yt")) {
+                    handler.postDelayed(() -> playBehindSource(src), wait);
+                } else {
+                    // A file or a scene from the film: start loading it now (paused, silent, hidden) so it is
+                    // ready the moment the gap is over, instead of only starting to load then.
+                    behindHoldMs = wait;
+                    playBehindSource(src);
+                }
             }
 
             @Override
@@ -395,7 +419,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
     }
 
     private void playBehindSource(String[] src) {
-        if (isFinishing() || isDestroyed() || previewPlaying() || !hasWindowFocus()) return;
+        if (isFinishing() || isDestroyed() || previewPlaying() || (behindHoldMs == 0 && !hasWindowFocus())) return;
         switch (src[0]) {
             case "direct":
                 playBehind(src[1]);
@@ -429,7 +453,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
                             @Override
                             public void playing() {
                                 if (previewWeb != ref[0]) return;
-                                ytBox.animate().alpha(1f).setDuration(Motion.LONG_MS).setInterpolator(Motion.EASE).start();
+                                ytBox.animate().alpha(1f).setDuration(FADE_MS).setInterpolator(FADE_EASE).start();
                                 previewOn(true);
                             }
 
@@ -477,7 +501,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
                     // The first frame can be ready while it's still waiting out the gap: keep the poster until it really plays
                     if (!playing || shown || preview != p) return;
                     shown = true;
-                    previewView.animate().alpha(1f).setDuration(1500).setInterpolator(Motion.EASE).start();
+                    previewView.animate().alpha(1f).setDuration(FADE_MS).setInterpolator(FADE_EASE).start();
                     HomeActivity.fadeVolume(p, HomeActivity.previewVolume(DetailActivity.this), 1800);
                     previewOn(true);
                 }
@@ -876,6 +900,18 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
                 } catch (Exception ignored) {
                 }
             }
+            if (l.item != null && l.item.type.equals("movie") && !l.item.collFilter.isEmpty() && l.item.librarySectionID > 0) {
+                try {
+                    List<Plex.Item> col = Plex.items(Plex.paged("/library/sections/" + l.item.librarySectionID
+                            + "/all?" + l.item.collFilter, 60));
+                    col.removeIf(it -> it.key.equals(l.item.key));
+                    // Release order: the first film first
+                    java.util.Collections.sort(col, (a, b) -> a.year != b.year ? Integer.compare(a.year, b.year)
+                            : a.title.compareToIgnoreCase(b.title));
+                    l.collection.addAll(col);
+                } catch (Exception ignored) {
+                }
+            }
             if (l.item != null && (l.item.type.equals("movie") || l.item.type.equals("episode"))) {
                 try {
                     l.related.addAll(Plex.related(l.item.key));
@@ -891,6 +927,8 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
                 showLogo = l.showLogo;
                 related.clear();
                 related.addAll(l.related);
+                collection.clear();
+                collection.addAll(l.collection);
                 sameLibrary.clear();
                 sameLibrary.addAll(l.sameLibrary);
                 findTrailer();
@@ -946,7 +984,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
     }
 
     /** The colour that stands out most in a small picture: colourful, not too dark, not washed out. */
-    private static int dominantColour(android.graphics.Bitmap b) {
+    static int dominantColour(android.graphics.Bitmap b) {
         if (b == null || b.getWidth() == 0) return 0;
         float[] hsv = new float[3];
         double r = 0, g = 0, bl = 0, wsum = 0;
@@ -967,7 +1005,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
     }
 
     /** The colour at a fixed darkness, so text on top stays readable. */
-    private static int shade(int rgb, float value, int alpha) {
+    static int shade(int rgb, float value, int alpha) {
         float[] hsv = new float[3];
         Color.colorToHSV(rgb, hsv);
         hsv[1] = Math.min(hsv[1], 0.75f);
@@ -975,11 +1013,56 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         return Color.HSVToColor(alpha, hsv);
     }
 
+    /** Rotten Tomatoes / IMDb scores and the runtime on one line; false if there's nothing to show. */
+    private boolean fillRatings() {
+        ratingRow.removeAllViews();
+        boolean runtime = item.duration > 0 && item.isPlayable();
+        if (item.ratings.isEmpty()) {
+            ratingRow.setVisibility(View.GONE);
+            return false;
+        }
+        for (String[] r : item.ratings) {
+            boolean rt = r[0].equals("RT");
+            boolean imdb = r[0].equals("IMDb");
+            int bg = rt ? 0xFFFA320A : imdb ? 0xFFF5C518 : 0xFF01B4E4;
+            int fg = imdb ? 0xFF111111 : 0xFFFFFFFF;
+            TextView tag = new TextView(this);
+            tag.setText(r[0]);
+            tag.setTextColor(fg);
+            tag.setTypeface(UiUtil.font(UiUtil.BOLD));
+            tag.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.018f);
+            tag.setPadding((int) (H * 0.010f), (int) (H * 0.003f), (int) (H * 0.010f), (int) (H * 0.003f));
+            tag.setBackground(UiUtil.rounded(bg, H * 0.008f));
+            ratingRow.addView(tag);
+            TextView val = new TextView(this);
+            val.setText(r[1]);
+            val.setTextColor(UiUtil.TEXT);
+            val.setTypeface(UiUtil.font(UiUtil.MEDIUM));
+            val.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.024f);
+            LinearLayout.LayoutParams vl = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            vl.leftMargin = (int) (H * 0.010f);
+            vl.rightMargin = (int) (H * 0.026f);
+            ratingRow.addView(val, vl);
+        }
+        if (runtime) {
+            TextView rt = new TextView(this);
+            rt.setText(UiUtil.duration(item.duration));
+            rt.setTextColor(UiUtil.TEXT2);
+            rt.setTypeface(UiUtil.font(UiUtil.MEDIUM));
+            rt.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.024f);
+            ratingRow.addView(rt);
+        }
+        ratingRow.setVisibility(View.VISIBLE);
+        return runtime;
+    }
+
     private void bind() {
         title.setText(item.displayTitle());
         title.setVisibility(View.VISIBLE);
         logo.setVisibility(View.GONE);
-        meta.setText(item.metaLine());
+        boolean strip = fillRatings();
+        meta.setText(item.metaLine(!strip));
         summary.setText(item.summary);
         Badges.fill(badgeRow, item, H);
 
@@ -1032,12 +1115,37 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
                 castRow.setTag(castSig);
             }
             castBox.setVisibility(View.VISIBLE);
-            if (!related.isEmpty()) {
-                moreLabel.setText("Similar");
-                String sigrelated = item.key + ":" + related.size();
+            final List<Plex.Item> moreItems = !collection.isEmpty() ? collection : related;
+            if (!moreItems.isEmpty()) {
+                moreLabel.setText(!collection.isEmpty() ? item.collName + "  \u203A" : "Similar");
+                moreLabel.setFocusable(!collection.isEmpty());
+                moreLabel.setClickable(!collection.isEmpty());
+                if (!collection.isEmpty()) {
+                    // The collection's own page: every film in it, in release order
+                    moreLabel.setOnClickListener(v -> {
+                        SoundFx.click();
+                        Intent i = new Intent(DetailActivity.this, BrowseActivity.class);
+                        i.putExtra("path", "/library/sections/" + item.librarySectionID + "/all?" + item.collFilter
+                                + "&sort=originallyAvailableAt:asc");
+                        i.putExtra("title", item.collName);
+                        i.putExtra("type", "movie");
+                        startActivity(i);
+                    });
+                    moreLabel.setOnFocusChangeListener((v, f) -> {
+                        moreLabel.setBackground(f ? UiUtil.rounded(0xFFFFFFFF, H * 0.04f) : null);
+                        moreLabel.setTextColor(f ? 0xFF111111 : UiUtil.TEXT);
+                        if (f) SoundFx.move();
+                    });
+                } else {
+                    moreLabel.setOnClickListener(null);
+                    moreLabel.setOnFocusChangeListener(null);
+                    moreLabel.setBackground(null);
+                    moreLabel.setTextColor(UiUtil.TEXT);
+                }
+                String sigrelated = item.key + ":" + moreItems.size() + (collection.isEmpty() ? "r" : "c");
                 if (moreRow.getAdapter() == null || !sigrelated.equals(moreRow.getTag()))
                 { moreRow.setTag(sigrelated);
-                moreRow.setAdapter(new PosterAdapter(related, (int) (H * 0.13f * 16f / 9f), (int) (H * 0.13f), true,
+                moreRow.setAdapter(new PosterAdapter(moreItems, (int) (H * 0.13f * 16f / 9f), (int) (H * 0.13f), true,
                         new PosterAdapter.Listener() {
                             @Override public void onFocused(Plex.Item it) {}
                             @Override public void onClicked(Plex.Item it) {
@@ -1235,7 +1343,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
     }
 
     private boolean autoTrailer() {
-        return getSharedPreferences("reel_ui", MODE_PRIVATE).getBoolean("detailTrailer", true);
+        return getSharedPreferences("reel_ui", MODE_PRIVATE).getBoolean("detailTrailer", true) && !HomeActivity.quiet(this);
     }
 
     private final Runnable startTrailerBehind = this::startTrailerBehind;
@@ -1258,7 +1366,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
 
     /** Plays a trailer file quietly behind the page, fading in once the first picture is ready. */
     private void playBehind(String url) {
-        if (isFinishing() || isDestroyed() || previewPlaying() || !hasWindowFocus()) return;
+        if (isFinishing() || isDestroyed() || previewPlaying() || (behindHoldMs == 0 && !hasWindowFocus())) return;
         startBehindPlayer(PreviewHandoff.newPlayer(DetailActivity.this),
                 androidx.media3.common.MediaItem.fromUri(url));
     }
@@ -1275,7 +1383,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             @Override
             public void onRenderedFirstFrame() {
                 if (preview != p) return;
-                previewView.animate().alpha(1f).setDuration(1500).setInterpolator(Motion.EASE).start();
+                previewView.animate().alpha(1f).setDuration(FADE_MS).setInterpolator(FADE_EASE).start();
                 HomeActivity.fadeVolume(p, HomeActivity.previewVolume(DetailActivity.this), 1800);
                 previewOn(true);
             }
@@ -1291,8 +1399,18 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             }
         });
         p.setMediaItem(mi);
-        p.prepare();
-        p.play();
+        final long hold = behindHoldMs;
+        behindHoldMs = 0;
+        if (hold > 0) {
+            p.setPlayWhenReady(false);
+            p.prepare();
+            handler.postDelayed(() -> {
+                if (preview == p) p.play();
+            }, hold);
+        } else {
+            p.prepare();
+            p.play();
+        }
     }
 
     /** Full-screen trailer; carries on from where the background preview had got to. */

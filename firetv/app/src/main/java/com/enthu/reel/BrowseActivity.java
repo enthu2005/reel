@@ -57,7 +57,7 @@ public class BrowseActivity extends ReelActivity implements PosterAdapter.Listen
         String name = getIntent().getStringExtra("title");
         String t = getIntent().getStringExtra("type");
         type = t == null ? "" : t;
-        landscape = type.equals("photo") || parent != null;
+        landscape = true; // wide cards everywhere: the preview grows without covering its neighbours
 
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(UiUtil.BG);
@@ -123,7 +123,7 @@ public class BrowseActivity extends ReelActivity implements PosterAdapter.Listen
         }
         col.addView(head);
 
-        int cols = landscape ? 4 : 6;
+        int cols = type.equals("photo") || parent != null ? 4 : 5;
         grid = new RecyclerView(this);
         grid.setLayoutManager(new GridLayoutManager(this, cols));
         grid.setClipToPadding(false);
@@ -183,7 +183,7 @@ public class BrowseActivity extends ReelActivity implements PosterAdapter.Listen
                 count.setText(list.size() + (list.size() == 1 ? " item" : " items"));
                 message.setVisibility(list.isEmpty() ? View.VISIBLE : View.GONE);
                 if (list.isEmpty()) message.setText("Nothing in here");
-                int cols = landscape ? 4 : 6;
+                int cols = type.equals("photo") || parent != null ? 4 : 5;
                 int w = (int) ((W * 0.915f) / cols) - UiUtil.dp(BrowseActivity.this, 14);
                 int h = landscape ? (int) (w * 9f / 16f) : (int) (w * 3f / 2f);
                 grid.setAdapter(new PosterAdapter(items, w, h, landscape, BrowseActivity.this).withTitles());

@@ -40,7 +40,7 @@ final class PreviewCard {
     }
 
     private static final long PREPARE_MS = 150;
-    private static final long SHOW_MS = 1400;
+    private static final long SHOW_MS = 4000;
 
     /** What every title's preview turned out to be, shared by all screens (home, libraries, search,
      *  Discover, title pages), so a title only has to be looked up once. */
@@ -92,7 +92,7 @@ final class PreviewCard {
     }
 
     private boolean enabled() {
-        return act.getSharedPreferences("reel_ui", Activity.MODE_PRIVATE).getBoolean("previews", true);
+        return act.getSharedPreferences("reel_ui", Activity.MODE_PRIVATE).getBoolean("previews", true) && !HomeActivity.quiet(act);
     }
 
     /** Source for library titles (see plexSource). */
@@ -174,7 +174,7 @@ final class PreviewCard {
                         android.animation.Keyframe.ofFloat(0f, 0f),
                         android.animation.Keyframe.ofFloat(0.45f, -10f),
                         android.animation.Keyframe.ofFloat(1f, 0f)));
-        g.setDuration(Motion.MEDIUM_MS);
+        g.setDuration(0); // no growing: the title page just dissolves in over the card
         g.setInterpolator(Motion.EASE);
         g.addListener(new android.animation.AnimatorListenerAdapter() {
             @Override
@@ -190,7 +190,6 @@ final class PreviewCard {
                     session = null;
                 }
                 open.run();
-                act.overridePendingTransition(0, 0);
                 handler.postDelayed(() -> stop(), 800);
             }
         });
