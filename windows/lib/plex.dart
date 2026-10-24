@@ -122,6 +122,31 @@ class PlexItem {
   final List<List<int>> intros = []; // [start, end] ms
   final List<List<int>> credits = [];
   final List<String> genres = [];
+  String tagline = '';
+  int addedAt = 0; // seconds since 1970
+  int leafCount = 0; // episodes in a show
+  int viewedLeafCount = 0;
+  String collName = ''; // the collection / franchise it belongs to, if any
+  String collFilter = ''; // e.g. "collection=123"
+  final List<List<String>> ratings = []; // [source, shown], e.g. ['RT', '92%']
+  final List<CastMember> directors = [];
+
+  /// Watched all the way through (a film or episode seen, or every episode of a show).
+  bool get isWatched {
+    if (type == 'show' || type == 'season') {
+      return leafCount > 0 && viewedLeafCount >= leafCount;
+    }
+    return viewCount > 0 && viewOffset <= 0;
+  }
+
+  /// Added in the last week and not started.
+  bool get isNew {
+    if (addedAt <= 0 || isWatched || viewOffset > 0 || viewedLeafCount > 0) {
+      return false;
+    }
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    return now - addedAt < 7 * 24 * 3600;
+  }
 
   bool get isPlayable =>
       (type == 'movie' || type == 'episode') && !key.startsWith('seerr');
@@ -185,7 +210,6 @@ class PlexItem {
     final at =
         '${s?.displayTitle ?? ''} ${s?.extendedTitle ?? ''} ${s?.title ?? ''}'
             .toLowerCase();
-    final ch = s?.channels ?? mAudioChannels;
     String? sound;
     if (at.contains('atmos')) {
       sound = 'Dolby Atmos';
@@ -213,18 +237,11 @@ class PlexItem {
       sound = 'AAC';
     }
     if (sound != null) out.add(sound);
-    if (ch >= 8) {
-      out.add('7.1');
-    } else if (ch >= 6) {
-      out.add('5.1');
-    } else if (ch == 2) {
-      out.add('Stereo');
-    }
     if (streamsOf(3).isNotEmpty) out.add('CC');
     return out;
   }
 
-  String get metaLine {
+  String metaLineFor({bool withRuntime = true}) {
     final p = <String>[];
     switch (type) {
       case 'movie':
@@ -247,9 +264,35 @@ class PlexItem {
     if (genres.isNotEmpty && type != 'episode')
       p.add(genres.take(2).join(', '));
     if (contentRating.isNotEmpty) p.add(contentRating);
-    if (duration > 0 && isPlayable) p.add(formatDuration(duration));
+    if (withRuntime && duration > 0 && isPlayable) {
+      p.add(formatDuration(duration));
+    }
     if (note != null) p.add(note!);
     return p.join(' · ');
+  }
+
+  String get metaLine => metaLineFor();
+
+  /// Turns Plex's rating + image id (e.g. rottentomatoes://image.rating.ripe) into a labelled score.
+  void _addRating(dynamic value, dynamic image) {
+    final v = double.tryParse('${value ?? ''}');
+    final img = (image ?? '').toString();
+    if (v == null || img.isEmpty) return;
+    String src, shown;
+    if (img.startsWith('rottentomatoes')) {
+      src = 'RT';
+      shown = '${(v * 10).round()}%';
+    } else if (img.startsWith('imdb')) {
+      src = 'IMDb';
+      shown = v.toStringAsFixed(1);
+    } else if (img.startsWith('themoviedb')) {
+      src = 'TMDb';
+      shown = '${(v * 10).round()}%';
+    } else {
+      return;
+    }
+    if (ratings.any((r) => r[0] == src)) return;
+    ratings.add([src, shown]);
   }
 
   static PlexItem fromJson(Map<String, dynamic> m) {
@@ -267,6 +310,30 @@ class PlexItem {
     i.gpThumb = m['grandparentThumb']?.toString();
     i.gpArt = m['grandparentArt']?.toString();
     i.librarySectionKey = m['librarySectionID']?.toString();
+    i.tagline = (m['tagline'] ?? '').toString();
+    i.addedAt = _int(m['addedAt']);
+    i.leafCount = _int(m['leafCount']);
+    i.viewedLeafCount = _int(m['viewedLeafCount']);
+    i._addRating(m['rating'], m['ratingImage']);
+    i._addRating(m['audienceRating'], m['audienceRatingImage']);
+    for (final c in (m['Collection'] as List? ?? const [])) {
+      final o = c as Map;
+      final f = (o['filter'] ?? '').toString();
+      final t = (o['tag'] ?? '').toString();
+      if (f.startsWith('collection=') && t.isNotEmpty) {
+        i.collName = t;
+        i.collFilter = f;
+        break;
+      }
+    }
+    for (final d in (m['Director'] as List? ?? const []).take(3)) {
+      final o = d as Map;
+      final name = (o['tag'] ?? '').toString();
+      final filter = (o['filter'] ?? '').toString();
+      if (name.isNotEmpty && filter.isNotEmpty) {
+        i.directors.add(CastMember(name, 'Director', o['thumb']?.toString(), filter));
+      }
+    }
     i.duration = _int(m['duration']);
     i.viewOffset = _int(m['viewOffset']);
     i.viewCount = _int(m['viewCount']);
@@ -541,6 +608,7 @@ class Plex {
   }
 
   static void signIn(String t) {
+    Prefs.profileChosen = false;
     _sessionOwnerToken = t;
     _sessionToken = t;
     if (Prefs.staySignedIn) {
@@ -583,13 +651,24 @@ class Plex {
     if (owner == null) throw Exception('Not signed in');
     final body = await _send('POST',
         'https://plex.tv/api/home/users/${Uri.encodeComponent(user.id)}/switch?X-Plex-Token=${Uri.encodeQueryComponent(owner)}');
-    final decoded = jsonDecode(body);
-    final selectedToken =
-        decoded is Map ? decoded['authToken']?.toString() : null;
+    String? selectedToken;
+    if (body.trimLeft().startsWith('<')) {
+      // plex.tv sometimes answers in XML: pull the token out of it
+      selectedToken = RegExp(r'(?:authenticationToken|authToken)="([^"]+)"')
+          .firstMatch(body)
+          ?.group(1);
+    } else {
+      final decoded = jsonDecode(body);
+      selectedToken = decoded is Map
+          ? (decoded['authToken'] ?? decoded['authentication_token'])
+              ?.toString()
+          : null;
+    }
     if (selectedToken == null || selectedToken.isEmpty)
       throw Exception('Plex did not return a profile token');
     _sessionToken = selectedToken;
     if (Prefs.staySignedIn) Prefs.token = selectedToken;
+    Prefs.profileChosen = Prefs.staySignedIn;
   }
 
   static void signOut() {
@@ -597,6 +676,7 @@ class Plex {
     _sessionOwnerToken = null;
     Prefs.token = null;
     Prefs.ownerToken = null;
+    Prefs.profileChosen = false;
     Prefs.server = null;
     Prefs.serverName = null;
   }
@@ -875,7 +955,7 @@ class Plex {
         '?path=${e('/library/metadata/$ratingKey')}'
         '&mediaIndex=0&partIndex=0&protocol=hls&fastSeek=1'
         '&directPlay=0&directStream=1&directStreamAudio=0&audioChannelCount=2'
-        '&maxVideoBitrate=4000&videoQuality=100&videoResolution=1280x720'
+        '&maxVideoBitrate=3500&videoQuality=100&videoResolution=1280x720'
         '&subtitleStreamID=0&subtitles=none'
         '&offset=${offsetMs ~/ 1000}&session=$session'
         '&X-Plex-Client-Profile-Extra=${e(profile)}'

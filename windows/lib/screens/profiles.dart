@@ -47,8 +47,7 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
     try {
       await Plex.switchHomeUser(user);
       if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const HomeScreen()));
+      Navigator.of(context).pushReplacement(fadeRoute(const HomeScreen()));
     } catch (e) {
       if (mounted) {
         setState(() => _error = 'Could not select ${user.title}.\n$e');

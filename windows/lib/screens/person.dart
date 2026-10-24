@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../plex.dart';
+import '../ui/motion.dart';
 import '../ui/preview.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
@@ -10,8 +11,17 @@ import 'detail.dart';
 class PersonScreen extends StatefulWidget {
   final String name;
   final String filter; // e.g. "actor=1234", as Plex gives it with the cast
+  final String subtitle;
 
-  const PersonScreen({super.key, required this.name, required this.filter});
+  /// Collections read best in release order; a person's page shows their newest work first.
+  final bool oldestFirst;
+
+  const PersonScreen(
+      {super.key,
+      required this.name,
+      required this.filter,
+      this.subtitle = 'In your library',
+      this.oldestFirst = false});
 
   @override
   State<PersonScreen> createState() => _PersonScreenState();
@@ -44,7 +54,8 @@ class _PersonScreenState extends State<PersonScreen> {
           if (seen.add(it.key)) all.add(it);
         }
       }
-      all.sort((a, b) => b.year.compareTo(a.year));
+      all.sort((a, b) =>
+          widget.oldestFirst ? a.year.compareTo(b.year) : b.year.compareTo(a.year));
       if (!mounted) return;
       setState(() {
         _items = all;
@@ -76,7 +87,7 @@ class _PersonScreenState extends State<PersonScreen> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(widget.name,
               style: reelText(h * 0.055, weight: FontWeight.w700)),
-          Text('In your library',
+          Text(widget.subtitle,
               style: reelText(h * 0.024, color: Reel.text2)),
           SizedBox(height: h * 0.02),
           Expanded(
@@ -111,7 +122,7 @@ class _PersonScreenState extends State<PersonScreen> {
                             autofocus: i == 0,
                             onFocusChange: (f) {
                               if (f) {
-                                Preview.focus(it);
+                                Preview.focus(it, delay: Motion.previewDelay);
                               } else {
                                 Preview.blur(it);
                               }

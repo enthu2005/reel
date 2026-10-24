@@ -406,6 +406,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         Plex.setWatched(it.key, true);
     }
     _panelScope.dispose();
+    _trickTimer?.cancel();
     _infoTimer?.cancel();
     if (_session != null) Plex.stopTranscode(_session!);
     _report?.cancel();
@@ -462,9 +463,59 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _commit = Timer(const Duration(milliseconds: 650), _commitScrub);
   }
 
+  // ---- Fast forward / rewind, the way Plex does it: only the timeline moves, at 2x / 4x / 8x / 16x
+  // (10 / 30 / 90 / 240 seconds of film per real second). Enter plays from there, Esc cancels.
+  static const _trickRate = [10, 30, 90, 240];
+  int _trickDir = 0; // -1 rewinding, 0 off, 1 forwarding
+  int _trickLvl = 0;
+  Timer? _trickTimer;
+  bool _trickWasPlaying = false;
+
+  void _trickPress(int dir) {
+    if (_trickDir == 0) {
+      _trickWasPlaying = _player.state.playing;
+      _player.pause();
+      _trickDir = dir;
+      _trickLvl = 0;
+    } else if (dir == _trickDir) {
+      if (_trickLvl < _trickRate.length - 1) _trickLvl++;
+    } else if (_trickLvl > 0) {
+      _trickLvl--; // the other way slows it down
+    } else {
+      _trickDir = dir; // already at the slowest: turn round
+    }
+    _commit?.cancel();
+    _scrubTo ??= _pos;
+    _trickTimer ??=
+        Timer.periodic(const Duration(milliseconds: 100), (_) => _trickTick());
+    _showOsd(stay: true);
+    setState(() {});
+  }
+
+  void _trickTick() {
+    if (!mounted || _trickDir == 0) return;
+    var t = (_scrubTo ?? _pos) +
+        Duration(milliseconds: _trickDir * _trickRate[_trickLvl] * 100);
+    if (t < Duration.zero) t = Duration.zero;
+    if (_dur > Duration.zero && t > _dur - const Duration(seconds: 2)) {
+      t = _dur - const Duration(seconds: 2);
+    }
+    setState(() => _scrubTo = t);
+  }
+
+  void _trickStop({required bool play}) {
+    _trickTimer?.cancel();
+    _trickTimer = null;
+    final was = _trickDir != 0;
+    _trickDir = 0;
+    _trickLvl = 0;
+    if (was && play && _trickWasPlaying) _player.play();
+  }
+
   void _commitScrub() {
     final t = _scrubTo;
     if (t == null) return;
+    _trickStop(play: true);
     _player.seek(t);
     setState(() {
       _scrubTo = null;
@@ -939,11 +990,26 @@ class _PlayerScreenState extends State<PlayerScreen> {
         return KeyEventResult.handled;
       }
     }
+    if (k == LogicalKeyboardKey.mediaRewind ||
+        k == LogicalKeyboardKey.mediaFastForward ||
+        k == LogicalKeyboardKey.bracketLeft ||
+        k == LogicalKeyboardKey.bracketRight) {
+      if (e is KeyDownEvent) {
+        _trickPress((k == LogicalKeyboardKey.mediaRewind ||
+                k == LogicalKeyboardKey.bracketLeft)
+            ? -1
+            : 1);
+      }
+      return KeyEventResult.handled;
+    }
     if (k == LogicalKeyboardKey.arrowLeft ||
-        k == LogicalKeyboardKey.arrowRight ||
-        k == LogicalKeyboardKey.mediaRewind ||
-        k == LogicalKeyboardKey.mediaFastForward) {
+        k == LogicalKeyboardKey.arrowRight) {
       if (!down) return KeyEventResult.handled;
+      if (_trickDir != 0) {
+        // while scrubbing fast, the arrows slow it down / speed it up like the other keys
+        if (e is KeyDownEvent) _trickPress(k == LogicalKeyboardKey.arrowLeft ? -1 : 1);
+        return KeyEventResult.handled;
+      }
       // Holding speeds up: 10 s steps, then 30 s, then 60 s.
       final held = e is KeyRepeatEvent
           ? (_heldSince ??= DateTime.now())
@@ -977,6 +1043,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (k == LogicalKeyboardKey.space ||
         k == LogicalKeyboardKey.keyK ||
         k == LogicalKeyboardKey.mediaPlayPause) {
+      if (_scrubTo != null && _trickDir != 0) {
+        _commit?.cancel();
+        _commitScrub();
+        return KeyEventResult.handled;
+      }
       _togglePlay();
       return KeyEventResult.handled;
     }
@@ -1017,6 +1088,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
     if (k == LogicalKeyboardKey.escape && _scrubTo != null) {
       _commit?.cancel();
+      _trickStop(play: true);
       setState(() => _scrubTo = null);
       return KeyEventResult.handled;
     }
@@ -1127,7 +1199,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           gradient: LinearGradient(
                               begin: Alignment.topCenter,
                               end: Alignment.bottomCenter,
-                              colors: [Color(0xB3000000), Color(0x00000000)]),
+                              colors: [Color(0x80000000), Color(0x00000000)]),
                         ),
                       ),
                     ),
@@ -1145,8 +1217,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                               end: Alignment.bottomCenter,
                               colors: [
                                 Color(0x00000000),
-                                Color(0x99000000),
-                                Color(0xE6000000)
+                                Color(0x55000000),
+                                Color(0xB3000000)
                               ]),
                         ),
                       ),
@@ -1176,8 +1248,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       _actionHint(h, Icons.keyboard_arrow_up_rounded,
                           'Audio & subtitles', () => _openPanel(1)),
                       SizedBox(width: h * 0.02),
-                      _actionHint(h, Icons.keyboard_arrow_down_rounded, 'Info',
-                          _toggleInfo),
+                      if (_episodes.isNotEmpty) ...[
+                        _actionHint(h, Icons.keyboard_arrow_down_rounded,
+                            'Episodes', () {
+                          setState(() => _queueOpen = true);
+                          _showOsd(stay: true);
+                        }),
+                        SizedBox(width: h * 0.02),
+                      ],
+                      _actionHint(
+                          h, Icons.info_outline_rounded, 'Info (I)', _toggleInfo),
                     ]),
                   ),
                   Positioned.fill(
@@ -1209,9 +1289,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       ),
                     ),
                   ),
+                  if (_episodes.length > 1)
                   Positioned(
-                    left: w * 0.04,
-                    bottom: _queueOpen ? h * 0.31 : h * 0.12,
+                    right: w * 0.05,
+                    bottom: _queueOpen ? h * 0.34 : h * 0.15,
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -1246,7 +1327,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                               decoration: BoxDecoration(
                                   color: Colors.white,
                                   borderRadius: BorderRadius.circular(h)),
-                              child: Text(_time(shown),
+                              child: Text(
+                                  _trickDir == 0
+                                      ? _time(shown)
+                                      : '${_time(shown)}   ${_trickDir > 0 ? '▶▶' : '◀◀'} ${2 << _trickLvl}×',
                                   style: reelText(h * 0.024,
                                       weight: FontWeight.w600,
                                       color: Colors.black)),
@@ -1507,18 +1591,26 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final label = episode.type == 'episode'
         ? 'S${episode.parentIndex} E${episode.index}'
         : 'Video';
-    return GestureDetector(
+    return _Hover(builder: (hover) => GestureDetector(
       onTap: selected ? null : () => _playQueueItem(episode),
       onLongPress: () => _queueActions(episode),
-      child: AnimatedContainer(
+      child: AnimatedScale(
+        scale: hover && !selected ? 1.04 : 1,
+        duration: const Duration(milliseconds: 140),
+        curve: Curves.easeOutCubic,
+        child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
         padding: EdgeInsets.all(h * 0.005),
         decoration: BoxDecoration(
-          color: selected ? const Color(0x36FFFFFF) : Colors.transparent,
+          color: selected
+              ? const Color(0x36FFFFFF)
+              : (hover ? const Color(0x24FFFFFF) : Colors.transparent),
           borderRadius: BorderRadius.circular(h * 0.012),
           border: Border.all(
-              color: selected ? Colors.white : const Color(0x22FFFFFF),
-              width: selected ? 2 : 1),
+              color: selected
+                  ? Colors.white
+                  : (hover ? const Color(0xCCFFFFFF) : const Color(0x22FFFFFF)),
+              width: selected || hover ? 2 : 1),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1566,7 +1658,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
           ],
         ),
       ),
-    );
+      ),
+    ));
   }
 
   // ------------------------------------------------------------ audio & subtitles
@@ -1761,7 +1854,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       Tooltip(
         message: label,
         child: Material(
-          color: const Color(0x33000000),
+          color: const Color(0x26FFFFFF),
           borderRadius: BorderRadius.circular(h * 0.03),
           child: InkWell(
             borderRadius: BorderRadius.circular(h * 0.03),
@@ -1785,7 +1878,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       Tooltip(
         message: label,
         child: Material(
-          color: const Color(0x33000000),
+          color: const Color(0x26FFFFFF),
           borderRadius: BorderRadius.circular(h * 0.03),
           child: InkWell(
             borderRadius: BorderRadius.circular(h * 0.03),
@@ -1804,7 +1897,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return Tooltip(
       message: label,
       child: Material(
-        color: enabled ? const Color(0x55000000) : const Color(0x22000000),
+        color: enabled ? const Color(0x2EFFFFFF) : const Color(0x14FFFFFF),
         borderRadius: BorderRadius.circular(h * 0.03),
         child: InkWell(
           borderRadius: BorderRadius.circular(h * 0.03),
@@ -1844,6 +1937,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final rows = <List<String>>[
       ['Title', widget.title ?? it?.displayTitle ?? ''],
       if (it != null) ['Quality', it.badges.join('  ·  ')],
+      if (it != null && it.directors.isNotEmpty)
+        ['Director', it.directors.map((d) => d.name).join(', ')],
+      if (it != null && it.cast.isNotEmpty)
+        ['Cast', it.cast.take(8).map((c) => c.name).join(', ')],
       ['Position', '${_time(_pos)} of ${_time(_dur)}'],
       ['Buffered ahead', '${dur(ahead)}${_buffering ? '   (buffering…)' : ''}'],
       if (speed != null)
@@ -2026,5 +2123,27 @@ class _PlayerScreenState extends State<PlayerScreen> {
             ),
           ),
         ),
+      );
+}
+
+
+/// Tells its child whether the mouse is over it, so cards can light up on hover.
+class _Hover extends StatefulWidget {
+  final Widget Function(bool hover) builder;
+  const _Hover({required this.builder});
+
+  @override
+  State<_Hover> createState() => _HoverState();
+}
+
+class _HoverState extends State<_Hover> {
+  bool _on = false;
+
+  @override
+  Widget build(BuildContext context) => MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _on = true),
+        onExit: (_) => setState(() => _on = false),
+        child: widget.builder(_on),
       );
 }

@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:math';
+import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -6,8 +8,10 @@ import 'package:flutter/services.dart';
 
 import '../main.dart' show isFullscreen, toggleFullscreen;
 import '../plex.dart';
+import '../prefs.dart';
 import '../ui/net_image.dart';
 import '../ui/preview.dart';
+import '../ui/motion.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 import 'detail.dart';
@@ -33,7 +37,7 @@ class _Row {
       this.big = false,
       this.titles = false,
       this.previews = true,
-      this.previewDelay = const Duration(milliseconds: 900)});
+      this.previewDelay = Motion.previewDelay});
 }
 
 /// Home: a big backdrop of whatever you're on, a glass tab bar, and rows of posters.
@@ -66,6 +70,10 @@ class _HomeScreenState extends State<HomeScreen> {
   PlexItem? get _hero => _heroN.value;
   set _hero(PlexItem? v) => _heroN.value = v;
   final _fadeN = ValueNotifier<double>(1.0);
+  // The background tints to whichever poster is focused.
+  final _ambientN = ValueNotifier<Color>(const Color(0xFF000000));
+  final Map<String, Color> _ambientCache = {};
+  final _quietN = ValueNotifier<bool>(Prefs.quiet);
   final _metaTick = ValueNotifier<int>(0);
 
   static String? _backdrop(PlexItem it) =>
@@ -156,7 +164,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   .toList();
               return keep.isEmpty
                   ? <_Row>[]
-                  : [_Row('Up Next', keep, landscape: true)];
+                  : [_Row('Continue Watching', keep, landscape: true)];
             }),
             for (final s in sections.where((s) =>
                 (s.type == 'movie' || s.type == 'show') && !s.hiddenFromHome))
@@ -319,7 +327,7 @@ class _HomeScreenState extends State<HomeScreen> {
       for (final r in rows)
         if (r.title.startsWith('Recently Added')) r.items,
       for (final r in rows)
-        if (r.title == 'Up Next') r.items,
+        if (r.title == 'Continue Watching') r.items,
     ];
     final seen = <String>{};
     final featured = <PlexItem>[];
@@ -336,7 +344,7 @@ class _HomeScreenState extends State<HomeScreen> {
               landscape: true,
               big: true,
               titles: true,
-              previewDelay: const Duration(seconds: 2)));
+              previewDelay: Motion.previewDelay));
     }
   }
 
@@ -355,7 +363,7 @@ class _HomeScreenState extends State<HomeScreen> {
         for (final m in l) MapEntry(m.key, m.title),
     ];
     final shows = <String>{};
-    for (final r in rows.where((r) => r.title == 'Up Next')) {
+    for (final r in rows.where((r) => r.title == 'Continue Watching')) {
       for (final e in r.items) {
         if (e.gpKey != null && shows.length < 2 && shows.add(e.gpKey!))
           seeds.add(MapEntry(e.gpKey!, e.gpTitle ?? e.title));
@@ -376,6 +384,34 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     rows.addAll(because);
+
+    // "More with …" / "Directed by …" from the last thing you watched
+    if (seedsUsed.isNotEmpty) {
+      try {
+        final seed = await Plex.metadata(seedsUsed.first.key);
+        final people = <MapEntry<String, CastMember>>[
+          if (seed.cast.isNotEmpty) MapEntry('More with', seed.cast.first),
+          if (seed.directors.isNotEmpty)
+            MapEntry('Directed by', seed.directors.first),
+        ];
+        for (final p in people) {
+          final lists = await Future.wait([
+            for (final s in secs.where((s) => s.type == 'movie' || s.type == 'show'))
+              safe(Plex.withPerson(s.key, p.value.filter)),
+          ]);
+          final seen = <String>{seed.key};
+          final found = <PlexItem>[
+            for (final l in lists)
+              for (final x in l)
+                if (seen.add(x.key)) x
+          ]..sort((a, b) => b.year.compareTo(a.year));
+          if (found.length >= 4) {
+            rows.add(_Row('${p.key} ${p.value.name}', found.take(20).toList(),
+                titles: true));
+          }
+        }
+      } catch (_) {}
+    }
   }
 
   Future<List<_Row>> _discoverRows() async {
@@ -448,12 +484,12 @@ class _HomeScreenState extends State<HomeScreen> {
       final deck = await Plex.onDeck();
       if (!mounted) return;
       setState(() {
-        final i = _rows.indexWhere((r) => r.title == 'Up Next');
+        final i = _rows.indexWhere((r) => r.title == 'Continue Watching');
         if (i >= 0) {
-          _rows[i] = _Row('Up Next', deck, landscape: true);
+          _rows[i] = _Row('Continue Watching', deck, landscape: true);
         } else if (deck.isNotEmpty) {
           _rows.insert(_rows.isNotEmpty && _rows.first.big ? 1 : 0,
-              _Row('Up Next', deck, landscape: true));
+              _Row('Continue Watching', deck, landscape: true));
         }
       });
     } catch (_) {}
@@ -468,13 +504,51 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       _fetchLogo(it);
       final art = _backdrop(it);
+      Uint8List? bytes;
       if (art != null) {
-        await ImageLoader.load(art)
+        bytes = await ImageLoader.load(art)
             .timeout(const Duration(seconds: 2), onTimeout: () => null);
       }
       if (!mounted || _pendingHero != it) return;
       _hero = it;
+      if (art != null && bytes != null) _tint(art, bytes);
     });
+  }
+
+  /// Works out a deep, muted version of the picture's main colour and fades the background to it.
+  Future<void> _tint(String key, Uint8List bytes) async {
+    var c = _ambientCache[key];
+    if (c == null) {
+      try {
+        final codec =
+            await instantiateImageCodec(bytes, targetWidth: 16, targetHeight: 9);
+        final img = (await codec.getNextFrame()).image;
+        final data = await img.toByteData(format: ImageByteFormat.rawRgba);
+        img.dispose();
+        if (data == null) return;
+        double r = 0, g = 0, b = 0, wsum = 0;
+        for (var i = 0; i + 3 < data.lengthInBytes; i += 4) {
+          final pr = data.getUint8(i), pg = data.getUint8(i + 1), pb = data.getUint8(i + 2);
+          final mx = max(pr, max(pg, pb)), mn = min(pr, min(pg, pb));
+          final wgt = 0.15 + (mx - mn) / 255.0; // colourful pixels count for more
+          r += pr * wgt;
+          g += pg * wgt;
+          b += pb * wgt;
+          wsum += wgt;
+        }
+        if (wsum == 0) return;
+        final hsl = HSLColor.fromColor(
+            Color.fromARGB(255, (r / wsum).round(), (g / wsum).round(), (b / wsum).round()));
+        c = hsl
+            .withLightness(hsl.lightness.clamp(0.16, 0.30).toDouble())
+            .withSaturation(hsl.saturation.clamp(0.25, 0.65).toDouble())
+            .toColor();
+        _ambientCache[key] = c;
+      } catch (_) {
+        return;
+      }
+    }
+    if (mounted) _ambientN.value = c;
   }
 
   void _fetchLogo(PlexItem it) {
@@ -621,6 +695,29 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: ValueListenableBuilder<Color>(
+                valueListenable: _ambientN,
+                builder: (c, col, _) => TweenAnimationBuilder<Color?>(
+                  tween: ColorTween(end: col),
+                  duration: const Duration(milliseconds: 900),
+                  builder: (c, v, _) => DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.bottomLeft,
+                        end: Alignment.topRight,
+                        colors: [
+                          (v ?? col).withOpacity(0.55),
+                          (v ?? col).withOpacity(0.0)
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
           Positioned(
             left: 0,
             right: 0,
@@ -732,6 +829,43 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Center(child: _tabBar(h)),
         ),
 
+        // Quiet mode: a small moon beside full screen. Mutes previews, saved until you change it.
+        Positioned(
+          top: h * 0.035,
+          right: w * 0.03 + h * 0.072,
+          child: ValueListenableBuilder<bool>(
+            valueListenable: _quietN,
+            builder: (c, quiet, _) => Pressable(
+              onPressed: () {
+                Prefs.quiet = !quiet;
+                _quietN.value = Prefs.quiet;
+                Preview.applyQuiet();
+              },
+              scrollAlignment: 0,
+              builder: (c, f) => Tooltip(
+                message: quiet
+                    ? 'Quiet mode is on: previews are muted'
+                    : 'Quiet mode (mute previews)',
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  padding: EdgeInsets.all(h * 0.012),
+                  decoration: BoxDecoration(
+                    color: f ? Colors.white : const Color(0x40000000),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: const Color(0x26FFFFFF), width: 1),
+                  ),
+                  child: Icon(
+                      quiet ? Icons.dark_mode_rounded : Icons.dark_mode_outlined,
+                      color: f
+                          ? Colors.black
+                          : (quiet ? const Color(0xFFFFD98A) : Colors.white70),
+                      size: h * 0.032),
+                ),
+              ),
+            ),
+          ),
+        ),
+
         // Full screen on/off (also F11, Alt+Enter, or Esc on this screen to leave)
         Positioned(
           top: h * 0.035,
@@ -774,7 +908,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _spotShown = it.key;
     _spotTimer?.cancel();
     // looks up the trailer (or best scene) now, and starts playing after the rest
-    Preview.focus(it, delay: const Duration(seconds: 2));
+    Preview.focus(it, delay: Motion.previewDelay);
   }
 
   void _spotMove(int d) {

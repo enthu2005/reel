@@ -10,6 +10,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../log.dart';
 import '../plex.dart';
 import '../prefs.dart';
+import 'motion.dart';
 
 /// Live previews, like the Fire TV app: rest on a card and after a moment its trailer (Plex's own,
 /// from the library's extras) or a scene from the film plays inside it, quietly. Open the title and
@@ -101,7 +102,7 @@ class Preview {
 
   /// A card got focus: start its preview after a short rest.
   static void focus(PlexItem it,
-      {Duration delay = const Duration(seconds: 2)}) {
+      {Duration delay = Motion.previewDelay}) {
     if (!Prefs.previews) return;
     if (_want == it.key || _timerKey == it.key) {
       _keep = false; // back on the card it came from: carry on playing here
@@ -160,6 +161,9 @@ class Preview {
     } catch (_) {}
   }
 
+  /// Quiet mode was switched: mute (or un-mute) whatever is playing right now.
+  static void applyQuiet() => _player?.setVolume(Prefs.quiet ? 0 : _level);
+
   static Future<void> start(PlexItem it) async {
     if (!Prefs.previews) return;
     final gen = ++_gen;
@@ -171,7 +175,7 @@ class Preview {
       if (gen != _gen || src == null) return;
       final p = _ensure();
       Log.w('PREVIEW opening  ${it.displayTitle}');
-      await p.setVolume(_level);
+      await p.setVolume(Prefs.quiet ? 0 : _level);
       await p.open(Media(src), play: true);
       // Only show it once frames are actually moving, so the card never goes black.
       await p.stream.position
@@ -339,13 +343,24 @@ class Preview {
 class PreviewVideo extends StatelessWidget {
   final String itemKey;
   final bool active;
+  final Duration fade;
+  final Curve ease;
 
-  const PreviewVideo({super.key, required this.itemKey, this.active = true});
+  const PreviewVideo(
+      {super.key,
+      required this.itemKey,
+      this.active = true,
+      this.fade = const Duration(milliseconds: 350),
+      this.ease = Curves.linear});
 
-  /// Wrapped in a Hero so it grows out of the card into the title page / full screen.
-  static Widget hero(String itemKey, {bool active = true}) => Hero(
-      tag: 'preview-$itemKey',
-      child: PreviewVideo(itemKey: itemKey, active: active));
+  /// No more growing out of the card (that was the laggy part of opening a title): the page just
+  /// fades in, and the preview keeps playing underneath it. [fade] is how long the picture takes to
+  /// give way to the video once it is actually playing.
+  static Widget hero(String itemKey,
+          {bool active = true,
+          Duration fade = const Duration(milliseconds: 350),
+          Curve ease = Curves.linear}) =>
+      PreviewVideo(itemKey: itemKey, active: active, fade: fade, ease: ease);
 
   @override
   Widget build(BuildContext context) {
@@ -355,7 +370,8 @@ class PreviewVideo extends StatelessWidget {
         final on = active && k == itemKey && Preview.video != null;
         return AnimatedOpacity(
           opacity: on ? 1 : 0,
-          duration: const Duration(milliseconds: 350),
+          duration: fade,
+          curve: ease,
           child: on
               ? SizedBox.expand(child: _filled(Preview.video!))
               : const SizedBox.expand(),

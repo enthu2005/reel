@@ -7,6 +7,7 @@ import 'package:window_manager/window_manager.dart';
 import 'log.dart';
 import 'plex.dart';
 import 'prefs.dart';
+import 'screens/home.dart';
 import 'screens/login.dart';
 import 'screens/profiles.dart';
 import 'warmup.dart';
@@ -145,7 +146,10 @@ class ReelApp extends StatelessWidget {
                 final show = canGoBack.value && !watching.value;
                 return AnimatedOpacity(
                   opacity: show ? 1 : 0,
-                  duration: const Duration(milliseconds: 180),
+                  // vanishes at once when a film starts, so it never doubles up with the player's own
+                  duration: watching.value
+                      ? Duration.zero
+                      : const Duration(milliseconds: 180),
                   child: IgnorePointer(
                     ignoring: !show,
                     child: HoverButton(Icons.arrow_back_rounded,
@@ -158,7 +162,11 @@ class ReelApp extends StatelessWidget {
           ),
         ]),
       ),
-      home: Plex.isReady ? const ProfilesScreen() : const LoginScreen(),
+      home: !Plex.isReady
+          ? const LoginScreen()
+          : (Prefs.staySignedIn && Prefs.profileChosen
+              ? const HomeScreen()
+              : const ProfilesScreen()),
     );
   }
 }

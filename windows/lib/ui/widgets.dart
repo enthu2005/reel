@@ -5,6 +5,7 @@ import '../log.dart';
 import '../plex.dart';
 import 'net_image.dart';
 import 'preview.dart';
+import 'motion.dart';
 import 'theme.dart';
 
 /// Anything you can move to with the arrow keys (or a remote / controller) and press with Enter.
@@ -179,8 +180,8 @@ class _HoverButtonState extends State<HoverButton> {
 
 /// A gentle cross-fade between pages (the preview video grows out of the card through it).
 Route<T> fadeRoute<T>(Widget page) => PageRouteBuilder<T>(
-      transitionDuration: const Duration(milliseconds: 380),
-      reverseTransitionDuration: const Duration(milliseconds: 300),
+      transitionDuration: Motion.pageFade,
+      reverseTransitionDuration: Motion.pageFade,
       pageBuilder: (_, __, ___) => page,
       transitionsBuilder: (_, a, __, child) => FadeTransition(
           opacity: CurvedAnimation(parent: a, curve: Curves.easeOut),
@@ -415,6 +416,31 @@ class PosterCard extends StatelessWidget {
     return parts.join(' · ');
   }
 
+  /// A white tick on what you've finished, or a NEW pill on what arrived this week.
+  Widget _mark(double h) {
+    if (item.isWatched) {
+      final d = h * 0.03;
+      return Container(
+        width: d,
+        height: d,
+        decoration: const BoxDecoration(
+            color: Color(0xB3000000), shape: BoxShape.circle),
+        child: Icon(Icons.check_rounded, color: Colors.white, size: d * 0.72),
+      );
+    }
+    if (item.isNew) {
+      return Container(
+        padding: EdgeInsets.symmetric(horizontal: h * 0.009, vertical: h * 0.003),
+        decoration: BoxDecoration(
+            color: Colors.white, borderRadius: BorderRadius.circular(h)),
+        child: Text('NEW',
+            style: reelText(h * 0.014,
+                weight: FontWeight.w800, color: Colors.black)),
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
   @override
   Widget build(BuildContext context) {
     final h = Reel.h(context);
@@ -529,6 +555,12 @@ class PosterCard extends StatelessWidget {
                                       ),
                                     ),
                                   ),
+                                if (!item.isSeerr && item.type != 'genre')
+                                  Positioned(
+                                    top: cardHeight * 0.07,
+                                    right: width * 0.05,
+                                    child: _mark(h),
+                                  ),
                                 // the light sheen on a focused card
                                 if (f)
                                   const DecoratedBox(
@@ -635,7 +667,7 @@ class CardRow extends StatefulWidget {
     this.previews = true,
     this.autofocusFirst = false,
     this.big = false,
-    this.previewDelay = const Duration(seconds: 2),
+    this.previewDelay = Motion.previewDelay,
     this.landscape = true,
     this.titles = false,
   });

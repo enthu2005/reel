@@ -291,7 +291,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Widget build(BuildContext context) {
     final h = Reel.h(context);
     final w = Reel.w(context);
-    const cols = 4;
+    const cols = 5;
     final gap = h * 0.022;
     final slot = (w * 0.9 - gap * (cols - 1)) / cols;
     final cw = slot;

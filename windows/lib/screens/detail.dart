@@ -9,6 +9,7 @@ import '../plex.dart';
 import '../prefs.dart';
 import '../ui/net_image.dart';
 import '../ui/preview.dart';
+import '../ui/motion.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 import 'player.dart';
@@ -33,6 +34,7 @@ class _DetailScreenState extends State<DetailScreen> {
   List<PlexItem> _episodes = [];
   List<PlexItem> _related = [];
   List<PlexItem> _similar = [];
+  List<PlexItem> _collection = []; // the rest of its franchise, oldest first
   int _season = -1; // 0 = all
   String? _error;
   String? _trailer;
@@ -224,9 +226,17 @@ class _DetailScreenState extends State<DetailScreen> {
           _similar = results[1];
         });
       }
+      if (it.collFilter.isNotEmpty && it.librarySectionKey != null) {
+        Plex.withPerson(it.librarySectionKey!, it.collFilter).then((l) {
+          final rest = l.where((x) => x.key != it.key).toList()
+            ..sort((a, b) => a.year.compareTo(b.year));
+          if (mounted && rest.isNotEmpty) setState(() => _collection = rest);
+        }).catchError((_) {});
+      }
       // The preview keeps playing behind the page if it came from the card; otherwise start one.
+
       if (Preview.wanted != it.key && Preview.showing.value != it.key) {
-        Preview.focus(it, delay: const Duration(seconds: 2));
+        Preview.focus(it, delay: Motion.previewDelay);
       }
       final k = it.type == 'episode' && it.gpKey != null ? it.gpKey! : it.key;
       final tr = await Plex.trailerUrl(k);
@@ -318,7 +328,9 @@ class _DetailScreenState extends State<DetailScreen> {
         child: Stack(children: [
           if (art != null)
             Positioned.fill(child: NetImage(art, decodeWidth: 1000)),
-          Positioned.fill(child: PreviewVideo.hero(widget.ratingKey)),
+          Positioned.fill(
+              child: PreviewVideo.hero(widget.ratingKey,
+                  fade: Motion.behindFade, ease: Motion.behindEase)),
           // the shading lightens while the preview plays, so you can see it
           Positioned.fill(
             child: _dimWhilePreview(const DecoratedBox(
@@ -390,13 +402,14 @@ class _DetailScreenState extends State<DetailScreen> {
                                 SizedBox(height: h * 0.014),
                                 SizedBox(
                                   width: w * 0.5,
-                                  child: Text(it.metaLine,
+                                  child: Text(it.metaLineFor(withRuntime: false),
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       style: reelText(h * 0.023,
                                           weight: FontWeight.w500,
                                           color: Reel.text2)),
                                 ),
+                                _ratingsStrip(it, h, w),
                                 if (it.badges.isNotEmpty) ...[
                                   SizedBox(height: h * 0.012),
                                   SizedBox(
@@ -431,6 +444,21 @@ class _DetailScreenState extends State<DetailScreen> {
                                                         url: _trailer,
                                                         title:
                                                             '${it.displayTitle} · Trailer')))),
+                                      if (it.collName.isNotEmpty &&
+                                          _collection.isNotEmpty)
+                                        PillButton(it.collName,
+                                            icon: Icons
+                                                .collections_bookmark_outlined,
+                                            onPressed: () {
+                                          Preview.stop();
+                                          Navigator.of(context).push(fadeRoute(
+                                              PersonScreen(
+                                                  name: it.collName,
+                                                  filter: it.collFilter,
+                                                  subtitle:
+                                                      'Collection · in release order',
+                                                  oldestFirst: true)));
+                                        }),
                                       if (target != null &&
                                           target.viewOffset > 0)
                                         PillButton('Start over',
@@ -526,7 +554,8 @@ class _DetailScreenState extends State<DetailScreen> {
                         ],
 
                         // Cast
-                        if (it.type == 'movie' && it.cast.isNotEmpty) ...[
+                        if ((it.type == 'movie' || it.type == 'show') &&
+            it.cast.isNotEmpty) ...[
                           Padding(
                             padding: EdgeInsets.only(
                                 left: w * 0.045 + h * 0.011, top: h * 0.03),
@@ -576,6 +605,18 @@ class _DetailScreenState extends State<DetailScreen> {
                             ]),
                           ),
                         ],
+                        if (_collection.isNotEmpty)
+                          CardRow(
+                            title: it.collName,
+                            items: _collection,
+                            landscape: true,
+                            titles: true,
+                            onPressed: (e) {
+                              Preview.handOff();
+                              Navigator.of(context).push(
+                                  fadeRoute(DetailScreen(ratingKey: e.key)));
+                            },
+                          ),
                         if (_similar.isNotEmpty)
                           CardRow(
                             title: 'Movies Like This',
@@ -620,6 +661,44 @@ class _DetailScreenState extends State<DetailScreen> {
           child: child,
         ),
       );
+
+  /// "RT 92%  ·  IMDb 7.8  ·  2h 15m" in one line under the title.
+  Widget _ratingsStrip(PlexItem it, double h, double w) {
+    final parts = <Widget>[];
+    void add(String label, String value) {
+      if (parts.isNotEmpty) {
+        parts.add(Text('  ·  ',
+            style: reelText(h * 0.023, color: Reel.text3)));
+      }
+      parts.add(Text(label,
+          style: reelText(h * 0.019,
+              weight: FontWeight.w700, color: Reel.text2)));
+      parts.add(Text(' $value',
+          style: reelText(h * 0.023,
+              weight: FontWeight.w600, color: Colors.white)));
+    }
+
+    for (final r in it.ratings) {
+      add(r[0], r[1]);
+    }
+    if (it.duration > 0 && it.isPlayable) {
+      if (parts.isNotEmpty) {
+        parts.add(Text('  ·  ',
+            style: reelText(h * 0.023, color: Reel.text3)));
+      }
+      parts.add(Text(formatDuration(it.duration),
+          style: reelText(h * 0.023,
+              weight: FontWeight.w600, color: Colors.white)));
+    }
+    if (parts.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: EdgeInsets.only(top: h * 0.012),
+      child: SizedBox(
+          width: w * 0.5,
+          child: Row(crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic, children: parts)),
+    );
+  }
 
   Widget _title(PlexItem it, double h) => Text(it.displayTitle,
       maxLines: 2,

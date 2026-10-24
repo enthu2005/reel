@@ -42,6 +42,14 @@ class Prefs {
       v == null ? _p.remove('serverName') : _p.setString('serverName', v);
 
   /// Send Dolby / DTS untouched to an HDMI receiver (mpv "spdif" passthrough, exclusive output).
+  /// Quiet mode: previews are muted and trailers don't start by themselves (the moon on Home).
+  /// A profile was picked and "stay signed in" is on: start straight on Home next time.
+  static bool get profileChosen => _p.getBool('profileChosen') ?? false;
+  static set profileChosen(bool v) => _p.setBool('profileChosen', v);
+
+  static bool get quiet => _p.getBool('quiet') ?? false;
+  static set quiet(bool v) => _p.setBool('quiet', v);
+
   static bool get passthrough => _p.getBool('passthrough') ?? false;
   static set passthrough(bool v) => _p.setBool('passthrough', v);
 
