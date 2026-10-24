@@ -9,18 +9,27 @@ $jbr = @("C:\Program Files\Android\Android Studio\jbr", "$env:LOCALAPPDATA\Progr
 if (-not $jbr) { throw "Couldn't find Android Studio's Java (jbr folder). Edit this script with its path." }
 $env:JAVA_HOME = $jbr
 
-# Gradle: reuse the copy Android Studio already downloaded
-$gradle = Get-ChildItem "$HOME\.gradle\wrapper\dists\gradle-8.9-bin\*\gradle-8.9\bin\gradle.bat" -ErrorAction SilentlyContinue |
-    Select-Object -First 1
-if (-not $gradle) { throw "Couldn't find Gradle 8.9 in $HOME\.gradle. Build once in Android Studio first." }
+# Use the project's Gradle wrapper so the app builds with the compatible version it was created for.
+$gradlew = Join-Path $PSScriptRoot "gradlew.bat"
+if (-not (Test-Path $gradlew)) { throw "Couldn't find gradlew.bat in $PSScriptRoot" }
 
-# adb: from the Android SDK
-$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-if (-not (Test-Path $adb)) { $adb = ".\adb.exe" }
+# adb: prefer the downloaded platform-tools folder you already have, then fall back to the SDK path.
+$adbCandidates = @(
+    "C:\Users\enthu\Downloads\platform-tools-latest-windows\platform-tools\adb.exe",
+    "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe",
+    ".\adb.exe"
+)
+$adb = $adbCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+if (-not $adb) { throw "Couldn't find adb.exe. Put it in your platform-tools folder or update this script's path." }
 
-& $gradle.FullName assembleDebug
+& $gradlew assembleDebug
 if ($LASTEXITCODE -ne 0) { throw "Build failed, see the errors above." }
 
+Write-Host "Connecting to Fire TV at $fireTv..."
 & $adb connect $fireTv
+if ($LASTEXITCODE -ne 0) { throw "Could not connect to the Fire TV. Check that ADB debugging is enabled and the Fire Stick is on the same network." }
+
 & $adb -s $fireTv install -r "app\build\outputs\apk\debug\app-debug.apk"
+if ($LASTEXITCODE -ne 0) { throw "Install failed. Check the Fire TV connection and the generated APK path." }
+
 Write-Host "Done. Open Reel on the Fire TV."
