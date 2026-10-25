@@ -101,8 +101,8 @@ class _HomeScreenState extends State<HomeScreen> {
       if ((a - _fadeN.value).abs() > 0.02) _fadeN.value = a;
       if (!_spot) return;
       // A full-screen video playing behind rows you're scrolling through is what made going back up
-      // stutter, so it stops as soon as the banner is out of the way and comes back when you return.
-      final away = _scroll.offset > h * 0.35;
+      // stutter, so it stops the moment the page starts to move and comes back once it is home again.
+      final away = _scroll.offset > h * 0.03;
       if (away != _spotAway) {
         _spotAway = away;
         _spotShown = null;
@@ -525,7 +525,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       if (!mounted || _pendingHero != it) return;
       _hero = it;
-      if (art != null && bytes != null) _tint(art, bytes);
+      if (art != null && bytes != null && !_spot) _tint(art, bytes);
     });
   }
 
@@ -671,7 +671,15 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final h = Reel.h(context);
     final w = Reel.w(context);
-    return Scaffold(
+    // Flutter's own focus movement also jumps the list to the new selection (no animation), and then
+    // our smooth scroll runs on top of it: that jump-then-slide is the stutter. Our cards and buttons
+    // already scroll themselves smoothly, so the built-in jump is switched off here.
+    return FocusTraversalGroup(
+      policy: ReadingOrderTraversalPolicy(
+          requestFocusCallback: (node,
+                  {alignment, alignmentPolicy, curve, duration}) =>
+              node.requestFocus()),
+      child: Scaffold(
       body: Stack(children: [
         // Backdrop of whatever you're on (the Featured spotlight draws its own)
         if (!_spot) ...[
@@ -913,12 +921,14 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ]),
-    );
+    ));
   }
 
   /// Rest on the banner for a few seconds and its trailer (or a scene) starts playing behind it.
   void _spotPreview(PlexItem it) {
     if (_spotShown == it.key) return;
+    // not while the page is still sliding: the scroll listener starts it once it has arrived
+    if (_scroll.hasClients && _scroll.offset > Reel.h(context) * 0.03) return;
     _spotShown = it.key;
     _spotTimer?.cancel();
     // looks up the trailer (or best scene) now, and starts playing after the rest
@@ -940,9 +950,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final it = items[_spotIdx.value % items.length];
     if (f) {
       if (_scroll.hasClients && _scroll.offset > 0) {
+        // An even glide: an ease-out slows to a sub-pixel crawl at the end, which looks choppy on a
+        // fast monitor.
         _scroll.animateTo(0,
-            duration: const Duration(milliseconds: 320),
-            curve: Curves.easeOutCubic);
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeInOutSine);
       }
       _spotShown = null;
       _spotPreview(it);
