@@ -53,3 +53,19 @@ var v: Cardinal;
 begin
   Result := RegQueryDWordValue(HKLM, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64', 'Installed', v) and (v = 1);
 end;
+
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    if not UninstallSilent then
+      if MsgBox('Also remove Reel''s saved settings and sign-in from this PC?' + #13#10 + #13#10 +
+                'Choose Yes for a completely clean removal (you will have to sign in again if you reinstall). ' +
+                'Choose No to keep them.', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+      begin
+        DelTree(ExpandConstant('{userappdata}\com.enthu'), True, True, True);
+        DelTree(ExpandConstant('{localappdata}\Reel'), True, True, True);
+      end;
+  end;
+end;
