@@ -99,8 +99,8 @@ class _PressableState extends State<Pressable> {
           Scrollable.ensureVisible(context,
               alignment: widget.scrollAlignment,
               alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
-              duration: const Duration(milliseconds: 220),
-              curve: Curves.easeOutCubic);
+              duration: const Duration(milliseconds: 170),
+              curve: Curves.easeInOutSine);
         }
       },
       child: widget.builder(context, _focused),
@@ -631,10 +631,7 @@ class PosterCard extends StatelessWidget {
 
           // Always built the same way, whether or not this card has focus: swapping the shape of the
           // widgets underneath threw away the picture that had already been fetched and started again.
-          return ValueListenableBuilder<String?>(
-            valueListenable: Preview.showing,
-            builder: (c2, playing, _) => card(live ? playing : null),
-          );
+          return _LiveShowing(live: live, builder: card);
         },
       ),
     );
@@ -797,4 +794,39 @@ class _CardRowState extends State<CardRow> {
       ),
     ]);
   }
+}
+
+
+/// Hands a card the key of the preview that is showing, but only wakes the card up for it when the
+/// card is the live one. Before, every card on the page rebuilt every time any preview started or
+/// stopped (dozens of cards at once), which is what made scrolling stutter at those moments.
+class _LiveShowing extends StatefulWidget {
+  final bool live;
+  final Widget Function(String? playing) builder;
+  const _LiveShowing({required this.live, required this.builder});
+
+  @override
+  State<_LiveShowing> createState() => _LiveShowingState();
+}
+
+class _LiveShowingState extends State<_LiveShowing> {
+  @override
+  void initState() {
+    super.initState();
+    Preview.showing.addListener(_changed);
+  }
+
+  @override
+  void dispose() {
+    Preview.showing.removeListener(_changed);
+    super.dispose();
+  }
+
+  void _changed() {
+    if (widget.live && mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      widget.builder(widget.live ? Preview.showing.value : null);
 }

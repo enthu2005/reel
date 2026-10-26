@@ -332,7 +332,14 @@ class Preview {
     crop.value = null;
     _keep = false;
     _show(null);
-    _player?.stop();
+    // Silent and hidden at once, but the actual stop waits until the page has finished moving (and
+    // is skipped if something new has started since): stopping the player in the middle of a scroll
+    // is a hitch you can feel.
+    final pl = _player;
+    pl?.setVolume(0);
+    Future.delayed(const Duration(milliseconds: 450), () {
+      if (_want == null && _timerKey == null) pl?.stop();
+    });
     final s = _session;
     _session = null;
     if (s != null) Plex.stopTranscode(s);
