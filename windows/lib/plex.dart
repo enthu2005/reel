@@ -533,6 +533,12 @@ class Plex {
             }
             local.add(uri);
           } else {
+            final addr = (c['address'] ?? '').toString();
+            if (addr.isNotEmpty) {
+              // By public IP: works even where plex.direct names are blocked by the other network's DNS
+              remote.add('https://$addr:${c['port'] ?? 32400}');
+              remote.add('http://$addr:${c['port'] ?? 32400}');
+            }
             remote.add(uri);
           }
         }
