@@ -1289,10 +1289,17 @@ public class PlayerActivity extends Activity {
         // Holding a huge buffer starves the decoder (green lines, stutter, "low memory" in the system log),
         // so keep it modest: about 20 to 30 seconds of a big 4K film, a little more of anything smaller.
         long heap = Runtime.getRuntime().maxMemory();
-        long cap = Math.max(64L * 1024 * 1024, Math.min(heap / 4, 96L * 1024 * 1024));
+        final boolean keepFull = BigBuffer.enabled(this) && !transcode && item != null && item.partKey != null;
+        // With the extra large buffer the memory part may be bigger (it is topped up from the on-device store).
+        long cap = keepFull
+                ? Math.max(96L * 1024 * 1024, Math.min(heap / 3, 224L * 1024 * 1024))
+                : Math.max(64L * 1024 * 1024, Math.min(heap / 4, 96L * 1024 * 1024));
         bufferCapMb = (int) (cap / (1024 * 1024));
+        // Normally the player fills to 60 s, stops, and only starts again when it has dropped to 30 s (so the
+        // buffer saws between 60 and 30). With the extra large buffer the data is already on the device, so keep
+        // topping the memory buffer up all the time instead: it stays full.
         pb.setLoadControl(new androidx.media3.exoplayer.DefaultLoadControl.Builder()
-                .setBufferDurationsMs(30_000, 60_000, 2_500, 5_000)
+                .setBufferDurationsMs(keepFull ? 300_000 : 30_000, keepFull ? 300_000 : 60_000, 2_500, 5_000)
                 .setTargetBufferBytes((int) cap)
                 .setPrioritizeTimeOverSizeThresholds(false)
                 .build());
@@ -2855,6 +2862,11 @@ public class PlayerActivity extends Activity {
         sb.append("Dropped   ").append(dropped).append(" frames\n");
         sb.append("Underruns ").append(underruns).append('\n');
         sb.append("Buffered  ").append(player.getTotalBufferedDuration() / 1000).append(" s\n");
+        if (bigBuffer != null && !transcoding && BigBuffer.enabled(this)) {
+            long ram = player.getTotalBufferedDuration() / 1000;
+            long disk = bigBuffer.aheadSeconds();
+            sb.append("Ahead     ").append(Math.max(ram, disk)).append(" s  (").append(ram).append(" s of it already in memory)\n");
+        }
         try {
             Runtime rt = Runtime.getRuntime();
             long heapUsed = rt.totalMemory() - rt.freeMemory();
@@ -2870,7 +2882,7 @@ public class PlayerActivity extends Activity {
                 sb.append("Disk buf  ").append(String.format(Locale.US, "%.2f", BigBuffer.usedBytes() / 1073741824.0))
                         .append(" of 3 GB stored");
                 if (bigBuffer != null && !transcoding) {
-                    sb.append("  (").append(bigBuffer.ahead() >> 20).append(" MB ahead)");
+                    sb.append("  (").append(bigBuffer.ahead() >> 20).append(" MB ahead, ").append(bigBuffer.status()).append(")");
                 }
                 sb.append('\n');
             } else {

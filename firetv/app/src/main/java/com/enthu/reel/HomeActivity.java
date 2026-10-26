@@ -2286,13 +2286,26 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         setYoutubeVolume(previewVolume(this));
     }
 
+    // Back that was used up closing a full-screen preview: its key-up must not also jump to the top bar
+    private boolean swallowBackUp;
+
     @Override
     public boolean dispatchKeyEvent(KeyEvent e) {
+        if (e.getKeyCode() == KeyEvent.KEYCODE_BACK && e.getAction() == KeyEvent.ACTION_UP && swallowBackUp) {
+            swallowBackUp = false;
+            return true;
+        }
+        // Up on the top bar stays on the tab you are on (it used to wander off to the moon / Settings)
+        if (e.getKeyCode() == KeyEvent.KEYCODE_DPAD_UP && !heroFull && !previewFullscreen) {
+            View f = getCurrentFocus();
+            if (isNavTab(f) || f == cornerMoon || f == cornerSettings) return true;
+        }
         if (heroFull) {
             // Full-screen spotlight preview: OK opens the title, anything else goes back to the page
             if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
                 int k = e.getKeyCode();
                 boolean ok = k == KeyEvent.KEYCODE_DPAD_CENTER || k == KeyEvent.KEYCODE_ENTER;
+                if (k == KeyEvent.KEYCODE_BACK) swallowBackUp = true;
                 exitHeroFull();
                 if (ok) openDetail(current);
             }
@@ -2332,6 +2345,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                         expandAndOpen(focusedItem);
                     }
                 } else {
+                    if (k == KeyEvent.KEYCODE_BACK) swallowBackUp = true;
                     resumePreviewIfPaused();
                     shrinkPreview();
                 }

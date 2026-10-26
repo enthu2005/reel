@@ -330,6 +330,19 @@ public class SettingsActivity extends ReelActivity {
                     render(false);
                 });
 
+        if (bigBuf) {
+            int mbit = prefs.getInt("bigBufferMbit", 25);
+            row("Buffer download speed", mbit <= 0 ? "No limit" : "Up to " + mbit + " Mbit/s",
+                    "How fast the extra large buffer may download in the background. A lower limit leaves more of your "
+                            + "server's upload free for other people streaming from it. Press to change.",
+                    v -> {
+                        int cur = prefs.getInt("bigBufferMbit", 25);
+                        int next = cur == 10 ? 25 : cur == 25 ? 40 : cur == 40 ? 0 : 10;
+                        prefs.edit().putInt("bigBufferMbit", next).apply();
+                        render(false);
+                    });
+        }
+
         boolean tun = prefs.getBoolean("tunneled", false);
         row("Tunneled video", tun ? "On" : "Off",
                 "Sends the picture straight to the Fire TV's video chip, the way some other apps do. Try this if a 4K "
