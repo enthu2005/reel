@@ -592,7 +592,9 @@ public final class Plex {
         final int n = tryList.size();
         final boolean[] answered = new boolean[n];
         final CountDownLatch latch = new CountDownLatch(n);
-        ExecutorService pool = Executors.newFixedThreadPool(Math.min(n, 12));
+        // All at once: with dozens of addresses (many of them home-network ones that can never answer away from
+        // home), a small pool timed out before it ever reached the remote / relay addresses at the end of the list.
+        ExecutorService pool = Executors.newFixedThreadPool(Math.min(n, 100));
         for (int i = 0; i < n; i++) {
             final int idx = i;
             pool.execute(() -> {
@@ -606,7 +608,7 @@ public final class Plex {
                 }
             });
         }
-        latch.await(8, TimeUnit.SECONDS);
+        latch.await(9, TimeUnit.SECONDS);
         pool.shutdownNow();
 
         for (int i = 0; i < n; i++) {

@@ -26,8 +26,8 @@ import java.net.URL;
 final class BigBuffer {
     static final long MAX_BYTES = 3L * 1024 * 1024 * 1024;
     private static final long AHEAD_BYTES = 2_600L * 1024 * 1024;   // how far past the playhead to fetch
-    private static final long CHUNK = 8L * 1024 * 1024;
-    private static final long SKIP_BYTES = 100L * 1024 * 1024;      // leave the first stretch to the player itself
+    private static final long CHUNK = 16L * 1024 * 1024;
+    private static final long SKIP_BYTES = 16L * 1024 * 1024;       // leave the first stretch to the player itself
 
     private static SimpleCache cache;
     private static String cachedFor = "";
@@ -36,6 +36,20 @@ final class BigBuffer {
     private volatile boolean stop;
     private volatile long posMs;
     private Thread thread;
+    private volatile String status = "starting";
+
+    private volatile long fileLen;
+    private volatile long fileDurMs;
+
+    /** About how many seconds of video the stored-ahead bytes cover. */
+    long aheadSeconds() {
+        if (fileLen <= 0 || fileDurMs <= 0) return 0;
+        return (long) ((double) ahead() / fileLen * fileDurMs / 1000.0);
+    }
+
+    String status() {
+        return status;
+    }
 
     static boolean enabled(Context c) {
         return c.getSharedPreferences("reel_ui", Context.MODE_PRIVATE).getBoolean("bigBuffer", false);
@@ -97,7 +111,7 @@ final class BigBuffer {
         stop();
         stop = false;
         final CacheDataSource.Factory f = factory(c, filmKey);
-        thread = new Thread(() -> run(f, url, durationMs, filmKey), "ReelBigBuffer");
+        thread = new Thread(() -> run(c, f, url, durationMs, filmKey), "ReelBigBuffer");
         thread.setDaemon(true);
         thread.start();
     }
@@ -109,9 +123,20 @@ final class BigBuffer {
         if (t != null) t.interrupt();
     }
 
-    private void run(CacheDataSource.Factory f, String url, long durationMs, String filmKey) {
-        long length = contentLength(url);
-        if (length <= 0 || durationMs <= 0) return;
+    private void run(Context c, CacheDataSource.Factory f, String url, long durationMs, String filmKey) {
+        long length = -1;
+        for (int i = 0; i < 5 && !stop && length <= 0; i++) {
+            length = contentLength(url);
+            if (length <= 0) {
+                status = "no file size (try " + (i + 1) + ")";
+                try { Thread.sleep(1500); } catch (InterruptedException ie) { return; }
+            }
+        }
+        if (length <= 0) return;
+        if (durationMs <= 0) durationMs = 2L * 60 * 60 * 1000;
+        fileLen = length;
+        fileDurMs = durationMs;
+        status = "running";
         Uri uri = Uri.parse(url);
         CacheDataSource ds = f.createDataSource();
         long frontier = -1;
@@ -124,19 +149,28 @@ final class BigBuffer {
                 lastPlayhead = here;
                 if (jumped) frontier = Math.min(length, here + SKIP_BYTES);
                 long target = Math.min(length, here + AHEAD_BYTES);
-                aheadBytes = frontier - here;
+                aheadBytes = Math.max(0, frontier - here - SKIP_BYTES);
                 if (frontier >= target) {
                     Thread.sleep(2000);
                     continue;
                 }
                 long n = Math.min(CHUNK, length - frontier);
+                long t0 = System.nanoTime();
                 new CacheWriter(ds, new DataSpec.Builder().setUri(uri).setPosition(frontier).setLength(n).build(),
                         null, null).cache();
                 frontier += n;
+                int mbit = c.getSharedPreferences("reel_ui", Context.MODE_PRIVATE).getInt("bigBufferMbit", 25);
+                if (mbit > 0) {
+                    long minMs = n * 8000L / ((long) mbit * 1_000_000L);
+                    long tookMs = (System.nanoTime() - t0) / 1_000_000L;
+                    if (tookMs < minMs) Thread.sleep(minMs - tookMs);
+                }
+                status = "ok";
             } catch (InterruptedException e) {
                 return;
             } catch (Throwable e) {
                 // network hiccup: try again in a moment
+                status = "err " + e.getClass().getSimpleName() + ": " + String.valueOf(e.getMessage());
                 try {
                     Thread.sleep(3000);
                 } catch (InterruptedException ie) {
