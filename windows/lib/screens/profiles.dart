@@ -29,11 +29,22 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
     try {
       final users = await Plex.homeUsers();
       if (!mounted) return;
+      if (users.length <= 1) {
+        // Not a Plex Home (or only one profile): nothing to choose, go straight in
+        Navigator.of(context).pushReplacement(fadeRoute(const HomeScreen()));
+        return;
+      }
       setState(() {
         _users = users;
         _loading = false;
       });
     } catch (e) {
+      final msg = '$e';
+      if (mounted && (msg.contains('HTTP 401') || msg.contains('HTTP 403') || msg.contains('HTTP 404'))) {
+        // A shared (friend) account has no Plex Home profiles: just continue with its own sign-in
+        Navigator.of(context).pushReplacement(fadeRoute(const HomeScreen()));
+        return;
+      }
       if (mounted) {
         setState(() {
           _loading = false;
