@@ -6,6 +6,7 @@ import 'dart:isolate';
 import 'package:http/http.dart' as http;
 
 import 'net.dart';
+import 'log.dart';
 import 'prefs.dart';
 
 /// One audio, video or subtitle stream in a file.
@@ -475,7 +476,12 @@ class Plex {
     req.headers.addAll(headers);
     final res = await _client.send(req).timeout(timeout);
     final body = await res.stream.bytesToString().timeout(timeout);
-    if (res.statusCode >= 400) throw Exception('HTTP ${res.statusCode}');
+    if (res.statusCode >= 400) {
+      final u = Uri.parse(url);
+      final what = '${u.host.endsWith('plex.tv') ? 'plex.tv' : 'server'}${u.path}';
+      Log.w('HTTP ${res.statusCode}  $method $what');
+      throw Exception('HTTP ${res.statusCode} ($what)');
+    }
     return body;
   }
 
@@ -533,12 +539,6 @@ class Plex {
             }
             local.add(uri);
           } else {
-            final addr = (c['address'] ?? '').toString();
-            if (addr.isNotEmpty) {
-              // By public IP: works even where plex.direct names are blocked by the other network's DNS
-              remote.add('https://$addr:${c['port'] ?? 32400}');
-              remote.add('http://$addr:${c['port'] ?? 32400}');
-            }
             remote.add(uri);
           }
         }
@@ -636,7 +636,10 @@ class Plex {
     req.headers.addAll({...headers, 'X-Plex-Token': owner});
     final res = await _client.send(req).timeout(const Duration(seconds: 15));
     final body = await res.stream.bytesToString();
-    if (res.statusCode >= 400) throw Exception('HTTP ${res.statusCode}');
+    if (res.statusCode >= 400) {
+      Log.w('HTTP ${res.statusCode}  GET plex.tv/api/v2/home/users');
+      throw Exception('HTTP ${res.statusCode} (plex.tv/api/v2/home/users)');
+    }
     final decoded = jsonDecode(body);
     final raw = decoded is List
         ? decoded

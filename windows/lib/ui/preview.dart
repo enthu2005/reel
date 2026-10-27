@@ -322,6 +322,24 @@ class Preview {
     return Rect.fromLTRB(left / w, top / h, 1 - right / w, 1 - bottom / h);
   }
 
+  /// App is closing: silence and release the preview player so nothing keeps playing in the background.
+  static Future<void> shutdown() async {
+    _timer?.cancel();
+    _timer = null;
+    _gen++;
+    _want = null;
+    final pl = _player;
+    _player = null;
+    final sid = _session;
+    _session = null;
+    try {
+      if (sid != null) Plex.stopTranscode(sid);
+      await pl?.setVolume(0);
+      await pl?.stop();
+      await pl?.dispose();
+    } catch (_) {}
+  }
+
   static void stop() {
     if (_want != null) Log.w('PREVIEW stopped');
     _timer?.cancel();

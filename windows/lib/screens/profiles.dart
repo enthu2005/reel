@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../log.dart';
 import '../plex.dart';
 import '../ui/net_image.dart';
 import '../ui/theme.dart';
@@ -40,7 +41,8 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
       });
     } catch (e) {
       final msg = '$e';
-      if (mounted && (msg.contains('HTTP 401') || msg.contains('HTTP 403') || msg.contains('HTTP 404'))) {
+      Log.w('profiles: $msg');
+      if (mounted) {
         // A shared (friend) account has no Plex Home profiles: just continue with its own sign-in
         Navigator.of(context).pushReplacement(fadeRoute(const HomeScreen()));
         return;

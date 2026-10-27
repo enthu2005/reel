@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
@@ -11,6 +12,7 @@ import 'screens/home.dart';
 import 'screens/login.dart';
 import 'screens/profiles.dart';
 import 'warmup.dart';
+import 'ui/preview.dart';
 import 'ui/theme.dart';
 import 'ui/widgets.dart';
 
@@ -48,6 +50,8 @@ Future<void> main() async {
   PaintingBinding.instance.imageCache.maximumSize = 1200;
   MediaKit.ensureInitialized();
   await windowManager.ensureInitialized();
+  await windowManager.setPreventClose(true);
+  windowManager.addListener(_CloseHandler());
   await Prefs.load();
   Log.w(
       'posters: ${Prefs.imgOriginal ? 'original files' : 'resized by the server'}');
@@ -67,6 +71,26 @@ Future<void> main() async {
     if (Prefs.startFullscreen) await setFullscreen(true);
   });
   runApp(const ReelApp());
+}
+
+/// Closing the window must end the whole app: stop the preview player, then exit the process,
+/// so no sound carries on in the background.
+class _CloseHandler with WindowListener {
+  bool _closing = false;
+
+  @override
+  void onWindowClose() async {
+    if (_closing) return;
+    _closing = true;
+    watching.value = false;
+    try {
+      await Preview.shutdown().timeout(const Duration(seconds: 2));
+    } catch (_) {}
+    try {
+      await Log.flush();
+    } catch (_) {}
+    exit(0);
+  }
 }
 
 class BackIntent extends Intent {
