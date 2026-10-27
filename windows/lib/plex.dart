@@ -568,20 +568,34 @@ class Plex {
     // Try them all at once, then take the best (earliest in the list) that answered.
     final ok = List<bool>.filled(candidates.length, false);
     final ms = List<int>.filled(candidates.length, -1);
+    final why = List<String>.filled(candidates.length, '');
     await Future.wait(List.generate(candidates.length, (i) async {
       final sw = Stopwatch()..start();
       try {
-        await _send('GET', '${candidates[i][0]}/identity',
-            timeout: const Duration(seconds: 5));
-        ok[i] = true;
-        ms[i] = sw.elapsedMilliseconds;
-      } catch (_) {}
+        // Just "is anything there?": no token sent, so a wrong or old one can't make a good address look dead.
+        final req = http.Request('GET', Uri.parse('${candidates[i][0]}/identity'));
+        req.headers['Accept'] = 'application/json';
+        req.headers['X-Plex-Client-Identifier'] = Prefs.clientId;
+        final res = await _client.send(req).timeout(const Duration(seconds: 6));
+        await res.stream.drain<void>().timeout(const Duration(seconds: 6));
+        if (res.statusCode == 200 || res.statusCode == 401 || res.statusCode == 403) {
+          ok[i] = true;
+          ms[i] = sw.elapsedMilliseconds;
+        } else {
+          why[i] = 'HTTP ${res.statusCode}';
+        }
+      } on TimeoutException {
+        why[i] = 'timed out';
+      } catch (e) {
+        final m = '$e';
+        why[i] = m.length > 60 ? m.substring(0, 60) : m;
+      }
     })).timeout(const Duration(seconds: 9), onTimeout: () => []);
     // What was tried, for Settings: "local http ✗ · local https ✓ 12 ms · remote ✓ 95 ms"
     Prefs.serverTest = [
       for (var i = 0; i < candidates.length; i++)
         '${candidates[i][2]} ${candidates[i][0].startsWith('https://') ? (candidates[i][0].contains('plex.direct') ? 'name' : 'https') : 'http'} '
-            '${ok[i] ? '✓ ${ms[i]} ms' : '✗'}'
+            '${ok[i] ? '✓ ${ms[i]} ms' : '✗ ${why[i]}'}'
     ].join('  ·  ');
     // Your own server always wins, even if someone else's answers quicker: picking a friend's server
     // would show their library and leave your own titles missing. If you've chosen one by hand in
@@ -619,10 +633,13 @@ class Plex {
       Prefs.serverKind = candidates[best][2];
       return;
     }
-    throw Exception('Found your server but none of its addresses answered');
+    Log.w('findServer failed: ${Prefs.serverTest}');
+    final shown = Prefs.serverTest.split('  ·  ').take(4).join('\n');
+    throw Exception('Found your server but none of its addresses answered\n$shown');
   }
 
   static void signIn(String t) {
+    Prefs.serverToken = '';
     Prefs.profileChosen = false;
     _sessionOwnerToken = t;
     _sessionToken = t;
