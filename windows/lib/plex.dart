@@ -634,7 +634,11 @@ class Plex {
       return;
     }
     Log.w('findServer failed: ${Prefs.serverTest}');
-    final shown = Prefs.serverTest.split('  ·  ').take(4).join('\n');
+    final all = Prefs.serverTest.split('  ·  ');
+    final far = all.where((e) => !e.startsWith('local')).toList();
+    final shown = far.isEmpty
+        ? 'No remote or relay address was offered for this server.'
+        : '${far.take(8).join('\n')}\n(${all.length - far.length} local addresses also failed)';
     throw Exception('Found your server but none of its addresses answered\n$shown');
   }
 
