@@ -449,6 +449,11 @@ class Plex {
   static String? _sessionOwnerToken;
 
   static String? get token => _sessionToken ?? Prefs.token;
+
+  /// What to show your Plex server: a shared server has its own access token; your own server takes
+  /// the account token.
+  static String? get serverToken =>
+      Prefs.serverToken.isNotEmpty ? Prefs.serverToken : token;
   static String? get server => Prefs.server;
   static String? get serverName => Prefs.serverName;
   static bool get isReady => token != null && server != null;
@@ -467,13 +472,15 @@ class Plex {
         'X-Plex-Platform': 'Windows',
         'X-Plex-Device': 'Windows',
         'X-Plex-Device-Name': 'Reel for Windows',
-        if (token != null) 'X-Plex-Token': token!,
+        if (serverToken != null) 'X-Plex-Token': serverToken!,
       };
 
   static Future<String> _send(String method, String url,
       {Duration timeout = const Duration(seconds: 15)}) async {
     final req = http.Request(method, Uri.parse(url));
     req.headers.addAll(headers);
+    // plex.tv always gets the account token; only your server gets the shared-server token
+    if (req.url.host.endsWith('plex.tv') && token != null) req.headers['X-Plex-Token'] = token!;
     final res = await _client.send(req).timeout(timeout);
     final body = await res.stream.bytesToString().timeout(timeout);
     if (res.statusCode >= 400) {
@@ -514,7 +521,7 @@ class Plex {
     final body = await _send('GET',
         'https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1');
     final res = jsonDecode(body) as List;
-    final candidates = <List<String>>[]; // [uri, name, kind, 'mine'|'shared']
+    final candidates = <List<String>>[]; // [uri, name, kind, 'mine'|'shared', serverToken]
     for (final pass in [true, false]) {
       for (final r0 in res) {
         final r = r0 as Map;
@@ -543,14 +550,15 @@ class Plex {
           }
         }
         final whose = pass ? 'mine' : 'shared';
+        final srvTok = pass ? '' : (r['accessToken'] ?? '').toString();
         for (final u in local) {
-          candidates.add([u, name, 'local', whose]);
+          candidates.add([u, name, 'local', whose, srvTok]);
         }
         for (final u in remote) {
-          candidates.add([u, name, 'remote', whose]);
+          candidates.add([u, name, 'remote', whose, srvTok]);
         }
         for (final u in relay) {
-          candidates.add([u, name, 'relay', whose]);
+          candidates.add([u, name, 'relay', whose, srvTok]);
         }
       }
     }
@@ -605,6 +613,7 @@ class Plex {
         if (ok[i]) candidates[i][1]
     }.join('|');
     if (best >= 0) {
+      Prefs.serverToken = candidates[best][4];
       Prefs.server = candidates[best][0];
       Prefs.serverName = candidates[best][1];
       Prefs.serverKind = candidates[best][2];
@@ -687,6 +696,7 @@ class Plex {
     Prefs.ownerToken = null;
     Prefs.profileChosen = false;
     Prefs.server = null;
+    Prefs.serverToken = '';
     Prefs.serverName = null;
   }
 
@@ -972,7 +982,7 @@ class Plex {
         '&X-Plex-Client-Identifier=${e(Prefs.clientId)}'
         '&X-Plex-Product=Reel&X-Plex-Version=0.1&X-Plex-Platform=Windows'
         '&X-Plex-Device=Windows&X-Plex-Device-Name=Reel'
-        '&X-Plex-Token=$token';
+        '&X-Plex-Token=$serverToken';
   }
 
   /// Whole film, video untouched, but the sound converted to 2-channel AAC by the server.
@@ -994,7 +1004,7 @@ class Plex {
         '&X-Plex-Client-Identifier=${e(Prefs.clientId)}'
         '&X-Plex-Product=Reel&X-Plex-Version=0.1&X-Plex-Platform=Windows'
         '&X-Plex-Device=Windows&X-Plex-Device-Name=Reel'
-        '&X-Plex-Token=$token';
+        '&X-Plex-Token=$serverToken';
   }
 
   /// Tells the server to stop making a preview stream nobody is watching any more.
@@ -1014,13 +1024,13 @@ class Plex {
     // let this PC shrink it (which it does while decoding, for free).
     if (Prefs.serverKind == 'local') return raw(path);
     return '$server/photo/:/transcode?width=$w&height=$h&minSize=1&upscale=1'
-        '&url=${Uri.encodeQueryComponent(path)}&X-Plex-Token=$token';
+        '&url=${Uri.encodeQueryComponent(path)}&X-Plex-Token=$serverToken';
   }
 
   /// The original file (logos keep their transparency; video files play directly).
   static String? raw(String? path) {
     if (path == null || server == null) return null;
-    return '$server$path${path.contains('?') ? '&' : '?'}X-Plex-Token=$token';
+    return '$server$path${path.contains('?') ? '&' : '?'}X-Plex-Token=$serverToken';
   }
 
   static String? directUrl(PlexItem i) => raw(i.partKey);

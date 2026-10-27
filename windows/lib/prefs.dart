@@ -21,6 +21,10 @@ class Prefs {
   static String? get token => _p.getString('token');
   static set token(String? v) =>
       v == null ? _p.remove('token') : _p.setString('token', v);
+  /// The access token Plex gives for a server that was shared with you (empty for your own server).
+  static String get serverToken => _p.getString('serverToken') ?? '';
+  static set serverToken(String v) =>
+      v.isEmpty ? _p.remove('serverToken') : _p.setString('serverToken', v);
   static String? get ownerToken => _p.getString('ownerToken');
   static set ownerToken(String? v) =>
       v == null ? _p.remove('ownerToken') : _p.setString('ownerToken', v);
