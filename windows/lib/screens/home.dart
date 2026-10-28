@@ -135,6 +135,10 @@ class _HomeScreenState extends State<HomeScreen> {
       _error = null;
     });
     _needSeerr = false;
+    _gReq = [];
+    _gGenres = [];
+    _gExtra = [];
+    _genrePaths.clear();
     try {
       final rows = <_Row>[];
       if (_discover) {
@@ -155,64 +159,35 @@ class _HomeScreenState extends State<HomeScreen> {
         final sections = await Plex.sections();
         final hiddenSectionKeys =
             sections.where((s) => s.hiddenFromHome).map((s) => s.key).toSet();
-        if (_tab == 0) {
-          final parts = await Future.wait<List<_Row>>([
-            Plex.onDeck().then((d) {
-              final keep = d
-                  .where(
-                      (x) => !hiddenSectionKeys.contains(x.librarySectionKey))
-                  .toList();
-              return keep.isEmpty
-                  ? <_Row>[]
-                  : [_Row('Continue Watching', keep, landscape: true)];
-            }),
-            for (final s in sections.where((s) =>
-                (s.type == 'movie' || s.type == 'show') && !s.hiddenFromHome))
-              Plex.recentlyAdded(s.key).then((r) => r.isEmpty
-                  ? <_Row>[]
-                  : [_Row('Recently Added · ${s.title}', r)]),
-          ]);
-          for (final p in parts) {
-            rows.addAll(p);
-          }
-          _secs = sections
-              .where((s) =>
-                  (s.type == 'movie' || s.type == 'show') && !s.hiddenFromHome)
-              .toList();
-          _addFeatured(rows);
-        } else {
-          final want = _tab == 1 ? 'movie' : 'show';
-          final mine2 = sections
-              .where((s) => s.type == want && !s.hiddenFromHome)
-              .toList();
-          _secs = mine2;
-          final parts = await Future.wait<List<_Row>>([
-            Plex.onDeck().then((d) {
-              final keep = d
-                  .where((x) =>
-                      !hiddenSectionKeys.contains(x.librarySectionKey) &&
-                      (want == 'movie'
-                          ? x.type == 'movie'
-                          : x.type == 'episode'))
-                  .toList();
-              return keep.isEmpty
-                  ? <_Row>[]
-                  : [_Row('Continue Watching', keep, landscape: true)];
-            }).catchError((_) => <_Row>[]),
-            for (final s in mine2)
-              Future.wait([Plex.recentlyAdded(s.key), Plex.all(s.key)])
-                  .then((l) => [
-                        if (l[0].isNotEmpty)
-                          _Row('Recently Added · ${s.title}', l[0],
-                              titles: true),
-                        if (l[1].isNotEmpty)
-                          _Row('All ${s.title}', l[1], titles: true),
-                      ]),
-          ]);
-          for (final p in parts) {
-            rows.addAll(p);
-          }
+        final tabSecs = _tab == 0
+            ? Plex.homeSections(sections)
+            : _tab == 1
+                ? Plex.movieSections(sections)
+                : [
+                    for (final s in Plex.homeSections(sections))
+                      if (s.type == 'show') s
+                  ];
+        _secs = tabSecs;
+        final parts = await Future.wait<List<_Row>>([
+          Plex.onDeck().then((d) {
+            final keep = _deckFor(d)
+                .where((x) => !hiddenSectionKeys.contains(x.librarySectionKey))
+                .toList();
+            return keep.isEmpty
+                ? <_Row>[]
+                : [_Row('Continue Watching', keep, landscape: true)];
+          }).catchError((_) => <_Row>[]),
+          // One Recently Added row across every library on this tab, newest first
+          _recentAcross(tabSecs).then((r) => r.isEmpty
+              ? <_Row>[]
+              : [_Row('Recently Added', r, landscape: false, titles: true)]),
+          // The whole library is a tile that opens its page, not a row of thousands
+          if (_tab != 0) _libraryTiles(tabSecs),
+        ]);
+        for (final p in parts) {
+          rows.addAll(p);
         }
+        _addFeatured(rows);
       }
       if (mine != _loadToken || !mounted) return;
       if (_rows.isEmpty && rows.isNotEmpty) {
@@ -233,7 +208,8 @@ class _HomeScreenState extends State<HomeScreen> {
         if (mine != _loadToken || !mounted) return;
       }
       setState(() {
-        _rows = rows;
+        _base = rows;
+        _rows = _discover ? rows : _compose();
         _loading = false;
         if (rows.isNotEmpty && rows.first.items.isNotEmpty)
           _hero ??= rows.first.items.first;
@@ -253,72 +229,303 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _spotlight(int token) async {
-    final copy = List<_Row>.of(_rows);
-    try {
-      if (_tab == 0) {
-        await _addSpotlight(copy, _secs).timeout(const Duration(seconds: 30));
-      } else {
-        await _addExtras(copy, _secs).timeout(const Duration(seconds: 40));
+  // What the first load gave (banner, Continue Watching, Recently Added, library tiles) and the groups
+  // that arrive a moment later. _compose puts them in the same order as the Fire TV app.
+  List<_Row> _base = [];
+  List<_Row> _gReq = [];
+  List<_Row> _gGenres = [];
+  List<_Row> _gExtra = [];
+  final Map<String, List<String>> _genrePaths = {};
+
+  static bool _isTop(_Row r) =>
+      r.title.startsWith('Because you watched') ||
+      r.title.startsWith('More with ') ||
+      r.title.startsWith('Directed by ');
+
+  List<_Row> _compose() {
+    _Row? one(String t) {
+      for (final r in _base) {
+        if (r.title == t) return r;
       }
-    } catch (_) {
-      return; // just carry on without them
+      return null;
     }
-    if (!mounted || token != _loadToken) return;
-    // The banner fills the screen, so have its first pictures in hand before it appears.
-    if (copy.isNotEmpty && copy.first.big) {
-      final art =
-          copy.first.items.take(4).map(_backdrop).whereType<String>().toList();
-      if (art.isNotEmpty) {
-        await Future.wait([for (final u in art) ImageLoader.load(u)])
-            .timeout(const Duration(seconds: 6), onTimeout: () => const []);
-      }
-      if (!mounted || token != _loadToken) return;
-    }
-    setState(() => _rows = copy);
+
+    final cw = one('Continue Watching'), ra = one('Recently Added');
+    final libs = one('Libraries');
+    return [
+      ..._base.where((r) => r.big),
+      if (cw != null) cw,
+      if (ra != null) ra,
+      ..._gReq,
+      ..._gGenres,
+      ..._gExtra.where(_isTop),
+      ..._gExtra
+          .where((r) => !_isTop(r) && !r.title.startsWith('Unwatched')),
+      ..._gExtra.where((r) => r.title.startsWith('Unwatched')),
+      if (libs != null) libs,
+    ];
   }
 
-  /// Movies / TV Shows: "Because you watched…" and a row per genre, added after the page is up.
-  Future<void> _addExtras(List<_Row> rows, List<PlexSection> secs) async {
+  /// Continue Watching on a tab holds only that kind of thing: films on Movies, episodes on TV Shows.
+  List<PlexItem> _deckFor(List<PlexItem> d) => _tab == 0
+      ? d
+      : d
+          .where((x) => _tab == 1 ? x.type == 'movie' : x.type == 'episode')
+          .toList();
+
+  Future<List<PlexItem>> _recentAcross(List<PlexSection> secs) async {
+    final lists = await Future.wait([
+      for (final s in secs)
+        Plex.recentlyAdded(s.key).catchError((_) => <PlexItem>[])
+    ]);
+    final seen = <String>{};
+    final all = [
+      for (final l in lists)
+        for (final x in l)
+          if (seen.add(x.key)) x
+    ]..sort((a, b) => b.addedAt.compareTo(a.addedAt));
+    return all.take(60).toList();
+  }
+
+  Future<List<_Row>> _libraryTiles(List<PlexSection> secs) async {
+    final tiles = await Future.wait([
+      for (final s in secs)
+        () async {
+          final t = PlexItem()
+            ..key = 'lib:${s.key}'
+            ..type = 'genre' // drawn as a picture tile
+            ..title = s.title.toLowerCase().startsWith('all ')
+                ? s.title
+                : 'All ${s.title}'
+            ..summary = s.type;
+          try {
+            final one = await Plex.items(
+                Plex.paged('/library/sections/${s.key}/all?sort=random', 1));
+            if (one.isNotEmpty) t.thumb = one.first.art ?? one.first.thumb;
+          } catch (_) {}
+          return t;
+        }()
+    ]);
+    return tiles.isEmpty
+        ? []
+        : [
+            _Row('Libraries', tiles,
+                landscape: true, titles: true, previews: false)
+          ];
+  }
+
+  /// The second pass, so the page appears quickly: Your requests, Genres, Because you watched,
+  /// people, collections and Unwatched. Each part is optional and lands as soon as it is ready.
+  Future<void> _spotlight(int token) async {
+    void land(void Function() put) {
+      if (!mounted || token != _loadToken) return;
+      setState(() {
+        put();
+        _rows = _compose();
+      });
+    }
+
+    final tasks = <Future<void>>[
+      if (_tab == 0)
+        _requestRows().then((r) => land(() => _gReq = r), onError: (_) {}),
+      if (_tab <= 1)
+        _genreRows().then(
+            (r) => land(() {
+                  _genrePaths.addAll(r.$2);
+                  _gGenres = r.$1;
+                }),
+            onError: (_) {}),
+      _extraRows(_secs)
+          .timeout(const Duration(seconds: 45))
+          .then((r) => land(() => _gExtra = r), onError: (_) {}),
+    ];
+    await Future.wait(tasks);
+  }
+
+  /// "Your requests" from Seerr, if it is set up.
+  Future<List<_Row>> _requestRows() async {
+    if (!Seerr.configured) return [];
+    final r = await Seerr.myRequests(take: 12);
+    if (r.isEmpty) return [];
+    return [
+      _Row('Your requests', [for (final m in r) m.toItem()],
+          landscape: true, titles: true, previews: false)
+    ];
+  }
+
+  /// The Genres row: one tile per genre across the libraries on this tab, each with a picture from a
+  /// title in it. Opening a tile browses that genre in all those libraries.
+  Future<(List<_Row>, Map<String, List<String>>)> _genreRows() async {
+    final names = <String, String>{};
+    final paths = <String, List<String>>{};
+    final libs = await Future.wait([
+      for (final s in _secs)
+        Plex.genresOf(s.key).catchError((_) => <List<String>>[])
+    ]);
+    for (final gs in libs) {
+      for (final g in gs) {
+        final k = g[1].toLowerCase();
+        names.putIfAbsent(k, () => g[1]);
+        (paths[k] ??= []).add(g[0]);
+      }
+    }
+    final keys = names.keys.toList()..sort();
+    final cards = await Future.wait([
+      for (final k in keys)
+        () async {
+          final c = PlexItem()
+            ..key = 'genre:$k'
+            ..type = 'genre'
+            ..title = names[k]!;
+          try {
+            final first = paths[k]!.first;
+            final one = await Plex.items(Plex.paged(
+                '$first${first.contains('?') ? '&' : '?'}sort=random', 1));
+            if (one.isEmpty && paths[k]!.length == 1) return null; // empty genre
+            if (one.isNotEmpty) c.thumb = one.first.art ?? one.first.thumb;
+          } catch (_) {}
+          return c;
+        }()
+    ]);
+    final keep = <PlexItem>[
+      for (final c in cards)
+        if (c != null) c
+    ];
+    return (
+      keep.isEmpty
+          ? <_Row>[]
+          : [
+              _Row('Genres', keep,
+                  landscape: true, titles: true, previews: false)
+            ],
+      {for (final c in keep) c.key: paths[c.key.substring(6)]!},
+    );
+  }
+
+  Future<List<_Row>> _extraRows(List<PlexSection> secs) async {
     Future<List<PlexItem>> safe(Future<List<PlexItem>> f) =>
         f.catchError((_) => <PlexItem>[]);
-    final seeds = <MapEntry<String, String>>[];
+    final out = <_Row>[];
+    final rnd = Random();
+    // One "Because you watched" and one "Unwatched" row for movies, and the same for shows, each
+    // drawing on every library on the tab.
+    final movieLibs = <PlexSection>[], showLibs = <PlexSection>[];
     for (final s in secs) {
-      for (final m in await safe(Plex.recentlyWatched(s.key, count: 2))) {
-        seeds.add(MapEntry(m.key, m.title));
+      if (_tab == 1 || s.type == 'movie') {
+        movieLibs.add(s);
+      } else if (s.type == 'show') {
+        showLibs.add(s);
       }
     }
-    final related = await Future.wait(
-        [for (final s in seeds.take(3)) safe(Plex.related(s.key))]);
-    final because = <_Row>[];
-    for (var i = 0; i < related.length; i++) {
-      final fresh = related[i].where((x) => x.viewCount == 0).take(20).toList();
-      if (fresh.length >= 4)
-        because.add(
-            _Row('Because you watched ${seeds[i].value}', fresh, titles: true));
-    }
-    because.addAll(await _peopleRows(seeds.take(2).toList(), secs));
-    // genres, biggest libraries first
-    final genreRows = <_Row>[];
-    for (final s in secs) {
-      List<List<String>> gs;
+    if (_tab == 2) movieLibs.clear();
+    for (final movie in [true, false]) {
+      final group = movie ? movieLibs : showLibs;
+      if (group.isEmpty) continue;
       try {
-        gs = await Plex.genresOf(s.key);
-      } catch (_) {
-        continue;
-      }
-      final picked = gs.take(10).toList();
-      final lists =
-          await Future.wait([for (final g in picked) safe(Plex.byGenre(g[0]))]);
-      for (var i = 0; i < picked.length; i++) {
-        if (lists[i].length >= 4)
-          genreRows.add(_Row(picked[i][1], lists[i], titles: true));
-      }
+        final lists = await Future.wait([
+          for (final s in group)
+            safe(Plex.items(Plex.paged(
+                '/library/sections/${s.key}/all?sort=lastViewedAt:desc', 10)))
+        ]);
+        final last = [for (final l in lists) ...l]
+          ..sort((a, b) => b.lastViewedAt.compareTo(a.lastViewedAt));
+        for (final w in last) {
+          // a show counts as watched once any episode has been
+          if (w.viewCount <= 0 && w.viewOffset <= 0 && w.viewedLeafCount <= 0) {
+            continue;
+          }
+          final like = (await safe(Plex.related(w.key)))
+              .where((x) => x.viewCount == 0 && x.viewedLeafCount == 0)
+              .take(20)
+              .toList();
+          if (like.length < 4) continue; // try the next thing you watched
+          out.add(_Row('Because you watched ${w.displayTitle}', like,
+              landscape: false, titles: true));
+          break;
+        }
+        // ... and the lead actor and the director of something you watched lately
+        if (movie) {
+          for (final w in last) {
+            if (w.viewCount <= 0) continue;
+            final sec = w.librarySectionKey ?? group.first.key;
+            final full = await Plex.metadata(w.key);
+            await _personRow(out, sec, 'More with ',
+                full.cast.isEmpty ? null : full.cast.first, w.key);
+            await _personRow(out, sec, 'Directed by ',
+                full.directors.isEmpty ? null : full.directors.first, w.key);
+            break;
+          }
+        }
+      } catch (_) {}
+      // Unwatched, shuffled, from all of them together
+      try {
+        final lists = await Future.wait([
+          for (final s in group)
+            safe(Plex.items(Plex.paged(
+                '/library/sections/${s.key}/all?unwatched=1&sort=random', 30)))
+        ]);
+        var un = [for (final l in lists) ...l]..shuffle(rnd);
+        if (un.length > 30) un = un.sublist(0, 30);
+        if (un.length >= 3) {
+          out.add(_Row(movie ? 'Unwatched Movies' : 'Unwatched Shows', un,
+              landscape: false, titles: true));
+        }
+      } catch (_) {}
     }
-    // "All …" stays last, after the browsing rows
-    final allAt = rows.indexWhere((r) => r.title.startsWith('All '));
-    final at = allAt < 0 ? rows.length : allAt;
-    rows.insertAll(at, [...because, ...genreRows]);
+    // Collections: two on Home, three on Movies / TV Shows, per library
+    final collRows = _tab == 0 ? 2 : 3;
+    for (final s in secs) {
+      if (_tab == 2 && s.type != 'show') continue;
+      try {
+        final cols = await Plex.collections(s.key);
+        cols.shuffle(rnd);
+        var added = 0;
+        for (final c in cols) {
+          if (added >= collRows) break;
+          if ((int.tryParse(c[2]) ?? 0) < 3) continue;
+          final kids = await Plex.items(
+              Plex.paged('/library/collections/${c[1]}/children', 60));
+          if (kids.length < 3) continue;
+          out.add(_Row(c[0], kids, landscape: false, titles: true));
+          added++;
+        }
+      } catch (_) {}
+    }
+    // Drop a row when most of its titles are already on the screen in a row above it
+    final onScreen = <String>{
+      for (final r in [..._base, ..._gReq])
+        if (r.title != 'Libraries' && !r.big)
+          for (final x in r.items) x.key
+    };
+    final kept = <_Row>[];
+    for (final r in out) {
+      final dup = r.items.where((x) => onScreen.contains(x.key)).length;
+      if (dup * 2 > r.items.length) continue;
+      onScreen.addAll(r.items.map((x) => x.key));
+      kept.add(r);
+    }
+    return kept;
+  }
+
+  /// A row of the library's titles with this person in them, unwatched first; skipped if under 4.
+  Future<void> _personRow(List<_Row> out, String sectionKey, String prefix,
+      CastMember? who, String exceptKey) async {
+    if (who == null) return;
+    try {
+      final list = (await Plex.items(Plex.paged(
+              '/library/sections/$sectionKey/all?${who.filter}&sort=year:desc',
+              40)))
+          .where((x) => x.key != exceptKey)
+          .toList();
+      final sorted = [
+        ...list.where((x) => !x.isWatched),
+        ...list.where((x) => x.isWatched)
+      ];
+      if (sorted.length >= 4) {
+        out.add(_Row('$prefix${who.name}', sorted,
+            landscape: false, titles: true));
+      }
+    } catch (_) {}
   }
 
   /// The banner across the top, made from what Home has already fetched (newest in each library and
@@ -334,8 +541,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final featured = <PlexItem>[];
     for (var i = 0; featured.length < 12 && i < 12; i++) {
       for (final pool in pools) {
-        if (i < pool.length && featured.length < 12 && seen.add(pool[i].key))
+        if (i < pool.length && featured.length < 12 && seen.add(pool[i].key)) {
           featured.add(pool[i]);
+        }
       }
     }
     if (featured.length >= 3) {
@@ -347,85 +555,6 @@ class _HomeScreenState extends State<HomeScreen> {
               titles: true,
               previewDelay: Motion.previewDelay));
     }
-  }
-
-  /// "Because you watched X · More with <actor>" and "... · Directed by <director>" rows.
-  Future<List<_Row>> _peopleRows(
-      List<MapEntry<String, String>> seeds, List<PlexSection> secs) async {
-    final out = <_Row>[];
-    final usedPeople = <String>{};
-    for (final seed in seeds) {
-      try {
-        final m = await Plex.metadata(seed.key);
-        final people = <MapEntry<String, CastMember>>[
-          if (m.cast.isNotEmpty) MapEntry('More with', m.cast.first),
-          if (m.directors.isNotEmpty) MapEntry('Directed by', m.directors.first),
-        ];
-        for (final p in people) {
-          if (!usedPeople.add(p.value.name)) continue;
-          final lists = await Future.wait([
-            for (final s
-                in secs.where((s) => s.type == 'movie' || s.type == 'show'))
-              Plex.withPerson(s.key, p.value.filter)
-                  .catchError((_) => <PlexItem>[]),
-          ]);
-          final seen = <String>{m.key};
-          final found = <PlexItem>[
-            for (final l in lists)
-              for (final x in l)
-                if (seen.add(x.key)) x
-          ]..sort((a, b) => b.year.compareTo(a.year));
-          if (found.length >= 4) {
-            out.add(_Row(
-                'Because you watched ${seed.value} · ${p.key} ${p.value.name}',
-                found.take(20).toList(),
-                titles: true));
-          }
-        }
-      } catch (_) {}
-    }
-    return out;
-  }
-
-  /// "Because you watched…" rows, added once the page is already up.
-  Future<void> _addSpotlight(List<_Row> rows, List<PlexSection> secs) async {
-    Future<List<PlexItem>> safe(Future<List<PlexItem>> f) =>
-        f.catchError((_) => <PlexItem>[]);
-
-    // what you watched lately: finished films, plus the shows behind your Up Next episodes
-    final seedLists = await Future.wait([
-      for (final s in secs.where((s) => s.type == 'movie'))
-        safe(Plex.recentlyWatched(s.key, count: 2)),
-    ]);
-    final seeds = <MapEntry<String, String>>[
-      for (final l in seedLists)
-        for (final m in l) MapEntry(m.key, m.title),
-    ];
-    final shows = <String>{};
-    for (final r in rows.where((r) => r.title == 'Continue Watching')) {
-      for (final e in r.items) {
-        if (e.gpKey != null && shows.length < 2 && shows.add(e.gpKey!))
-          seeds.add(MapEntry(e.gpKey!, e.gpTitle ?? e.title));
-      }
-    }
-    final seedsUsed = seeds.take(4).toList();
-
-    final related = await Future.wait(
-        [for (final s in seedsUsed) safe(Plex.related(s.key))]);
-
-    // Because you watched … (only things you haven't seen yet)
-    final because = <_Row>[];
-    for (var i = 0; i < seedsUsed.length; i++) {
-      final fresh = related[i].where((x) => x.viewCount == 0).take(20).toList();
-      if (fresh.length >= 4)
-        because.add(_Row('Because you watched ${seedsUsed[i].value}', fresh,
-            titles: true));
-    }
-
-    rows.addAll(because);
-
-    // actor / director rows from the last things you watched
-    rows.addAll(await _peopleRows(seedsUsed.take(2).toList(), secs));
   }
 
   Future<List<_Row>> _discoverRows() async {
@@ -493,18 +622,19 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /// Refreshes Up Next progress after watching something, without moving anything.
   Future<void> _refreshDeck() async {
-    if (_tab != 0) return;
+    if (_discover) return;
     try {
-      final deck = await Plex.onDeck();
+      final deck = _deckFor(await Plex.onDeck());
       if (!mounted) return;
       setState(() {
-        final i = _rows.indexWhere((r) => r.title == 'Continue Watching');
+        final i = _base.indexWhere((r) => r.title == 'Continue Watching');
         if (i >= 0) {
-          _rows[i] = _Row('Continue Watching', deck, landscape: true);
+          _base[i] = _Row('Continue Watching', deck, landscape: true);
         } else if (deck.isNotEmpty) {
-          _rows.insert(_rows.isNotEmpty && _rows.first.big ? 1 : 0,
+          _base.insert(_base.isNotEmpty && _base.first.big ? 1 : 0,
               _Row('Continue Watching', deck, landscape: true));
         }
+        _rows = _compose();
       });
     } catch (_) {}
   }
@@ -512,6 +642,7 @@ class _HomeScreenState extends State<HomeScreen> {
   PlexItem? _pendingHero;
 
   void _focused(PlexItem it) {
+    if (it.type == 'genre') return; // the banner keeps the last title
     _pendingHero = it;
     _heroTimer?.cancel();
     _heroTimer = Timer(const Duration(milliseconds: 300), () async {
@@ -583,6 +714,22 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _open(PlexItem it) async {
+    if (it.key.startsWith('lib:')) {
+      final m = _secs.where((x) => 'lib:${x.key}' == it.key);
+      if (m.isNotEmpty) {
+        await Navigator.of(context)
+            .push(MaterialPageRoute(builder: (_) => LibraryScreen(section: m.first)));
+      }
+      return;
+    }
+    if (it.key.startsWith('genre:')) {
+      final p = _genrePaths[it.key];
+      if (p != null) {
+        await Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => LibraryScreen(paths: p, title: it.title)));
+      }
+      return;
+    }
     if (it.key.startsWith('seerrgenre:')) {
       final g = Seerr.genres[it.key];
       if (g != null)

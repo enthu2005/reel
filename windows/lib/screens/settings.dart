@@ -107,6 +107,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
             setState(() =>
                 Prefs.subtitleLanguage = languages[(i + 1) % languages.length]);
           }),
+          _row(
+              h,
+              'Home & TV libraries',
+              _libSummary(Prefs.homeLibraries),
+              'Which libraries Home and the TV Shows tab draw from. Press Enter to choose.',
+              () => _pickLibraries('Home & TV libraries', home: true)),
+          _row(
+              h,
+              'Movies libraries',
+              _libSummary(Prefs.movieLibraries),
+              'Which libraries the Movies tab draws from. Press Enter to choose.',
+              () => _pickLibraries('Movies libraries', home: false)),
           _row(h, 'Video previews', Prefs.previews ? 'On' : 'Off',
               'Rest on a card and its trailer or a scene plays inside it, then carries on behind the title page.',
               () {
@@ -227,6 +239,108 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (k == 'remote') return 'Remote (direct)';
     if (k == 'relay') return 'Relay (slow)';
     return 'Unknown';
+  }
+
+  static String _libSummary(List<String>? v) =>
+      v == null ? 'All' : '${v.length} chosen';
+
+  /// A list of libraries to tick. It stays open, saves on every tick and keeps at least one ticked.
+  Future<void> _pickLibraries(String title, {required bool home}) async {
+    List<PlexSection> secs;
+    try {
+      secs = (await Plex.sections())
+          .where((s) => s.type == 'movie' || s.type == 'show')
+          .toList();
+    } catch (_) {
+      return;
+    }
+    if (!mounted || secs.isEmpty) return;
+    // what is shown now when nothing has been chosen yet
+    final ticked = <String>{
+      for (final s in home ? Plex.homeSections(secs) : Plex.movieSections(secs))
+        s.key
+    };
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dc) => StatefulBuilder(builder: (dc, setD) {
+        final h = Reel.h(dc);
+        return Dialog(
+          backgroundColor: const Color(0xFF1C1C1E),
+          child: Padding(
+            padding: EdgeInsets.all(h * 0.03),
+            child: SizedBox(
+              width: h * 0.7,
+              child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        style: reelText(h * 0.034, weight: FontWeight.w700)),
+                    SizedBox(height: h * 0.02),
+                    for (var i = 0; i < secs.length; i++)
+                      Padding(
+                        padding: EdgeInsets.only(bottom: h * 0.008),
+                        child: Pressable(
+                          autofocus: i == 0,
+                          scrollAlignment: 0.5,
+                          onPressed: () {
+                            final k = secs[i].key;
+                            if (ticked.contains(k)) {
+                              if (ticked.length == 1) return; // keep at least one
+                              ticked.remove(k);
+                            } else {
+                              ticked.add(k);
+                            }
+                            final saved = ticked.toList();
+                            if (home) {
+                              Prefs.homeLibraries = saved;
+                            } else {
+                              Prefs.movieLibraries = saved;
+                            }
+                            setD(() {});
+                            if (mounted) setState(() {});
+                          },
+                          builder: (c, f) => AnimatedContainer(
+                            duration: const Duration(milliseconds: 120),
+                            padding: EdgeInsets.symmetric(
+                                horizontal: h * 0.02, vertical: h * 0.014),
+                            decoration: BoxDecoration(
+                              color: f ? Colors.white : const Color(0x14FFFFFF),
+                              borderRadius: BorderRadius.circular(h * 0.014),
+                            ),
+                            child: Row(children: [
+                              Icon(
+                                  ticked.contains(secs[i].key)
+                                      ? Icons.check_box_rounded
+                                      : Icons.check_box_outline_blank_rounded,
+                                  color: f ? Colors.black : Colors.white,
+                                  size: h * 0.034),
+                              SizedBox(width: h * 0.016),
+                              Expanded(
+                                child: Text(secs[i].title,
+                                    style: reelText(h * 0.026,
+                                        weight: FontWeight.w600,
+                                        color: f ? Colors.black : Colors.white)),
+                              ),
+                              Text(secs[i].type == 'show' ? 'TV' : 'Movies',
+                                  style: reelText(h * 0.021,
+                                      color: f
+                                          ? const Color(0xFF555555)
+                                          : Reel.text2)),
+                            ]),
+                          ),
+                        ),
+                      ),
+                    SizedBox(height: h * 0.012),
+                    Text('Esc to close',
+                        style: reelText(h * 0.02, color: Reel.text3)),
+                  ]),
+            ),
+          ),
+        );
+      }),
+    );
   }
 
   Widget _row(

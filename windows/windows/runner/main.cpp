@@ -18,6 +18,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
   flutter::DartProject project(L"data");
+  // Impeller's OpenGL backend is still rough on Windows: it roughly triples frame cost and causes
+  // 40-100 ms hitches while scrolling. The Skia renderer is smooth, so Impeller is switched off.
+  project.set_impeller_switch(flutter::ImpellerSwitch::Disabled);
 
   std::vector<std::string> command_line_arguments =
       GetCommandLineArguments();

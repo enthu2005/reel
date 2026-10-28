@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../plex.dart';
+import '../prefs.dart';
 import '../ui/net_image.dart';
 import '../ui/preview.dart';
 import '../ui/theme.dart';
@@ -24,6 +25,8 @@ class _SearchScreenState extends State<SearchScreen> {
   List<PlexItem> _results = [];
   String _message = 'Type to search your library';
   int _token = 0;
+  static const _historyMax = 8;
+  List<String> _history = Prefs.searchHistory;
 
   // Down arrow in the box jumps to the results (a text box normally keeps the arrows for itself).
   late final FocusNode _field = FocusNode(onKeyEvent: (n, e) {
@@ -40,6 +43,25 @@ class _SearchScreenState extends State<SearchScreen> {
     _text.dispose();
     _field.dispose();
     super.dispose();
+  }
+
+  /// Most recent first, no repeats. Opening a result (or pressing Enter) is what makes a search worth keeping.
+  void _remember(String text) {
+    final t = text.trim().toLowerCase();
+    if (t.length < 2) return;
+    final h = [
+      t,
+      ..._history.where((x) => x.toLowerCase() != t),
+    ].take(_historyMax).toList();
+    Prefs.searchHistory = h;
+    _history = h;
+  }
+
+  void _searchFor(String t) {
+    _text.text = t;
+    _text.selection = TextSelection.collapsed(offset: t.length);
+    _changed(t);
+    _field.requestFocus();
   }
 
   void _changed(String q) {
@@ -73,6 +95,28 @@ class _SearchScreenState extends State<SearchScreen> {
     });
   }
 
+  Widget _historyRow(String label, double h, VoidCallback onTap) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: h * 0.008),
+      child: Pressable(
+        onPressed: onTap,
+        scrollAlignment: 0,
+        builder: (c, f) => AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: EdgeInsets.symmetric(horizontal: h * 0.022, vertical: h * 0.01),
+          decoration: BoxDecoration(
+            color: f ? Colors.white : const Color(0x26FFFFFF),
+            borderRadius: BorderRadius.circular(h),
+          ),
+          child: Text(label,
+              style: reelText(h * 0.024,
+                  weight: FontWeight.w600,
+                  color: f ? Colors.black : Colors.white)),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final h = Reel.h(context);
@@ -92,6 +136,7 @@ class _SearchScreenState extends State<SearchScreen> {
               focusNode: _field,
               autofocus: true,
               onChanged: _changed,
+              onSubmitted: _remember,
               style: reelText(h * 0.032, weight: FontWeight.w500),
               cursorColor: Colors.white,
               decoration: InputDecoration(
@@ -106,7 +151,15 @@ class _SearchScreenState extends State<SearchScreen> {
             ),
           ),
           SizedBox(height: h * 0.02),
-          if (_message.isNotEmpty) Text(_message, style: reelText(h * 0.026, color: Reel.text2)),
+          // The recent searches, while the box is empty
+          if (_text.text.trim().isEmpty && _history.isNotEmpty) ...[
+            for (final t in _history) _historyRow('↻  $t', h, () => _searchFor(t)),
+            _historyRow('Clear search history', h, () {
+              Prefs.searchHistory = [];
+              setState(() => _history = []);
+              _field.requestFocus();
+            }),
+          ] else if (_message.isNotEmpty) Text(_message, style: reelText(h * 0.026, color: Reel.text2)),
           Expanded(
             child: GridView.builder(
               clipBehavior: Clip.hardEdge,
@@ -135,10 +188,12 @@ class _SearchScreenState extends State<SearchScreen> {
                     }
                   },
                   onPressed: () {
+                    _remember(_text.text);
                     Preview.handOff();
                     Navigator.of(context).push(fadeRoute(DetailScreen(ratingKey: it.key)));
                   },
                   onLongPress: () {
+                    _remember(_text.text);
                     Preview.handOff();
                     Navigator.of(context).push(fadeRoute(DetailScreen(ratingKey: it.key, expanded: true)));
                   },

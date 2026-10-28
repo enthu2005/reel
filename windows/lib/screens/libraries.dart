@@ -236,8 +236,12 @@ class _LibrariesScreenState extends State<LibrariesScreen> {
 
 /// One library, every title in it, with a choice of order.
 class LibraryScreen extends StatefulWidget {
-  final PlexSection section;
-  const LibraryScreen({super.key, required this.section});
+  /// One library, or (with [paths]) one genre across several libraries, merged A to Z.
+  final PlexSection? section;
+  final List<String>? paths;
+  final String? title;
+  const LibraryScreen({super.key, this.section, this.paths, this.title})
+      : assert(section != null || paths != null);
 
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
@@ -250,14 +254,30 @@ class _LibraryScreenState extends State<LibraryScreen> {
     ['Release date', 'originallyAvailableAt:desc'],
     ['Rating', 'audienceRating:desc'],
   ];
+  static const _filters = [
+    ['All', ''],
+    ['Movies', 'movie'],
+    ['TV Shows', 'show'],
+  ];
   int _sort = 0;
+  int _filter = 0;
+  List<PlexItem> _all = [];
   List<PlexItem> _items = [];
   bool _loading = true;
   String? _error;
   int _token = 0;
 
   bool get _isTamilMusic =>
-      widget.section.title.trim().toLowerCase() == 'tamil music videos';
+      widget.section?.title.trim().toLowerCase() == 'tamil music videos';
+
+  bool get _hasBoth =>
+      _all.any((x) => x.type == 'movie') && _all.any((x) => x.type == 'show');
+
+  /// A genre across libraries: narrow it to movies or TV shows.
+  void _applyFilter() {
+    final want = _filters[_filter][1];
+    _items = want.isEmpty ? _all : _all.where((x) => x.type == want).toList();
+  }
 
   @override
   void initState() {
@@ -272,10 +292,25 @@ class _LibraryScreenState extends State<LibraryScreen> {
       _error = null;
     });
     try {
-      final r = await Plex.all(widget.section.key, sort: _sorts[_sort][1]);
+      List<PlexItem> r;
+      if (widget.paths != null) {
+        final merged = <String, PlexItem>{};
+        for (final p in widget.paths!) {
+          try {
+            for (final it in await Plex.items(Plex.paged(p, 3000))) {
+              merged.putIfAbsent(it.key, () => it);
+            }
+          } catch (_) {} // one library failing shouldn't blank the page
+        }
+        r = merged.values.toList()
+          ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+      } else {
+        r = await Plex.all(widget.section!.key, sort: _sorts[_sort][1]);
+      }
       if (!mounted || mine != _token) return;
       setState(() {
-        _items = r;
+        _all = r;
+        _applyFilter();
         _loading = false;
       });
     } catch (e) {
@@ -302,7 +337,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             Expanded(
-              child: Text(widget.section.title,
+              child: Text(widget.title ?? widget.section!.title,
                   style: reelText(h * 0.055, weight: FontWeight.w700)),
             ),
             if (_isTamilMusic)
@@ -318,6 +353,36 @@ class _LibraryScreenState extends State<LibraryScreen> {
           ]),
           SizedBox(height: h * 0.02),
           Row(children: [
+            if (widget.paths != null && _hasBoth)
+              for (var i = 0; i < _filters.length; i++)
+                Padding(
+                  padding: EdgeInsets.only(right: h * 0.01),
+                  child: Pressable(
+                    onPressed: () => setState(() {
+                      _filter = i;
+                      _applyFilter();
+                    }),
+                    scrollAlignment: 0,
+                    builder: (c, f) => AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      padding: EdgeInsets.symmetric(
+                          horizontal: h * 0.022, vertical: h * 0.01),
+                      decoration: BoxDecoration(
+                        color: f
+                            ? Colors.white
+                            : (i == _filter
+                                ? const Color(0x40FFFFFF)
+                                : Colors.transparent),
+                        borderRadius: BorderRadius.circular(h),
+                      ),
+                      child: Text(_filters[i][0],
+                          style: reelText(h * 0.022,
+                              weight: FontWeight.w600,
+                              color: f ? Colors.black : Colors.white)),
+                    ),
+                  ),
+                ),
+            if (widget.paths == null)
             for (var i = 0; i < _sorts.length; i++)
               Padding(
                 padding: EdgeInsets.only(right: h * 0.01),
