@@ -127,6 +127,7 @@ class PlexItem {
   int addedAt = 0; // seconds since 1970
   int leafCount = 0; // episodes in a show
   int viewedLeafCount = 0;
+  int lastViewedAt = 0; // seconds since 1970
   String collName = ''; // the collection / franchise it belongs to, if any
   String collFilter = ''; // e.g. "collection=123"
   final List<List<String>> ratings = []; // [source, shown], e.g. ['RT', '92%']
@@ -315,6 +316,7 @@ class PlexItem {
     i.addedAt = _int(m['addedAt']);
     i.leafCount = _int(m['leafCount']);
     i.viewedLeafCount = _int(m['viewedLeafCount']);
+    i.lastViewedAt = _int(m['lastViewedAt']);
     i._addRating(m['rating'], m['ratingImage']);
     i._addRating(m['audienceRating'], m['audienceRatingImage']);
     for (final c in (m['Collection'] as List? ?? const [])) {
@@ -759,6 +761,44 @@ class Plex {
       return PlexSection((o['key'] ?? '').toString(),
           (o['type'] ?? '').toString(), (o['title'] ?? '').toString(), paths);
     }).toList();
+  }
+
+  /// Libraries shown on Home and the TV Shows tab: the ones ticked in Settings, or every movie and TV
+  /// library (bar the hidden ones) until a choice is saved.
+  static List<PlexSection> homeSections(List<PlexSection> all) {
+    final chosen = Prefs.homeLibraries;
+    return [
+      for (final s in all)
+        if (s.type == 'movie' || s.type == 'show')
+          if (chosen == null ? !s.hiddenFromHome : chosen.contains(s.key)) s
+    ];
+  }
+
+  /// Libraries for the Movies tab: every movie library until a choice is saved in Settings, then exactly
+  /// the ticked ones, whatever Plex calls their type.
+  static List<PlexSection> movieSections(List<PlexSection> all) {
+    final chosen = Prefs.movieLibraries;
+    return [
+      for (final s in all)
+        if (chosen == null
+            ? (s.type == 'movie' && !s.hiddenFromHome)
+            : chosen.contains(s.key))
+          s
+    ];
+  }
+
+  /// Collections in a library: [title, ratingKey, childCount].
+  static Future<List<List<String>>> collections(String sectionKey) async {
+    final mc = (await _get('/library/sections/$sectionKey/collections'))[
+        'MediaContainer'] as Map;
+    return [
+      for (final m in (mc['Metadata'] as List? ?? const []))
+        [
+          ((m as Map)['title'] ?? '').toString(),
+          (m['ratingKey'] ?? '').toString(),
+          (m['childCount'] ?? 0).toString(),
+        ]
+    ];
   }
 
   /// The genres in a library, biggest first-ish, as [key, title] pairs.

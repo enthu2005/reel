@@ -120,4 +120,20 @@ class Prefs {
 
   static bool get autoPlayNext => _p.getBool('autoPlay') ?? true;
   static set autoPlayNext(bool v) => _p.setBool('autoPlay', v);
+
+  /// Libraries ticked for Home / TV Shows and for Movies in Settings (section keys), or null until a
+  /// choice is saved (then every movie and TV library shows).
+  static List<String>? get homeLibraries => _p.getStringList('homeLibraries');
+  static set homeLibraries(List<String>? v) =>
+      v == null ? _p.remove('homeLibraries') : _p.setStringList('homeLibraries', v);
+  static List<String>? get movieLibraries => _p.getStringList('movieLibraries');
+  static set movieLibraries(List<String>? v) =>
+      v == null ? _p.remove('movieLibraries') : _p.setStringList('movieLibraries', v);
+
+  /// The last few searches, most recent first.
+  static List<String> get searchHistory =>
+      _p.getStringList('searchHistory') ?? const [];
+  static set searchHistory(List<String> v) => v.isEmpty
+      ? _p.remove('searchHistory')
+      : _p.setStringList('searchHistory', v);
 }
