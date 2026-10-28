@@ -142,6 +142,7 @@ public final class Plex {
         public int index;
         public int parentIndex;
         public String partKey;
+        public long fileSize;         // bytes of the media file (0 = not known)
         public String videoRes = "";
         public int videoHeight;
         public String watcher = ""; // who is watching it right now (sessions only)
@@ -1152,6 +1153,7 @@ public final class Plex {
             if (parts != null && parts.length() > 0) {
                 JSONObject p0 = parts.optJSONObject(0);
                 i.partKey = opt(p0, "key");
+                i.fileSize = p0.optLong("size", 0);
                 JSONArray ss = p0.optJSONArray("Stream");
                 if (ss != null) {
                     for (int k = 0; k < ss.length(); k++) {
