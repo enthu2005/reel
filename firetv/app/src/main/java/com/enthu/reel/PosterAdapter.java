@@ -114,7 +114,9 @@ final class PosterAdapter extends RecyclerView.Adapter<PosterAdapter.VH> {
 
         FrameLayout card = new FrameLayout(c);
         card.setBackground(UiUtil.rounded(UiUtil.CARD, radius));
-        UiUtil.clipRounded(card, radius);
+        // No live rounded clip here: clipping every card to a rounded outline on every frame was the main
+        // cost of moving through rows on the Fire TV. The artwork is rounded when it is loaded instead, and
+        // the other layers are shaped to match.
         root.addView(card, new LinearLayout.LayoutParams(w, h));
 
         ImageView image = new ImageView(c);
@@ -124,8 +126,10 @@ final class PosterAdapter extends RecyclerView.Adapter<PosterAdapter.VH> {
 
         // Darkens the bottom of the art so the progress bar reads.
         View shade = new View(c);
-        shade.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{0x00000000, 0x99000000}));
+        GradientDrawable shadeBg = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{0x00000000, 0x99000000});
+        shadeBg.setCornerRadii(new float[]{0, 0, 0, 0, radius, radius, radius, radius}); // follows the card's bottom corners
+        shade.setBackground(shadeBg);
         card.addView(shade, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 (int) (h * 0.35f), Gravity.BOTTOM));
 
@@ -139,7 +143,7 @@ final class PosterAdapter extends RecyclerView.Adapter<PosterAdapter.VH> {
         genreName.setSingleLine(true);
         genreName.setEllipsize(TextUtils.TruncateAt.END);
         genreName.setPadding((int) (w * 0.06f), 0, (int) (w * 0.06f), 0);
-        genreName.setBackgroundColor(0x88000000);
+        genreName.setBackground(UiUtil.rounded(0x88000000, radius));
         genreName.setVisibility(View.GONE);
         card.addView(genreName, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -255,7 +259,9 @@ final class PosterAdapter extends RecyclerView.Adapter<PosterAdapter.VH> {
         } else {
             path = it.thumb != null ? it.thumb : it.poster();
         }
-        Glide.with(vh.image).load(Plex.img(path, w, h)).centerCrop()
+        Glide.with(vh.image).load(Plex.img(path, w, h))
+                .transform(new com.bumptech.glide.load.resource.bitmap.CenterCrop(),
+                        new com.bumptech.glide.load.resource.bitmap.RoundedCorners((int) radius))
                 .transition(DrawableTransitionOptions.withCrossFade(200)).into(vh.image);
 
         boolean genre = it.type.equals("genre");

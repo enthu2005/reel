@@ -60,6 +60,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         final String title;
         final List<Plex.Item> items;
         final boolean landscape;
+        PosterAdapter adapter; // built once, so scrolling back to a row doesn't rebuild it
 
         Row(String title, List<Plex.Item> items, boolean landscape) {
             this.title = title;
@@ -993,25 +994,18 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         root.addView(heroTex, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        View scrimLeft = new View(this);
+        // The three dark overlays (left, top, bottom) are painted together into one small picture that is
+        // stretched over the screen. Blending three big gradients on every frame was the single biggest
+        // cost of moving through the rows on this graphics chip.
         leftGrad = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
                 new int[]{0xE6000000, 0x99000000, 0x00000000});
-        scrimLeft.setBackground(leftGrad);
-        root.addView(scrimLeft, new FrameLayout.LayoutParams((int) (W * 0.70f),
-                ViewGroup.LayoutParams.MATCH_PARENT));
-
-        View scrimTop = new View(this);
-        scrimTop.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{0x88000000, 0x00000000}));
-        root.addView(scrimTop, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, (int) (H * 0.22f), Gravity.TOP));
-
-        View scrimBottom = new View(this);
+        GradientDrawable topGrad = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{0x88000000, 0x00000000});
         bottomGrad = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
                 new int[]{0x00000000, 0xB3000000, 0xFF000000});
-        scrimBottom.setBackground(bottomGrad);
-        root.addView(scrimBottom, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, (int) (H * 0.6f), Gravity.BOTTOM));
+        View scrims = new ScrimView(this, leftGrad, topGrad, bottomGrad);
+        root.addView(scrims, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         buildHero(root);
         buildNav(root);
@@ -1067,6 +1061,71 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 .setInterpolator(Motion.EASE).start();
     }
 
+    /**
+     * The home screen's dark overlays: a shade down the left, a little at the top and a deep one up from the
+     * bottom. They are drawn into a bitmap a fraction of the screen's size and scaled up, so the graphics chip
+     * blends one picture instead of three screen-sized gradients. Changing a gradient's colours (the ambient
+     * tint) repaints the picture.
+     */
+    private static final class ScrimView extends View {
+        private static final int SHRINK = 5;
+        private final GradientDrawable left;
+        private final GradientDrawable top;
+        private final GradientDrawable bottom;
+        private final android.graphics.Canvas small = new android.graphics.Canvas();
+        private final android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG);
+        private final android.graphics.Rect dst = new android.graphics.Rect();
+        private android.graphics.Bitmap bmp;
+        private boolean dirty = true;
+
+        ScrimView(android.content.Context c, GradientDrawable left, GradientDrawable top, GradientDrawable bottom) {
+            super(c);
+            this.left = left;
+            this.top = top;
+            this.bottom = bottom;
+            left.setCallback(this);
+            top.setCallback(this);
+            bottom.setCallback(this);
+        }
+
+        @Override
+        protected boolean verifyDrawable(Drawable who) {
+            return who == left || who == top || who == bottom || super.verifyDrawable(who);
+        }
+
+        @Override
+        public void invalidateDrawable(Drawable who) {
+            dirty = true;
+            invalidate();
+        }
+
+        @Override
+        protected void onSizeChanged(int w, int h, int ow, int oh) {
+            int bw = Math.max(1, w / SHRINK);
+            int bh = Math.max(1, h / SHRINK);
+            bmp = android.graphics.Bitmap.createBitmap(bw, bh, android.graphics.Bitmap.Config.ARGB_8888);
+            small.setBitmap(bmp);
+            left.setBounds(0, 0, (int) (bw * 0.70f), bh);
+            top.setBounds(0, 0, bw, (int) (bh * 0.22f));
+            bottom.setBounds(0, (int) (bh * 0.40f), bw, bh);
+            dirty = true;
+        }
+
+        @Override
+        protected void onDraw(android.graphics.Canvas canvas) {
+            if (bmp == null) return;
+            if (dirty) {
+                bmp.eraseColor(0);
+                left.draw(small);
+                top.draw(small);
+                bottom.draw(small);
+                dirty = false;
+            }
+            dst.set(0, 0, getWidth(), getHeight());
+            canvas.drawBitmap(bmp, null, dst, paint);
+        }
+    }
+
     private ImageView newBg() {
         ImageView v = new ImageView(this);
         v.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -1077,7 +1136,12 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     }
 
     private void buildHero(FrameLayout root) {
-        LinearLayout hero = new LinearLayout(this);
+        LinearLayout hero = new LinearLayout(this) {
+            @Override
+            public boolean hasOverlappingRendering() {
+                return false; // fades without an offscreen layer
+            }
+        };
         hero.setOrientation(LinearLayout.VERTICAL);
         heroGroup = hero;
 
@@ -1152,7 +1216,14 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         hero.addView(buttons, btnRowLp);
 
         // The outer box carries the scroll fade, the inner group carries the swap animation
-        heroOuter = new FrameLayout(this);
+        // The banner fades as the rows scroll over it: fade each piece directly instead of drawing the
+        // whole banner to a separate layer first (that layer was redrawn on every scroll step)
+        heroOuter = new FrameLayout(this) {
+            @Override
+            public boolean hasOverlappingRendering() {
+                return false;
+            }
+        };
         heroOuter.setClipChildren(false);
         heroOuter.setClipToPadding(false);
         heroOuter.addView(hero, new FrameLayout.LayoutParams(
@@ -1473,17 +1544,18 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 List<Plex.Item> onDeck = Plex.items(Plex.paged("/library/onDeck", 20));
                 if (!onDeck.isEmpty()) out.rows.add(new Row("Continue Watching", onDeck, true));
 
+                // Recently Added comes straight after Continue Watching
+                List<Plex.Item> recent = recentlyAdded(sections);
+                if (!recent.isEmpty()) {
+                    out.rows.add(new Row("Recently Added", recent, false));
+                    recents.add(recent);
+                }
+
                 try {
                     List<Plex.Item> live = Plex.sessions();
                     if (!live.isEmpty()) out.rows.add(new Row("Currently Watching", live, true));
                 } catch (Exception ignored) {
                     // Some accounts can't see server activity; skip the row.
-                }
-
-                List<Plex.Item> recent = recentlyAdded(sections);
-                if (!recent.isEmpty()) {
-                    out.rows.add(new Row("Recently Added", recent, false));
-                    recents.add(recent);
                 }
                 // What you're partway through is worth a spot in the banner too
                 if (!onDeck.isEmpty()) recents.add(onDeck);
@@ -1759,7 +1831,8 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 int at = 0;
                 for (int i = 0; i < rows.size(); i++) {
                     String t = rows.get(i).title;
-                    if (t.equals("Continue Watching") || t.equals("Currently Watching")) at = i + 1;
+                    if (t.equals("Continue Watching") || t.equals("Currently Watching")
+                            || t.startsWith("Recently Added")) at = i + 1;
                 }
                 rows.add(at, new Row("Your requests", items, true));
                 rowAdapter.notifyItemInserted(at);
@@ -1916,10 +1989,15 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 List<Row> top = new ArrayList<>();
                 List<Row> rest = new ArrayList<>();
                 for (Row r : extra) {
-                    if (r.title.startsWith("Because you watched") || r.title.startsWith("Unwatched")
+                    if (r.title.startsWith("Because you watched")
                             || r.title.startsWith("More with ") || r.title.startsWith("Directed by ")) top.add(r);
                     else rest.add(r);
                 }
+                // "Unwatched" goes all the way down, after the collections (just above the Libraries buttons)
+                List<Row> unwatched = new ArrayList<>();
+                for (Row r : rest) if (r.title.startsWith("Unwatched")) unwatched.add(r);
+                rest.removeAll(unwatched);
+                rest.addAll(unwatched);
 
                 // Never slip rows in above where you are (that hid them off the top of the list).
                 int focusedRow = -1;
@@ -1933,7 +2011,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 for (int i = 0; i < rows.size(); i++) {
                     String t = rows.get(i).title;
                     if (t.equals("Continue Watching") || t.equals("Currently Watching") || t.equals("Your requests")
-                            || t.equals("Continue Watching")) {
+                            || t.equals("Recently Added")) {
                         topAt = i + 1;
                     }
                 }
@@ -2223,7 +2301,8 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         stopHeroPreview();
         if (spotlightMode) startHeroPreview(it);
 
-        setBackdrop(Plex.img(it.heroArt() != null ? it.heroArt() : it.poster(), 1920, 1080));
+        // 1280x720 is plenty behind the dark overlays and costs about half the graphics memory traffic
+        setBackdrop(Plex.img(it.heroArt() != null ? it.heroArt() : it.poster(), 1280, 720));
 
         heroGroup.animate().cancel();
         if (animate) {
@@ -2283,7 +2362,8 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         final ImageView next = bgFront == bgA ? bgB : bgA;
         final ImageView old = bgFront;
 
-        Glide.with(this).load(url).centerCrop().listener(new RequestListener<Drawable>() {
+        Glide.with(this).load(url).centerCrop().format(com.bumptech.glide.load.DecodeFormat.PREFER_RGB_565)
+                .listener(new RequestListener<Drawable>() {
             @Override
             public boolean onLoadFailed(@Nullable GlideException e, Object model,
                                         Target<Drawable> target, boolean isFirstResource) {
@@ -2383,15 +2463,9 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
             }
         }).start();
 
-        ObjectAnimator drift = ObjectAnimator.ofPropertyValuesHolder(next,
-                PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.07f),
-                PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.07f));
-        drift.setDuration(14000);
-        drift.setInterpolator(new LinearInterpolator());
+        // (The slow zoom drift is gone: it kept the whole screen redrawing every frame, even when nothing moved.)
         if (bgDrift != null) bgDrift.cancel();
-        bgDrift = drift;
-        drift.start();
-        if (pCard != null || heroPrevShowing) drift.pause(); // a preview is playing: keep the graphics chip free for it
+        bgDrift = null;
     }
 
     private boolean previewFullscreen;
@@ -2678,6 +2752,14 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     }
 
     private final class RowAdapter extends RecyclerView.Adapter<RowVH> {
+        // Every row's cards are the same size, so rows share one pool: a card scrolled off one row is
+        // reused in the next instead of building a new set of views each time.
+        private final RecyclerView.RecycledViewPool cardPool = new RecyclerView.RecycledViewPool();
+
+        RowAdapter() {
+            cardPool.setMaxRecycledViews(0, 48);
+        }
+
         @Override
         public RowVH onCreateViewHolder(ViewGroup parent, int viewType) {
             LinearLayout v = new LinearLayout(HomeActivity.this);
@@ -2697,8 +2779,10 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
             v.addView(title);
 
             RecyclerView inner = new RecyclerView(HomeActivity.this);
-            inner.setLayoutManager(new LinearLayoutManager(HomeActivity.this,
-                    LinearLayoutManager.HORIZONTAL, false));
+            LinearLayoutManager lm = new LinearLayoutManager(HomeActivity.this, LinearLayoutManager.HORIZONTAL, false);
+            lm.setInitialPrefetchItemCount(6); // get the visible cards ready while the row scrolls into view
+            inner.setLayoutManager(lm);
+            inner.setRecycledViewPool(cardPool);
             inner.setClipToPadding(false);
             inner.setClipChildren(false);
             inner.setItemAnimator(null);
@@ -2715,9 +2799,11 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
             vh.title.setText(row.title);
             int ph = (int) (H * 0.185f);
             int pw = (int) (ph * 16f / 9f);
-            PosterAdapter pa = new PosterAdapter(row.items, pw, ph, true, HomeActivity.this);
-            if (tab != TAB_HOME) pa.withTitles();
-            vh.inner.setAdapter(pa);
+            if (row.adapter == null) {
+                row.adapter = new PosterAdapter(row.items, pw, ph, true, HomeActivity.this);
+                if (tab != TAB_HOME) row.adapter.withTitles();
+            }
+            if (vh.inner.getAdapter() != row.adapter) vh.inner.setAdapter(row.adapter);
         }
 
         @Override

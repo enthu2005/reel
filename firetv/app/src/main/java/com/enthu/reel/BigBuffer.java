@@ -89,12 +89,8 @@ final class BigBuffer {
 
     /** A data source that reads through the on-device store first. */
     static CacheDataSource.Factory factory(Context c, String filmKey) {
-        synchronized (BigBuffer.class) {
-            if (!filmKey.equals(cachedFor)) {
-                clear(c); // a different film: start with an empty store
-                cachedFor = filmKey;
-            }
-        }
+        // (Another film's leftovers are cleared by the background task, not here: wiping up to 3 GB of
+        // files on the main thread held up the start of playback.)
         DataSource.Factory upstream = new DefaultDataSource.Factory(c,
                 new DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
                         .setConnectTimeoutMs(30000)
@@ -119,9 +115,26 @@ final class BigBuffer {
         posMs = ms;
     }
 
+    private volatile boolean go;
+
+    /** The player has its first picture: from now the background task may use the network too. */
+    void playerReady() {
+        go = true;
+    }
+
+    /** Removes everything stored for any other film. The film's cache key is its address. */
+    private static void purgeOthers(Context c, String url) {
+        try {
+            SimpleCache sc = cache(c);
+            for (String k : new java.util.ArrayList<>(sc.getKeys())) if (!k.equals(url)) sc.removeResource(k);
+        } catch (Throwable ignored) {
+        }
+    }
+
     void start(final Context c, final String filmKey, final String url, final long durationMs) {
         stop();
         stop = false;
+        go = false;
         final CacheDataSource.Factory f = factory(c, filmKey);
         thread = new Thread(() -> run(c, f, url, durationMs, filmKey), "ReelBigBuffer");
         thread.setDaemon(true);
@@ -136,6 +149,12 @@ final class BigBuffer {
     }
 
     private void run(Context c, CacheDataSource.Factory f, String url, long durationMs, String filmKey) {
+        purgeOthers(c, url);
+        // Let the player have the whole connection until it is showing a picture (or 15 s have passed)
+        status = "waiting for the picture";
+        for (int i = 0; i < 150 && !stop && !go; i++) {
+            try { Thread.sleep(100); } catch (InterruptedException ie) { return; }
+        }
         long length = -1;
         for (int i = 0; i < 5 && !stop && length <= 0; i++) {
             length = contentLength(url);

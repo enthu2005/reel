@@ -1475,6 +1475,7 @@ public class PlayerActivity extends Activity {
             @Override
             public void onPlaybackStateChanged(int state) {
                 if (state == Player.STATE_READY) handler.postDelayed(() -> seekingTo = -1, 300);
+                if (state == Player.STATE_READY && bigBuffer != null) bigBuffer.playerReady();
                 if (state == Player.STATE_READY && transcoding && !baseChecked && player != null) {
                     baseChecked = true;
                     // Some Plex streams already count time from the start of the movie. If so, don't
@@ -1704,11 +1705,9 @@ public class PlayerActivity extends Activity {
     }
 
     private BigBuffer bigBuffer;
-    /** "45 s", "12 min" or "1 h 05 min": how far ahead a buffer reaches. */
+    /** How far ahead a buffer reaches, always in seconds. */
     private static String aheadText(long sec) {
-        if (sec < 120) return sec + " s";
-        if (sec < 3600) return (sec / 60) + " min";
-        return (sec / 3600) + " h " + String.format(Locale.US, "%02d", (sec % 3600) / 60) + " min";
+        return sec + " s";
     }
 
     private final Runnable bigTick = new Runnable() {
@@ -2842,6 +2841,17 @@ public class PlayerActivity extends Activity {
 
         if (bufferCapMb > 0) sb.append("Buffer cap ").append(bufferCapMb).append(" MB\n");
         sb.append("Mode      ").append(transcoding ? "Transcode (Plex converts)" : "Direct play").append('\n');
+        if (item != null && item.fileSize > 0) {
+            double gb = item.fileSize / 1073741824.0;
+            sb.append("File size ").append(gb >= 1 ? String.format(Locale.US, "%.2f GB", gb)
+                    : String.format(Locale.US, "%.0f MB", item.fileSize / 1048576.0));
+            if (item.duration > 0) {
+                // average data rate of the whole file
+                sb.append("  (avg ").append(String.format(Locale.US, "%.1f Mbit/s",
+                        item.fileSize * 8.0 / (item.duration / 1000.0) / 1_000_000.0)).append(')');
+            }
+            sb.append('\n');
+        }
 
         Format v = player.getVideoFormat();
         if (v != null) {
@@ -2892,6 +2902,13 @@ public class PlayerActivity extends Activity {
             long diskSec = bigBuffer == null ? 0 : Math.max(0, bigBuffer.aheadSeconds() - ramSec);
             sb.append("Buffer disk  ").append(aheadText(diskSec)).append(" ahead  (")
                     .append(String.format(Locale.US, "%.2f", BigBuffer.usedBytes() / 1073741824.0)).append(" GB)\n");
+        } else if (BigBuffer.enabled(this)) {
+            // The setting is on, but this film isn't playing as it is, so there is nothing to store ahead
+            sb.append("Buffer disk  not used: Plex is converting this film (")
+                    .append(quality != 0 ? "a lower video quality is chosen"
+                            : ac3 ? "its sound is being converted"
+                            : "direct play failed" + (lastError.isEmpty() ? "" : ", " + lastError))
+                    .append("), so the memory buffer is limited to ").append(bufferCapMb).append(" MB\n");
         } else {
             sb.append("Buffer disk  off (Settings > Extra large buffer)\n");
         }

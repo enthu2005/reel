@@ -114,6 +114,9 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
     private void buildUi() {
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(UiUtil.BG);
+        // A focused button grows past the edge of its column; the root must not clip each child to its own
+        // box, or the growing button's rounded left end is cut flat
+        root.setClipChildren(false);
 
         bg = new ImageView(this);
         bg.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -314,8 +317,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         castLabel.setTextColor(UiUtil.TEXT);
         castLabel.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.028f);
         castLabel.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
-        castLabel.setPadding((int) (W * 0.045f) + (int) (H * 0.011f), 0, 0, (int) (H * 0.006f));
-        castBox.addView(castLabel);
+        placeLabel(castBox, castLabel);
         castRow = new RecyclerView(this);
         castRow.setLayoutManager(new LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false));
         castRow.setClipToPadding(false);
@@ -337,8 +339,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         moreLabel.setTextColor(UiUtil.TEXT);
         moreLabel.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.028f);
         moreLabel.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
-        moreLabel.setPadding((int) (W * 0.045f) + (int) (H * 0.011f), 0, 0, (int) (H * 0.006f));
-        moreBox.addView(moreLabel);
+        placeLabel(moreBox, moreLabel);
         moreRow = new RecyclerView(this);
         moreRow.setLayoutManager(new LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false));
         moreRow.setClipToPadding(false);
@@ -361,8 +362,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         requestLabel.setTextColor(UiUtil.TEXT);
         requestLabel.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.028f);
         requestLabel.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
-        requestLabel.setPadding((int) (W * 0.045f) + (int) (H * 0.011f), 0, 0, (int) (H * 0.006f));
-        requestBox.addView(requestLabel);
+        placeLabel(requestBox, requestLabel);
         requestRow = new RecyclerView(this);
         requestRow.setLayoutManager(new LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false));
         requestRow.setClipToPadding(false);
@@ -866,6 +866,21 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         }
     }
 
+    /**
+     * A row heading whose text lines up with the first card. The indent is a margin, not padding: padding
+     * would put the white highlight a focused heading gets right at the screen's left edge, cutting off its
+     * rounded corner.
+     */
+    private void placeLabel(LinearLayout box, TextView label) {
+        int p = (int) (W * 0.016f);
+        label.setPadding(p, (int) (H * 0.006f), p, (int) (H * 0.006f));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.leftMargin = (int) (W * 0.045f) + (int) (H * 0.011f) - p;
+        lp.bottomMargin = (int) (H * 0.002f);
+        box.addView(label, lp);
+    }
+
     private LinearLayout.LayoutParams buttonGap() {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -935,46 +950,6 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             } else if (l.item.type.equals("season")) {
                 l.episodes = Plex.items("/library/metadata/" + key + "/children");
             }
-            if (l.item != null && l.item.type.equals("movie") && l.item.librarySectionID > 0) {
-                try {
-                    List<Plex.Item> lib = Plex.items(Plex.paged("/library/sections/" + l.item.librarySectionID + "/all?sort=random", 24));
-                    lib.removeIf(it -> it.key.equals(l.item.key));
-                    l.sameLibrary.addAll(lib);
-                } catch (Exception ignored) {
-                }
-            }
-            if (l.item != null && l.item.type.equals("movie") && !l.item.collFilter.isEmpty() && l.item.librarySectionID > 0) {
-                try {
-                    List<Plex.Item> col = Plex.items(Plex.paged("/library/sections/" + l.item.librarySectionID
-                            + "/all?" + l.item.collFilter, 60));
-                    col.removeIf(it -> it.key.equals(l.item.key));
-                    // Release order: the first film first
-                    java.util.Collections.sort(col, (a, b) -> a.year != b.year ? Integer.compare(a.year, b.year)
-                            : a.title.compareToIgnoreCase(b.title));
-                    l.collection.addAll(col);
-                } catch (Exception ignored) {
-                }
-            }
-            if (l.item != null && (l.item.type.equals("movie") || l.item.type.equals("episode"))) {
-                try {
-                    l.related.addAll(Plex.related(l.item.key));
-                } catch (Exception ignored) {
-                }
-            }
-            if (l.item != null && (l.item.type.equals("movie") || l.item.type.equals("show"))) {
-                // Titles like this one that aren't in your libraries yet, to request
-                try {
-                    Seerr.init(DetailActivity.this);
-                    String tmdb = Seerr.configured() ? Plex.tmdbId(l.item.key) : null;
-                    if (tmdb != null) {
-                        for (Seerr.Media m : Seerr.recommendations(l.item.type.equals("show") ? "tv" : "movie", tmdb)) {
-                            if (m.status < 5 && m.requestStatus != 3 && l.requests.size() < 20) l.requests.add(m);
-                        }
-                    }
-                } catch (Exception ignored) {
-                    // Seerr unreachable: no request row
-                }
-            }
             return l;
         }, new Plex.Callback<Loaded>() {
             @Override
@@ -982,19 +957,12 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
                 if (isDestroyed()) return;
                 item = l.item;
                 showLogo = l.showLogo;
-                related.clear();
-                related.addAll(l.related);
-                collection.clear();
-                collection.addAll(l.collection);
-                sameLibrary.clear();
-                sameLibrary.addAll(l.sameLibrary);
-                requestItems.clear();
-                for (Seerr.Media m : l.requests) requestItems.add(m.toItem());
                 findTrailer();
                 startBehindWhenReady();
                 episodes.clear();
                 episodes.addAll(l.episodes);
-                bind();
+                bind(); // the page is up now; the lists along the bottom fill in as they arrive
+                loadExtras(l.item);
             }
 
             @Override
@@ -1003,6 +971,85 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
                 meta.setText("Couldn't load this: " + e.getMessage());
             }
         });
+    }
+
+    /** The slower lists (more in the library, the collection, related, Seerr), after the page is showing. */
+    private void loadExtras(final Plex.Item it0) {
+        Plex.async(() -> {
+            Loaded l = new Loaded();
+            l.item = it0;
+            if (it0.type.equals("movie") && it0.librarySectionID > 0) {
+                try {
+                    List<Plex.Item> lib = Plex.items(Plex.paged("/library/sections/" + it0.librarySectionID + "/all?sort=random", 24));
+                    lib.removeIf(it -> it.key.equals(it0.key));
+                    l.sameLibrary.addAll(lib);
+                } catch (Exception ignored) {
+                }
+            }
+            if (it0.type.equals("movie") && !it0.collFilter.isEmpty() && it0.librarySectionID > 0) {
+                try {
+                    List<Plex.Item> col = Plex.items(Plex.paged("/library/sections/" + it0.librarySectionID
+                            + "/all?" + it0.collFilter, 60));
+                    col.removeIf(it -> it.key.equals(it0.key));
+                    // Release order: the first film first
+                    java.util.Collections.sort(col, (a, b) -> a.year != b.year ? Integer.compare(a.year, b.year)
+                            : a.title.compareToIgnoreCase(b.title));
+                    l.collection.addAll(col);
+                } catch (Exception ignored) {
+                }
+            }
+            if (it0.type.equals("movie") || it0.type.equals("episode")) {
+                try {
+                    l.related.addAll(Plex.related(it0.key));
+                } catch (Exception ignored) {
+                }
+            }
+            return l;
+        }, new Plex.Callback<Loaded>() {
+            @Override
+            public void ok(Loaded l) {
+                if (isDestroyed() || item == null || !item.key.equals(it0.key)) return;
+                related.clear();
+                related.addAll(l.related);
+                collection.clear();
+                collection.addAll(l.collection);
+                sameLibrary.clear();
+                sameLibrary.addAll(l.sameLibrary);
+                bindLower();
+            }
+
+            @Override
+            public void fail(Exception e) {
+            }
+        });
+
+        if (it0.type.equals("movie") || it0.type.equals("show")) {
+            // Titles like this one that aren't in your libraries yet, to request. Its own job: Seerr can be slow.
+            Plex.async(() -> {
+                List<Seerr.Media> out = new ArrayList<>();
+                Seerr.init(DetailActivity.this);
+                String tmdb = Seerr.configured() ? Plex.tmdbId(it0.key) : null;
+                if (tmdb != null) {
+                    for (Seerr.Media m : Seerr.recommendations(it0.type.equals("show") ? "tv" : "movie", tmdb)) {
+                        if (m.status < 5 && m.requestStatus != 3 && out.size() < 20) out.add(m);
+                    }
+                }
+                return out;
+            }, new Plex.Callback<List<Seerr.Media>>() {
+                @Override
+                public void ok(List<Seerr.Media> list) {
+                    if (isDestroyed() || item == null || !item.key.equals(it0.key)) return;
+                    requestItems.clear();
+                    for (Seerr.Media m : list) requestItems.add(m.toItem());
+                    bindLower();
+                }
+
+                @Override
+                public void fail(Exception e) {
+                    // Seerr unreachable: no request row
+                }
+            });
+        }
     }
 
     private boolean isContainer() {
@@ -1166,6 +1213,16 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             epBox.setVisibility(View.GONE);
         }
 
+        bindLower();
+
+        if (firstLoad) {
+            firstLoad = false;
+            playBtn.requestFocus();
+        }
+    }
+
+    /** Cast, Similar and Similar to request along the bottom. Runs again when the slower lists arrive. */
+    private void bindLower() {
         if (item.type.equals("movie") && !item.cast.isEmpty()) {
             // Coming back from a cast page re-runs this: keep the row (and the focus on it) as it was
             String castSig = item.key + ":" + item.cast.size();
@@ -1278,11 +1335,6 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         sizeLowerWindow(8);
 
         shuffleBtn.setVisibility(shouldShowShuffle() ? View.VISIBLE : View.GONE);
-
-        if (firstLoad) {
-            firstLoad = false;
-            playBtn.requestFocus();
-        }
     }
 
     /** Sizes the bottom window to Cast + Similar once those rows have been laid out. */
