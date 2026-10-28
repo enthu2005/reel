@@ -328,13 +328,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final tasks = <Future<void>>[
       if (_tab == 0)
         _requestRows().then((r) => land(() => _gReq = r), onError: (_) {}),
-      if (_tab <= 1)
-        _genreRows().then(
-            (r) => land(() {
-                  _genrePaths.addAll(r.$2);
-                  _gGenres = r.$1;
-                }),
-            onError: (_) {}),
+      _genreRows().then(
+          (r) => land(() {
+                _genrePaths.addAll(r.$2);
+                _gGenres = r.$1;
+              }),
+          onError: (_) {}),
       _extraRows(_secs)
           .timeout(const Duration(seconds: 45))
           .then((r) => land(() => _gExtra = r), onError: (_) {}),
