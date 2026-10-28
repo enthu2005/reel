@@ -38,6 +38,7 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
     private int suggToken = 0;
     private static final int SUGG_ROW_H_DIV = 16; // row height = screen height / this
     private TextView message;
+    private View firstKeyView;
     private RecyclerView grid;
     private int token = 0;
     private Runnable pending;
@@ -151,6 +152,7 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
 
         setContentView(root);
         preview = new PreviewCard(this, root, PreviewCard::plexTrailer); // live previews on the posters
+        firstKeyView = firstKey;
         changed();
         if (firstKey != null) firstKey.requestFocus();
         if (getIntent().getBooleanExtra("voice", false)) handler.postDelayed(this::voiceSearch, 300);
@@ -206,7 +208,10 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != VOICE || resultCode != RESULT_OK || data == null) return;
         java.util.ArrayList<String> said = data.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS);
-        if (said != null && !said.isEmpty()) setQuery(said.get(0));
+        if (said != null && !said.isEmpty()) {
+            setQuery(said.get(0));
+            remember(said.get(0));
+        }
     }
 
     /** A real text box, so Fire TV's own keyboard (and its dictation, where available) can be used. */
@@ -229,6 +234,7 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
         box.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);
         box.setOnEditorActionListener((v, actionId, ev) -> {
             setQuery(box.getText().toString());
+            remember(box.getText().toString());
             d.dismiss();
             return true;
         });
@@ -275,7 +281,7 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
         if (pendingSugg != null) handler.removeCallbacks(pendingSugg);
         final int mine = ++suggToken;
         if (q.isEmpty()) {
-            showSuggestions(new ArrayList<>());
+            showHistory();
             return;
         }
         pendingSugg = () -> Plex.async(() -> Plex.suggest(q), new Plex.Callback<List<String>>() {
@@ -296,45 +302,96 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
         suggBox.removeAllViews();
         final String cur = query.toString().trim().toLowerCase();
         int shown = 0;
-        int rowH = H / SUGG_ROW_H_DIV;
         for (final String s : list) {
             if (s.toLowerCase().equals(cur) || shown >= 5) continue;
             shown++;
-            final TextView t = new TextView(this);
-            t.setText(s);
-            t.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.03f);
-            t.setTypeface(UiUtil.font(UiUtil.MEDIUM));
-            t.setTextColor(Color.WHITE);
-            t.setSingleLine(true);
-            t.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            t.setGravity(Gravity.CENTER_VERTICAL);
-            int px = (int) (H * 0.022f);
-            t.setPadding(px, 0, px, 0);
-            t.setFocusable(true);
-            t.setClickable(true);
-            final float r = H * 0.02f;
-            t.setBackground(UiUtil.rounded(0x14FFFFFF, r));
-            t.setOnFocusChangeListener((v, f) -> {
-                t.setBackground(UiUtil.rounded(f ? 0xFFFFFFFF : 0x14FFFFFF, r));
-                t.setTextColor(f ? 0xFF000000 : Color.WHITE);
-                if (f) SoundFx.move();
+            addSuggRow(s, v -> {
+                remember(s);
+                searchFor(s);
             });
-            t.setOnClickListener(v -> {
-                SoundFx.click();
-                query.setLength(0);
-                query.append(s.length() > 40 ? s.substring(0, 40) : s);
-                // search for it straight away
-                changed();
-                suggBox.removeAllViews();
-                suggBox.setVisibility(View.GONE);
-                updateGridTop();
-            });
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, rowH);
-            lp.bottomMargin = (int) (H * 0.008f);
-            suggBox.addView(t, lp);
         }
         suggBox.setVisibility(shown > 0 ? View.VISIBLE : View.GONE);
+        updateGridTop();
+    }
+
+    /** Puts [s] in the box and searches for it straight away. */
+    private void searchFor(String s) {
+        query.setLength(0);
+        query.append(s.length() > 40 ? s.substring(0, 40) : s);
+        changed();
+        suggBox.removeAllViews();
+        suggBox.setVisibility(View.GONE);
+        updateGridTop();
+    }
+
+    private void addSuggRow(String label, View.OnClickListener onClick) {
+        final TextView t = new TextView(this);
+        t.setText(label);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.03f);
+        t.setTypeface(UiUtil.font(UiUtil.MEDIUM));
+        t.setTextColor(Color.WHITE);
+        t.setSingleLine(true);
+        t.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        t.setGravity(Gravity.CENTER_VERTICAL);
+        int px = (int) (H * 0.022f);
+        t.setPadding(px, 0, px, 0);
+        t.setFocusable(true);
+        t.setClickable(true);
+        final float r = H * 0.02f;
+        t.setBackground(UiUtil.rounded(0x14FFFFFF, r));
+        t.setOnFocusChangeListener((v, f) -> {
+            t.setBackground(UiUtil.rounded(f ? 0xFFFFFFFF : 0x14FFFFFF, r));
+            t.setTextColor(f ? 0xFF000000 : Color.WHITE);
+            if (f) SoundFx.move();
+        });
+        t.setOnClickListener(v -> {
+            SoundFx.click();
+            onClick.onClick(v);
+        });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, H / SUGG_ROW_H_DIV);
+        lp.bottomMargin = (int) (H * 0.008f);
+        suggBox.addView(t, lp);
+    }
+
+    // ---- Search history: the last few things you searched for, shown while the box is empty ----
+
+    private static final int HISTORY_MAX = 8;
+
+    private android.content.SharedPreferences uiPrefs() {
+        return getSharedPreferences("reel_ui", MODE_PRIVATE);
+    }
+
+    private List<String> history() {
+        List<String> out = new ArrayList<>();
+        for (String s : uiPrefs().getString("searchHistory", "").split("\n")) if (!s.isEmpty()) out.add(s);
+        return out;
+    }
+
+    /** Most recent first, no repeats. */
+    private void remember(String text) {
+        String t = text == null ? "" : text.trim().toLowerCase();
+        if (t.length() < 2) return;
+        List<String> h = history();
+        h.removeIf(x -> x.equalsIgnoreCase(t));
+        h.add(0, t);
+        while (h.size() > HISTORY_MAX) h.remove(h.size() - 1);
+        uiPrefs().edit().putString("searchHistory", android.text.TextUtils.join("\n", h)).apply();
+    }
+
+    private void showHistory() {
+        suggBox.removeAllViews();
+        List<String> h = history();
+        for (final String s : h) addSuggRow("↻  " + s, v -> searchFor(s));
+        if (!h.isEmpty()) {
+            addSuggRow("Clear search history", v -> {
+                uiPrefs().edit().remove("searchHistory").apply();
+                showHistory();
+                message.setVisibility(View.VISIBLE);
+                if (firstKeyView != null) firstKeyView.requestFocus();
+            });
+        }
+        suggBox.setVisibility(h.isEmpty() ? View.GONE : View.VISIBLE);
         updateGridTop();
     }
 
@@ -367,7 +424,8 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
             results.clear();
             grid.setAdapter(null);
             message.setText(q.isEmpty() ? "Type a title or an actor" : "Keep typing…");
-            message.setVisibility(View.VISIBLE);
+            // the recent searches fill that space while the box is empty
+            message.setVisibility(q.isEmpty() && suggBox.getChildCount() > 0 ? View.GONE : View.VISIBLE);
             return;
         }
         pending = () -> Plex.async(() -> Plex.search(q), new Plex.Callback<List<Plex.Item>>() {
@@ -417,6 +475,7 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
 
     @Override
     public void onClicked(Plex.Item it) {
+        remember(query.toString()); // opening a result is what makes a search worth keeping
         final Intent i = new Intent(this, DetailActivity.class);
         i.putExtra("key", it.key);
         if (preview != null && preview.openFullThen(it.key, () -> startActivity(i))) return;

@@ -51,6 +51,18 @@ final class BigBuffer {
         return status;
     }
 
+    /** How fast the background task last pulled data from the server, in Mbit/s (0 until it has). */
+    private volatile double lastMbps;
+
+    double downloadMbps() {
+        return lastMbps;
+    }
+
+    /** The file's average data rate in bytes per second (0 if not known yet). */
+    long bytesPerSecond() {
+        return fileLen <= 0 || fileDurMs <= 0 ? 0 : (long) (fileLen / (fileDurMs / 1000.0));
+    }
+
     static boolean enabled(Context c) {
         return c.getSharedPreferences("reel_ui", Context.MODE_PRIVATE).getBoolean("bigBuffer", false);
     }
@@ -159,6 +171,9 @@ final class BigBuffer {
                 new CacheWriter(ds, new DataSpec.Builder().setUri(uri).setPosition(frontier).setLength(n).build(),
                         null, null).cache();
                 frontier += n;
+                long fetchedMs = Math.max(1, (System.nanoTime() - t0) / 1_000_000L);
+                lastMbps = n * 8.0 / 1000.0 / fetchedMs; // before any throttling pause
+                trimBehind(c, here, length);
                 int mbit = c.getSharedPreferences("reel_ui", Context.MODE_PRIVATE).getInt("bigBufferMbit", 25);
                 if (mbit > 0) {
                     long minMs = n * 8000L / ((long) mbit * 1_000_000L);
@@ -177,6 +192,26 @@ final class BigBuffer {
                     return;
                 }
             }
+        }
+    }
+
+    /**
+     * Like swap space in reverse: once the player has moved on, what it already played is deleted from the
+     * disk, so the store only ever holds what is still to come (plus a little behind for a short rewind).
+     */
+    private static void trimBehind(Context c, long here, long length) {
+        try {
+            long keep = Math.max(128L * 1024 * 1024, length / 50); // the playhead is only an estimate: stay well clear
+            long cutoff = here - keep;
+            if (cutoff <= 0) return;
+            SimpleCache sc = cache(c);
+            for (String k : new java.util.ArrayList<>(sc.getKeys())) {
+                for (androidx.media3.datasource.cache.CacheSpan span : new java.util.ArrayList<>(sc.getCachedSpans(k))) {
+                    if (span.isCached && span.position + span.length < cutoff) sc.removeSpan(span);
+                }
+            }
+        } catch (Throwable ignored) {
+            // trimming is a courtesy; the least-recently-used rule still keeps the store under its limit
         }
     }
 

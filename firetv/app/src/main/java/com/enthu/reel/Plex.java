@@ -119,7 +119,8 @@ public final class Plex {
         public String contentRating = "";
         public String tagline = "";
         public long addedAt;          // seconds since 1970
-        public int leafCount;         // episodes in a show
+        public long lastViewedAt;     // seconds since 1970 (0 = never)
+        public int leafCount;        // episodes in a show
         public int viewedLeafCount;   // ...of which watched
         public String collName = "";   // the collection / franchise it belongs to, if any
         public String collFilter = ""; // e.g. "collection=123"
@@ -784,13 +785,28 @@ public final class Plex {
         prefs.edit().putStringSet(prefKey, new HashSet<>(keys)).apply();
     }
 
+    /** Libraries for the Home and TV Shows tabs ("homeLibraries", falling back to the old shared choice). */
     public static List<Section> visibleSections(List<Section> all) {
         if (all == null || all.isEmpty()) return all == null ? new ArrayList<>() : all;
         if (prefs == null) return all;
-        Set<String> allowed = prefs.getStringSet("visibleLibraries", null);
+        Set<String> allowed = prefs.getStringSet("homeLibraries", prefs.getStringSet("visibleLibraries", null));
         if (allowed == null) return all;
         List<Section> out = new ArrayList<>();
         for (Section s : all) if (allowed.contains(s.key)) out.add(s);
+        return out;
+    }
+
+    /**
+     * Libraries for the Movies tab. Until a choice is saved in Settings this is every movie library;
+     * once chosen it is exactly the libraries ticked there, whatever Plex calls their type.
+     */
+    public static List<Section> movieSections(List<Section> all) {
+        List<Section> out = new ArrayList<>();
+        if (all == null) return out;
+        Set<String> chosen = prefs == null ? null : prefs.getStringSet("movieLibraries", null);
+        for (Section s : all) {
+            if (chosen == null ? s.type.equals("movie") : chosen.contains(s.key)) out.add(s);
+        }
         return out;
     }
 
@@ -1036,6 +1052,7 @@ public final class Plex {
         i.summary = m.optString("summary");
         i.tagline = m.optString("tagline", "");
         i.addedAt = m.optLong("addedAt", 0);
+        i.lastViewedAt = m.optLong("lastViewedAt", 0);
         i.leafCount = m.optInt("leafCount", 0);
         i.viewedLeafCount = m.optInt("viewedLeafCount", 0);
         i.year = m.optInt("year", 0);

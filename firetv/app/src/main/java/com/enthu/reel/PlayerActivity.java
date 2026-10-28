@@ -1455,7 +1455,10 @@ public class PlayerActivity extends Activity {
                     lastError = error.getErrorCodeName() + why
                             + (error.getCause() != null ? " - " + error.getCause().getClass().getSimpleName()
                             + ": " + error.getCause().getMessage() : "");
-                    boolean io = error.errorCode >= 2000 && error.errorCode < 3000;
+                    // A dropped connection, or Plex's converter handing back an empty / broken piece
+                    // while it (re)starts ("container malformed"): start a fresh stream from where it stopped
+                    boolean io = (error.errorCode >= 2000 && error.errorCode < 3000)
+                            || error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED;
                     if (io && ioRetries < 6) {
                         // Weak Wi-Fi: keep the same quality and just try again from where it stopped.
                         ioRetries++;
@@ -1701,6 +1704,13 @@ public class PlayerActivity extends Activity {
     }
 
     private BigBuffer bigBuffer;
+    /** "45 s", "12 min" or "1 h 05 min": how far ahead a buffer reaches. */
+    private static String aheadText(long sec) {
+        if (sec < 120) return sec + " s";
+        if (sec < 3600) return (sec / 60) + " min";
+        return (sec / 3600) + " h " + String.format(Locale.US, "%02d", (sec % 3600) / 60) + " min";
+    }
+
     private final Runnable bigTick = new Runnable() {
         @Override
         public void run() {
@@ -2861,12 +2871,37 @@ public class PlayerActivity extends Activity {
 
         sb.append("Dropped   ").append(dropped).append(" frames\n");
         sb.append("Underruns ").append(underruns).append('\n');
-        sb.append("Buffered  ").append(player.getTotalBufferedDuration() / 1000).append(" s\n");
-        if (bigBuffer != null && !transcoding && BigBuffer.enabled(this)) {
-            long ram = player.getTotalBufferedDuration() / 1000;
-            long disk = bigBuffer.aheadSeconds();
-            sb.append("Ahead     ").append(Math.max(ram, disk)).append(" s  (").append(ram).append(" s of it already in memory)\n");
+        // Buffer, in two simple lines: what's waiting in memory, and what's waiting on the Fire TV's storage
+        long ramSec = player.getTotalBufferedDuration() / 1000;
+        // ...with the memory it takes in brackets (seconds x the file's data rate; the player doesn't report it)
+        long rate = bigBuffer != null && !transcoding ? bigBuffer.bytesPerSecond() : 0;
+        if (rate <= 0) {
+            Format vf = player.getVideoFormat();
+            Format af = player.getAudioFormat();
+            long bits = (vf != null && vf.bitrate > 0 ? vf.bitrate : 0) + (af != null && af.bitrate > 0 ? af.bitrate : 0);
+            rate = bits / 8;
         }
+        sb.append("Buffer RAM   ").append(aheadText(ramSec)).append(" ahead");
+        if (rate > 0) {
+            sb.append("  (~").append(Math.min(ramSec * rate >> 20, 99999)).append(" MB of ")
+                    .append(bufferCapMb).append(" MB)");
+        }
+        sb.append('\n');
+        if (BigBuffer.enabled(this) && !transcoding) {
+            // The store counts everything fetched ahead; what's already loaded into memory isn't "on disk" any more
+            long diskSec = bigBuffer == null ? 0 : Math.max(0, bigBuffer.aheadSeconds() - ramSec);
+            sb.append("Buffer disk  ").append(aheadText(diskSec)).append(" ahead  (")
+                    .append(String.format(Locale.US, "%.2f", BigBuffer.usedBytes() / 1073741824.0)).append(" GB)\n");
+        } else {
+            sb.append("Buffer disk  off (Settings > Extra large buffer)\n");
+        }
+        // Download speed: the disk filler's own pace when it's running, otherwise the player's estimate
+        double mbps = bigBuffer != null && !transcoding && BigBuffer.enabled(this) ? bigBuffer.downloadMbps() : 0;
+        if (mbps <= 0) {
+            long est = androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.getSingletonInstance(this).getBitrateEstimate();
+            mbps = est / 1_000_000.0;
+        }
+        sb.append("Download     ").append(mbps > 0 ? String.format(Locale.US, "%.1f Mbit/s", mbps) : "measuring...").append('\n');
         try {
             Runtime rt = Runtime.getRuntime();
             long heapUsed = rt.totalMemory() - rt.freeMemory();
@@ -2878,16 +2913,6 @@ public class PlayerActivity extends Activity {
                     .append(nativeUsed >> 20).append(")\n");
             sb.append("          device free ").append(mi.availMem >> 20).append(" of ").append(mi.totalMem >> 20)
                     .append(" MB\n");
-            if (BigBuffer.enabled(this)) {
-                sb.append("Disk buf  ").append(String.format(Locale.US, "%.2f", BigBuffer.usedBytes() / 1073741824.0))
-                        .append(" of 3 GB stored");
-                if (bigBuffer != null && !transcoding) {
-                    sb.append("  (").append(bigBuffer.ahead() >> 20).append(" MB ahead, ").append(bigBuffer.status()).append(")");
-                }
-                sb.append('\n');
-            } else {
-                sb.append("Disk buf  off (Settings > Extra large buffer)\n");
-            }
         } catch (RuntimeException ignored) {
         }
 
