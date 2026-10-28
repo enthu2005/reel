@@ -166,6 +166,13 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         if (focusedCardRoot == card.getParent() && focusedItem == item) return;
         stopHeroPreview(); // moving down into the rows: the spotlight preview stops
         stopPreview();
+        if (isGenre(item)) {
+            // A genre card has no trailer to preview
+            focusedCard = null;
+            focusedCardRoot = null;
+            focusedItem = null;
+            return;
+        }
         focusedCard = card;
         focusedCardRoot = (View) card.getParent();
         focusedItem = item;
@@ -1458,7 +1465,9 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         final java.util.concurrent.Callable<Loaded> job = () -> {
             Loaded out = new Loaded();
             List<List<Plex.Item>> recents = new ArrayList<>();
-            List<Plex.Section> sections = Plex.visibleSections(Plex.sections());
+            List<Plex.Section> allSections = Plex.sections();
+            List<Plex.Section> sections = whichTab == TAB_MOVIES
+                    ? Plex.movieSections(allSections) : Plex.visibleSections(allSections);
 
             if (whichTab == TAB_HOME) {
                 List<Plex.Item> onDeck = Plex.items(Plex.paged("/library/onDeck", 20));
@@ -1471,13 +1480,10 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                     // Some accounts can't see server activity; skip the row.
                 }
 
-                for (Plex.Section s : sections) {
-                    List<Plex.Item> recent = Plex.items(Plex.paged(
-                            "/library/sections/" + s.key + "/all?sort=addedAt:desc", 40));
-                    if (!recent.isEmpty()) {
-                        out.rows.add(new Row("Recently Added · " + s.title, recent, false));
-                        recents.add(recent);
-                    }
+                List<Plex.Item> recent = recentlyAdded(sections);
+                if (!recent.isEmpty()) {
+                    out.rows.add(new Row("Recently Added", recent, false));
+                    recents.add(recent);
                 }
                 // What you're partway through is worth a spot in the banner too
                 if (!onDeck.isEmpty()) recents.add(onDeck);
@@ -1494,18 +1500,34 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 } catch (Exception ignored) {
                     // no Continue Watching row if the server won't say
                 }
+                List<Plex.Section> tabSections = new ArrayList<>();
                 for (Plex.Section s : sections) {
-                    if (!s.type.equals(type)) continue;
-                    List<Plex.Item> recent = Plex.items(Plex.paged(
-                            "/library/sections/" + s.key + "/all?sort=addedAt:desc", 40));
-                    if (!recent.isEmpty()) {
-                        out.rows.add(new Row("Recently Added", recent, false));
-                        recents.add(recent);
-                    }
-                    List<Plex.Item> all = Plex.items(Plex.paged(
-                            "/library/sections/" + s.key + "/all?sort=titleSort", 3000));
-                    if (!all.isEmpty()) out.rows.add(new Row("All " + s.title, all, false));
+                    if (whichTab == TAB_SHOWS && !s.type.equals("show")) continue; // Movies already uses its own list
+                    tabSections.add(s);
                 }
+                List<Plex.Item> recent = recentlyAdded(tabSections);
+                if (!recent.isEmpty()) {
+                    out.rows.add(new Row("Recently Added", recent, false));
+                    recents.add(recent);
+                }
+                // The whole library is a button (a tile that opens its page), not a row of thousands
+                List<Plex.Item> tiles = new ArrayList<>();
+                for (Plex.Section s : tabSections) {
+                    Plex.Item t = new Plex.Item();
+                    t.key = "lib:" + s.key;
+                    t.type = "genre"; // drawn as a name tile
+                    t.title = s.title.toLowerCase().startsWith("all ") ? s.title : "All " + s.title;
+                    t.summary = s.type; // so the page knows what it's opening
+                    try {
+                        List<Plex.Item> one = Plex.items(Plex.paged(
+                                "/library/sections/" + s.key + "/all?sort=random", 1));
+                        if (!one.isEmpty()) t.thumb = one.get(0).art != null ? one.get(0).art : one.get(0).thumb;
+                    } catch (Exception ignored) {
+                        // no picture: the tile still opens
+                    }
+                    tiles.add(t);
+                }
+                if (!tiles.isEmpty()) out.rows.add(new Row("Libraries", tiles, true));
             }
 
             // Spotlight: the newest titles that have artwork, mixing libraries
@@ -1553,6 +1575,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 }
                 status.setVisibility(View.GONE);
                 if (whichTab == TAB_HOME) loadRequests(mine);
+                if (whichTab == TAB_MOVIES || whichTab == TAB_HOME) loadGenres(mine, whichTab);
                 loadExtras(mine, whichTab);
 
                 spotIndex = 0;
@@ -1694,6 +1717,29 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         return !eta.isEmpty() ? eta : st;
     }
 
+    /** Removes every row with this title, so a late second load can't leave a duplicate behind. */
+    private void removeRows(String title) {
+        for (int i = rows.size() - 1; i >= 0; i--) {
+            if (rows.get(i).title.equals(title)) {
+                rows.remove(i);
+                rowAdapter.notifyItemRemoved(i);
+            }
+        }
+    }
+
+    /** The "Libraries" buttons always sit at the very bottom, whatever was added after them. */
+    private void keepLibrariesLast() {
+        for (int i = 0; i < rows.size() - 1; i++) {
+            if (!rows.get(i).title.equals("Libraries")) continue;
+            View v = rowsView.getLayoutManager() == null ? null : rowsView.getLayoutManager().findViewByPosition(i);
+            if (v != null && v.hasFocus()) return; // don't pull the row away from under the cursor
+            Row r = rows.remove(i);
+            rows.add(r);
+            rowAdapter.notifyItemMoved(i, rows.size() - 1);
+            return;
+        }
+    }
+
     /** "Your requests" from Seerr, placed just under Up Next. Skipped if Seerr isn't set up. */
     private void loadRequests(final int mine) {
         Seerr.init(this);
@@ -1709,6 +1755,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                     it.watcher = requestLabel(m);
                     items.add(it);
                 }
+                removeRows("Your requests");
                 int at = 0;
                 for (int i = 0; i < rows.size(); i++) {
                     String t = rows.get(i).title;
@@ -1716,6 +1763,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 }
                 rows.add(at, new Row("Your requests", items, true));
                 rowAdapter.notifyItemInserted(at);
+                keepLibrariesLast();
                 if (!rowsView.hasFocus() && android.os.SystemClock.uptimeMillis() - restoredAt > 3000
                         && rowsView.getLayoutManager() instanceof LinearLayoutManager) {
                     ((LinearLayoutManager) rowsView.getLayoutManager()).scrollToPositionWithOffset(0, 0);
@@ -1755,51 +1803,77 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         Plex.async(() -> {
             List<Row> out = new ArrayList<>();
             java.util.Random rnd = new java.util.Random();
-            List<Plex.Section> sections = Plex.visibleSections(Plex.sections());
-            int genreRows = whichTab == TAB_HOME ? 2 : 4;
+            List<Plex.Section> allSections = Plex.sections();
+            List<Plex.Section> sections = whichTab == TAB_MOVIES
+                    ? Plex.movieSections(allSections) : Plex.visibleSections(allSections);
             int collRows = whichTab == TAB_HOME ? 2 : 3;
-            for (Plex.Section s : sections) {
-                boolean movie = s.type.equals("movie");
-                boolean show = s.type.equals("show");
-                if (!movie && !show) continue;
-                if (whichTab == TAB_MOVIES && !movie) continue;
-                if (whichTab == TAB_SHOWS && !show) continue;
-                String label = sections.size() > 2 ? " \u00B7 " + s.title : "";
 
-                // Because you watched ...
+            // One "Because you watched" and one "Unwatched" row for movies, and the same for shows,
+            // each drawing on every library ticked in Settings.
+            List<Plex.Section> movieLibs = new ArrayList<>();
+            List<Plex.Section> showLibs = new ArrayList<>();
+            for (Plex.Section s : sections) {
+                // Every library on the Movies tab counts as movies, whatever Plex calls it
+                if (whichTab == TAB_MOVIES || s.type.equals("movie")) movieLibs.add(s);
+                else if (s.type.equals("show")) showLibs.add(s);
+            }
+            if (whichTab == TAB_SHOWS) movieLibs.clear();
+            for (int pass = 0; pass < 2; pass++) {
+                boolean movie = pass == 0;
+                List<Plex.Section> group = movie ? movieLibs : showLibs;
+                if (group.isEmpty()) continue;
+
                 try {
-                    List<Plex.Item> last = Plex.items(Plex.paged(
-                            "/library/sections/" + s.key + "/all?sort=lastViewedAt:desc", 10));
-                    int seeds = 0;
+                    List<Plex.Item> last = new ArrayList<>();
+                    for (Plex.Section s : group) {
+                        last.addAll(Plex.items(Plex.paged(
+                                "/library/sections/" + s.key + "/all?sort=lastViewedAt:desc", 10)));
+                    }
+                    java.util.Collections.sort(last, (a, b) -> Long.compare(b.lastViewedAt, a.lastViewedAt));
                     for (Plex.Item w : last) {
-                        if (w.viewCount <= 0 && w.viewOffset <= 0) continue;
+                        // A show counts as watched once any episode has been
+                        if (w.viewCount <= 0 && w.viewOffset <= 0 && w.viewedLeafCount <= 0) continue;
                         List<Plex.Item> like = new ArrayList<>();
                         for (Plex.Item x : Plex.related(w.key)) {
-                            if (x.viewCount == 0 && like.size() < 20) like.add(x); // only things you haven't seen
+                            if (x.viewCount == 0 && x.viewedLeafCount == 0 && like.size() < 20) like.add(x); // only things you haven't seen
                         }
-                        if (like.size() >= 4) out.add(new Row("Because you watched " + w.displayTitle(), like, false));
-                        if (++seeds >= 2) break;
+                        if (like.size() < 4) continue; // try the next thing you watched
+                        out.add(new Row("Because you watched " + w.displayTitle(), like, false));
+                        break;
                     }
                     // ... and rows for the lead actor and the director of something you watched lately
                     if (movie) {
                         for (Plex.Item w : last) {
                             if (w.viewCount <= 0) continue;
+                            String sec = w.librarySectionID > 0 ? String.valueOf(w.librarySectionID) : group.get(0).key;
                             Plex.Item full = Plex.metadata(w.key);
-                            addPersonRow(out, s.key, "More with ", full.cast.isEmpty() ? null : full.cast.get(0), w.key);
-                            addPersonRow(out, s.key, "Directed by ", full.directors.isEmpty() ? null : full.directors.get(0), w.key);
+                            addPersonRow(out, sec, "More with ", full.cast.isEmpty() ? null : full.cast.get(0), w.key);
+                            addPersonRow(out, sec, "Directed by ", full.directors.isEmpty() ? null : full.directors.get(0), w.key);
                             break;
                         }
                     }
                 } catch (Exception ignored) {
                 }
 
-                // Unwatched, shuffled
+                // Unwatched, shuffled, from all of them together
                 try {
-                    List<Plex.Item> un = Plex.items(Plex.paged(
-                            "/library/sections/" + s.key + "/all?unwatched=1&sort=random", 30));
-                    if (un.size() >= 3) out.add(new Row((movie ? "Unwatched Movies" : "Unwatched Shows") + label, un, false));
+                    List<Plex.Item> un = new ArrayList<>();
+                    for (Plex.Section s : group) {
+                        un.addAll(Plex.items(Plex.paged(
+                                "/library/sections/" + s.key + "/all?unwatched=1&sort=random", 30)));
+                    }
+                    java.util.Collections.shuffle(un, rnd);
+                    if (un.size() > 30) un = new ArrayList<>(un.subList(0, 30));
+                    if (un.size() >= 3) out.add(new Row(movie ? "Unwatched Movies" : "Unwatched Shows", un, false));
                 } catch (Exception ignored) {
                 }
+            }
+
+            for (Plex.Section s : sections) {
+                boolean movie = whichTab == TAB_MOVIES || s.type.equals("movie");
+                boolean show = whichTab != TAB_MOVIES && s.type.equals("show");
+                if (!movie && !show) continue;
+                if (whichTab == TAB_SHOWS && !show) continue;
 
                 // Collections
                 try {
@@ -1816,28 +1890,27 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                     }
                 } catch (Exception ignored) {
                 }
-
-                // Genres
-                try {
-                    List<String[]> gs = Plex.genres(s.key);
-                    java.util.Collections.shuffle(gs, rnd);
-                    int added = 0;
-                    for (String[] g : gs) {
-                        if (added >= genreRows) break;
-                        String path = g[1] + (g[1].contains("?") ? "&" : "?") + "sort=random";
-                        List<Plex.Item> list = Plex.items(Plex.paged(path, 30));
-                        if (list.size() < 4) continue;
-                        out.add(new Row(g[0] + label, list, false));
-                        added++;
-                    }
-                } catch (Exception ignored) {
-                }
             }
             return out;
         }, new Plex.Callback<List<Row>>() {
             @Override
-            public void ok(List<Row> extra) {
-                if (mine != loadToken || isDestroyed() || extra.isEmpty()) return;
+            public void ok(List<Row> all) {
+                if (mine != loadToken || isDestroyed() || all.isEmpty()) return;
+                // Drop a row when most of its titles are already on the screen in a row above it
+                Set<String> onScreen = new HashSet<>();
+                for (Row r : rows) {
+                    if (r.title.equals("Genres") || r.title.equals("Libraries")) continue;
+                    for (Plex.Item it : r.items) onScreen.add(it.key);
+                }
+                List<Row> extra = new ArrayList<>();
+                for (Row r : all) {
+                    int dup = 0;
+                    for (Plex.Item it : r.items) if (onScreen.contains(it.key)) dup++;
+                    if (dup * 2 > r.items.size()) continue;
+                    for (Plex.Item it : r.items) onScreen.add(it.key);
+                    extra.add(r);
+                }
+                if (extra.isEmpty()) return;
                 // "Because you watched" and "Unwatched" go near the top; genres and collections
                 // further down (before the long "All" list).
                 List<Row> top = new ArrayList<>();
@@ -1872,7 +1945,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
 
                 int restAt = rows.size();
                 for (int i = 0; i < rows.size(); i++) {
-                    if (rows.get(i).title.startsWith("All ")) { restAt = i; break; } // keep "All" last
+                    if (rows.get(i).title.equals("Libraries")) { restAt = i; break; } // keep the library buttons last
                 }
                 if (inRows) restAt = Math.max(restAt, focusedRow + 1 + top.size());
                 if (!rest.isEmpty()) {
@@ -1885,7 +1958,109 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 if (!inRows && !justRestored && rowsView.getLayoutManager() instanceof LinearLayoutManager) {
                     ((LinearLayoutManager) rowsView.getLayoutManager()).scrollToPositionWithOffset(0, 0);
                 }
+                keepLibrariesLast();
                 tryRestore(); // coming back to a card in one of these rows
+            }
+
+            @Override
+            public void fail(Exception e) {
+            }
+        });
+    }
+
+    /** The newest titles across all of these libraries together, newest first. */
+    private static List<Plex.Item> recentlyAdded(List<Plex.Section> libs) throws Exception {
+        List<Plex.Item> all = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (Plex.Section s : libs) {
+            for (Plex.Item it : Plex.items(Plex.paged("/library/sections/" + s.key + "/all?sort=addedAt:desc", 40))) {
+                if (seen.add(it.key)) all.add(it);
+            }
+        }
+        java.util.Collections.sort(all, (a, b) -> Long.compare(b.addedAt, a.addedAt));
+        return all.size() > 60 ? new ArrayList<>(all.subList(0, 60)) : all;
+    }
+
+    /** Genre card key -> the Plex paths holding that genre's titles (one per movie library). */
+    private final java.util.Map<String, List<String>> genrePaths = new java.util.HashMap<>();
+
+    private static boolean isGenre(Plex.Item it) {
+        return it != null && "genre".equals(it.type);
+    }
+
+    /**
+     * The Movies tab's "Genres" row: one card per genre across every movie library, each with a
+     * picture from a title in it. Opening a card browses that genre in all those libraries.
+     */
+    private void loadGenres(final int mine, final int whichTab) {
+        Plex.async(() -> {
+            java.util.Map<String, String> names = new java.util.TreeMap<>();
+            java.util.Map<String, List<String>> paths = new java.util.HashMap<>();
+            List<Plex.Section> libs = new ArrayList<>();
+            if (whichTab == TAB_MOVIES) {
+                libs.addAll(Plex.movieSections(Plex.sections()));
+            } else {
+                // Home: every movie and TV library ticked for Home, genres merged by name
+                libs.addAll(Plex.visibleSections(Plex.sections()));
+            }
+            for (Plex.Section s : libs) {
+                try {
+                    for (String[] g : Plex.genres(s.key)) {
+                        String k = g[0].toLowerCase();
+                        names.putIfAbsent(k, g[0]);
+                        List<String> list = paths.get(k);
+                        if (list == null) paths.put(k, list = new ArrayList<>());
+                        list.add(g[1]);
+                    }
+                } catch (Exception ignored) {
+                    // a library that won't list its genres is just left out
+                }
+            }
+            List<Plex.Item> cards = new ArrayList<>();
+            java.util.Map<String, List<String>> keep = new java.util.HashMap<>();
+            for (java.util.Map.Entry<String, String> e : names.entrySet()) {
+                List<String> p = paths.get(e.getKey());
+                Plex.Item card = new Plex.Item();
+                card.key = "genre:" + e.getKey();
+                card.type = "genre";
+                card.title = e.getValue();
+                try {
+                    String first = p.get(0);
+                    List<Plex.Item> one = Plex.items(Plex.paged(
+                            first + (first.contains("?") ? "&" : "?") + "sort=random", 1));
+                    if (one.isEmpty() && p.size() == 1) continue; // an empty genre
+                    if (!one.isEmpty()) card.thumb = one.get(0).art != null ? one.get(0).art : one.get(0).thumb;
+                } catch (Exception ignored) {
+                    // no picture: the card still opens
+                }
+                keep.put(card.key, p);
+                cards.add(card);
+            }
+            return new Object[]{cards, keep};
+        }, new Plex.Callback<Object[]>() {
+            @Override
+            @SuppressWarnings("unchecked")
+            public void ok(Object[] result) {
+                List<Plex.Item> cards = (List<Plex.Item>) result[0];
+                if (mine != loadToken || isDestroyed() || tab != whichTab || cards.isEmpty()) return;
+                genrePaths.putAll((java.util.Map<String, List<String>>) result[1]);
+
+                // Just under Continue Watching and Recently Added, and never above where you are
+                removeRows("Genres");
+                int at = 0;
+                for (int i = 0; i < rows.size(); i++) {
+                    String t = rows.get(i).title;
+                    if (t.equals("Continue Watching") || t.startsWith("Recently Added")) at = i + 1;
+                }
+                for (int i = 0; i < rowsView.getChildCount(); i++) {
+                    View ch = rowsView.getChildAt(i);
+                    if (ch.hasFocus()) at = Math.max(at, rowsView.getChildAdapterPosition(ch) + 1);
+                }
+                at = Math.min(at, rows.size());
+                rows.add(at, new Row("Genres", cards, true));
+                rowAdapter.notifyItemInserted(at);
+                keepLibrariesLast();
+                tryRestore();
             }
 
             @Override
@@ -1973,6 +2148,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     @Override
     public void onFocused(final Plex.Item item) {
         if (pendingHero != null) handler.removeCallbacks(pendingHero);
+        if (isGenre(item)) return; // the banner keeps the last title
         pendingHero = () -> {
             if (spotlightMode) {
                 spotlightMode = false;
@@ -2421,6 +2597,24 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
 
     private void openDetail(Plex.Item it) {
         if (it == null) return;
+        if (isGenre(it) && it.key.startsWith("lib:")) {
+            Intent l = new Intent(this, BrowseActivity.class);
+            l.putExtra("section", it.key.substring(4));
+            l.putExtra("title", it.title.replaceFirst("^All ", ""));
+            l.putExtra("type", it.summary);
+            startActivity(l);
+            return;
+        }
+        if (isGenre(it)) {
+            List<String> paths = genrePaths.get(it.key);
+            if (paths == null) return;
+            Intent g = new Intent(this, BrowseActivity.class);
+            g.putExtra("paths", paths.toArray(new String[0]));
+            g.putExtra("title", it.title);
+            g.putExtra("type", "movie");
+            startActivity(g);
+            return;
+        }
         if (!isRequest(it) && handOffHero(it)) return;
         if (!isRequest(it) && previewsOn() && focusedItem != null && focusedCard != null
                 && it.key.equals(focusedItem.key)) {

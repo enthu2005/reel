@@ -38,6 +38,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         List<Plex.Item> related = new ArrayList<>();
         List<Plex.Item> collection = new ArrayList<>();
         List<Plex.Item> sameLibrary = new ArrayList<>();
+        List<Seerr.Media> requests = new ArrayList<>();
         String showLogo;
     }
 
@@ -80,6 +81,11 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
     private final List<Plex.Item> related = new ArrayList<>();
     private final List<Plex.Item> collection = new ArrayList<>();
     private final List<Plex.Item> sameLibrary = new ArrayList<>();
+    private final List<Plex.Item> requestItems = new ArrayList<>();
+    private LinearLayout requestBox;
+    private RecyclerView requestRow;
+    private LinearLayout.LayoutParams requestLp;
+    private android.widget.ScrollView lowerScroll;
     private TextView shuffleBtn;
 
     @Override
@@ -173,7 +179,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
                 Gravity.BOTTOM | Gravity.START));
         col.addView(logoBox, new LinearLayout.LayoutParams(
-                (int) (W * 0.42f), (int) (H * 0.11f)));
+                (int) (W * 0.42f), (int) (H * 0.095f)));
 
         meta = new TextView(this);
         meta.setTextColor(UiUtil.TEXT2);
@@ -344,10 +350,47 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         moreLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lowerBox.addView(moreBox, moreLp);
+
+        // Similar titles you could request through Seerr
+        requestBox = new LinearLayout(this);
+        requestBox.setOrientation(LinearLayout.VERTICAL);
+        requestBox.setClipChildren(false);
+        requestBox.setVisibility(View.GONE);
+        TextView requestLabel = new TextView(this);
+        requestLabel.setText("Similar to request");
+        requestLabel.setTextColor(UiUtil.TEXT);
+        requestLabel.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.028f);
+        requestLabel.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+        requestLabel.setPadding((int) (W * 0.045f) + (int) (H * 0.011f), 0, 0, (int) (H * 0.006f));
+        requestBox.addView(requestLabel);
+        requestRow = new RecyclerView(this);
+        requestRow.setLayoutManager(new LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false));
+        requestRow.setClipToPadding(false);
+        requestRow.setClipChildren(false);
+        requestRow.setItemAnimator(null);
+        requestRow.setPadding((int) (W * 0.045f), 0, (int) (W * 0.045f), 0);
+        requestBox.addView(requestRow, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        requestLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lowerBox.addView(requestBox, requestLp);
         FrameLayout.LayoutParams lowerLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM);
         lowerLp.bottomMargin = (int) (H * 0.004f);
-        root.addView(lowerBox, lowerLp);
+        // Cast and Similar fill this window as before; "Similar to request" waits just below it and
+        // scrolls into view when you press down, so the three rows never sit on top of each other.
+        lowerScroll = new android.widget.ScrollView(this);
+        lowerScroll.setVerticalScrollBarEnabled(false);
+        lowerScroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        lowerScroll.setClipChildren(false);
+        lowerScroll.setClipToPadding(false);
+        int lift = (int) (H * 0.02f); // room for a focused card to grow
+        lowerScroll.setPadding(0, lift, 0, lift);
+        lowerScroll.addView(lowerBox, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        // The padding above would lift the rows, so pull the window down by the same amount (and a touch more)
+        lowerLp.bottomMargin = (int) (H * 0.004f) - lift - (int) (H * 0.015f);
+        root.addView(lowerScroll, lowerLp);
 
         setContentView(root);
         rootView = root;
@@ -918,6 +961,20 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
                 } catch (Exception ignored) {
                 }
             }
+            if (l.item != null && (l.item.type.equals("movie") || l.item.type.equals("show"))) {
+                // Titles like this one that aren't in your libraries yet, to request
+                try {
+                    Seerr.init(DetailActivity.this);
+                    String tmdb = Seerr.configured() ? Plex.tmdbId(l.item.key) : null;
+                    if (tmdb != null) {
+                        for (Seerr.Media m : Seerr.recommendations(l.item.type.equals("show") ? "tv" : "movie", tmdb)) {
+                            if (m.status < 5 && m.requestStatus != 3 && l.requests.size() < 20) l.requests.add(m);
+                        }
+                    }
+                } catch (Exception ignored) {
+                    // Seerr unreachable: no request row
+                }
+            }
             return l;
         }, new Plex.Callback<Loaded>() {
             @Override
@@ -931,6 +988,8 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
                 collection.addAll(l.collection);
                 sameLibrary.clear();
                 sameLibrary.addAll(l.sameLibrary);
+                requestItems.clear();
+                for (Seerr.Media m : l.requests) requestItems.add(m.toItem());
                 findTrailer();
                 startBehindWhenReady();
                 episodes.clear();
@@ -1030,15 +1089,15 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             tag.setText(r[0]);
             tag.setTextColor(fg);
             tag.setTypeface(UiUtil.font(UiUtil.BOLD));
-            tag.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.018f);
-            tag.setPadding((int) (H * 0.010f), (int) (H * 0.003f), (int) (H * 0.010f), (int) (H * 0.003f));
+            tag.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.016f);
+            tag.setPadding((int) (H * 0.009f), (int) (H * 0.002f), (int) (H * 0.009f), (int) (H * 0.002f));
             tag.setBackground(UiUtil.rounded(bg, H * 0.008f));
             ratingRow.addView(tag);
             TextView val = new TextView(this);
             val.setText(r[1]);
             val.setTextColor(UiUtil.TEXT);
             val.setTypeface(UiUtil.font(UiUtil.MEDIUM));
-            val.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.024f);
+            val.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.021f);
             LinearLayout.LayoutParams vl = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             vl.leftMargin = (int) (H * 0.010f);
@@ -1050,7 +1109,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             rt.setText(UiUtil.duration(item.duration));
             rt.setTextColor(UiUtil.TEXT2);
             rt.setTypeface(UiUtil.font(UiUtil.MEDIUM));
-            rt.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.024f);
+            rt.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.021f);
             ratingRow.addView(rt);
         }
         ratingRow.setVisibility(View.VISIBLE);
@@ -1064,7 +1123,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         boolean strip = fillRatings();
         meta.setText(item.metaLine(!strip));
         summary.setText(item.summary);
-        Badges.fill(badgeRow, item, H);
+        Badges.fill(badgeRow, item, (int) (H * 0.8f)); // smaller badges leave room for the rows below
 
         String art = Plex.img(item.heroArt() != null ? item.heroArt() : item.poster(), 1920, 1080);
         if (art != null) {
@@ -1117,7 +1176,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             castBox.setVisibility(View.VISIBLE);
             final List<Plex.Item> moreItems = !collection.isEmpty() ? collection : related;
             if (!moreItems.isEmpty()) {
-                moreLabel.setText(!collection.isEmpty() ? item.collName + "  \u203A" : "Similar");
+                moreLabel.setText(!collection.isEmpty() ? item.collName + "  \u203A" : "Similar in your libraries");
                 moreLabel.setFocusable(!collection.isEmpty());
                 moreLabel.setClickable(!collection.isEmpty());
                 if (!collection.isEmpty()) {
@@ -1182,13 +1241,41 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             }
         }
 
+        if (!requestItems.isEmpty()) {
+            String sigRequest = item.key + ":" + requestItems.size();
+            if (requestRow.getAdapter() == null || !sigRequest.equals(requestRow.getTag())) {
+                requestRow.setTag(sigRequest);
+                requestRow.setAdapter(new PosterAdapter(requestItems, (int) (H * 0.13f * 16f / 9f), (int) (H * 0.13f), true,
+                        new PosterAdapter.Listener() {
+                            @Override public void onFocused(Plex.Item it) {}
+                            @Override public void onClicked(Plex.Item it) {
+                                // Opens in Seerr, where it can be requested
+                                String[] p = it.key.split(":");
+                                Intent i = new Intent(DetailActivity.this, SeerrActivity.class);
+                                i.putExtra("openType", p[1]);
+                                i.putExtra("openId", Integer.parseInt(p[2]));
+                                startActivity(i);
+                            }
+                        }));
+            }
+            requestBox.setVisibility(View.VISIBLE);
+        } else {
+            requestBox.setVisibility(View.GONE);
+        }
+
         boolean castVisible = castBox.getVisibility() == View.VISIBLE;
         boolean moreVisible = moreBox.getVisibility() == View.VISIBLE;
+        boolean requestVisible = requestBox.getVisibility() == View.VISIBLE;
         moreLp.topMargin = castVisible && moreVisible ? (int) (H * 0.012f) : 0;
+        requestLp.topMargin = (castVisible || moreVisible) && requestVisible ? (int) (H * 0.012f) : 0;
         castBox.setLayoutParams(castLp);
         moreBox.setLayoutParams(moreLp);
+        requestBox.setLayoutParams(requestLp);
         // Less room is needed up top when there are rows underneath
         summary.setMaxLines(castVisible ? 2 : 3);
+
+        // The window shows only Cast and Similar; the request row is reached by scrolling down
+        sizeLowerWindow(8);
 
         shuffleBtn.setVisibility(shouldShowShuffle() ? View.VISIBLE : View.GONE);
 
@@ -1196,6 +1283,36 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             firstLoad = false;
             playBtn.requestFocus();
         }
+    }
+
+    /** Sizes the bottom window to Cast + Similar once those rows have been laid out. */
+    private void sizeLowerWindow(final int tries) {
+        lowerScroll.postDelayed(() -> {
+            if (isDestroyed()) return;
+            boolean cast = castBox.getVisibility() == View.VISIBLE;
+            boolean more = moreBox.getVisibility() == View.VISIBLE;
+            boolean request = requestBox.getVisibility() == View.VISIBLE;
+            if ((cast && castBox.getHeight() == 0) || (more && moreBox.getHeight() == 0)
+                    || (request && requestBox.getHeight() == 0) || infoCol.getHeight() == 0) {
+                if (tries > 0) sizeLowerWindow(tries - 1); // not laid out yet
+                return;
+            }
+            int pad = lowerScroll.getPaddingTop() + lowerScroll.getPaddingBottom();
+            int shown = pad + (cast ? castBox.getHeight() : 0)
+                    + (more ? moreBox.getHeight() + moreLp.topMargin : 0);
+            int all = shown + (request ? requestBox.getHeight() + requestLp.topMargin : 0);
+            // Cast and Similar are what rests on screen; the request row waits below
+            int want = request && (cast || more) ? shown : all;
+            // Never taller than the space under the title, buttons, summary and badges
+            int room = H - ((FrameLayout.LayoutParams) lowerScroll.getLayoutParams()).bottomMargin - infoCol.getBottom();
+            want = Math.max((int) (H * 0.2f), Math.min(want, room));
+            if (want >= all) want = ViewGroup.LayoutParams.WRAP_CONTENT;
+            ViewGroup.LayoutParams lp = lowerScroll.getLayoutParams();
+            if (lp.height != want) {
+                lp.height = want;
+                lowerScroll.setLayoutParams(lp);
+            }
+        }, 60);
     }
 
     private java.util.List<Integer> seasonNumbers() {

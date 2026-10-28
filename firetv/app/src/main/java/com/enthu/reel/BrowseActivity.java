@@ -102,6 +102,28 @@ public class BrowseActivity extends ReelActivity implements PosterAdapter.Listen
             slp.rightMargin = (int) (W * 0.012f);
             head.addView(shuffleBtn, slp);
         }
+        if (getIntent().getStringArrayExtra("paths") != null) {
+            // A genre across libraries: narrow it to movies or TV shows
+            filterBtn = new TextView(this);
+            filterBtn.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.028f);
+            filterBtn.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+            filterBtn.setPadding((int) (W * 0.018f), (int) (H * 0.012f), (int) (W * 0.018f), (int) (H * 0.012f));
+            filterBtn.setFocusable(true);
+            filterBtn.setClickable(true);
+            filterBtn.setVisibility(View.GONE); // only once there are both kinds to choose between
+            styleFilter(false);
+            filterBtn.setOnFocusChangeListener((v, f) -> {
+                styleFilter(f);
+                if (f) SoundFx.move();
+            });
+            filterBtn.setOnClickListener(v -> {
+                SoundFx.click();
+                filter = (filter + 1) % FILTERS.length;
+                styleFilter(true);
+                showItems(false);
+            });
+            head.addView(filterBtn);
+        }
         if (section != null) {
             sortBtn = new TextView(this);
             sortBtn.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.028f);
@@ -144,6 +166,49 @@ public class BrowseActivity extends ReelActivity implements PosterAdapter.Listen
         load();
     }
 
+    private static final String[][] FILTERS = {{"All", ""}, {"Movies", "movie"}, {"TV Shows", "show"}};
+    private final List<Plex.Item> allItems = new ArrayList<>();
+    private TextView filterBtn;
+    private int filter = 0;
+
+    private void styleFilter(boolean focused) {
+        filterBtn.setText("Show: " + FILTERS[filter][0]);
+        filterBtn.setBackground(UiUtil.rounded(focused ? 0xFFFFFFFF : 0x33FFFFFF, H * 0.04f));
+        filterBtn.setTextColor(focused ? 0xFF000000 : Color.WHITE);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.rightMargin = (int) (W * 0.012f);
+        filterBtn.setLayoutParams(lp);
+    }
+
+    /** Fills the grid from allItems, narrowed by the Movies / TV Shows filter. */
+    private void showItems(boolean firstLoad) {
+        items.clear();
+        String want = FILTERS[filter][1];
+        boolean movies = false;
+        boolean shows = false;
+        for (Plex.Item it : allItems) {
+            if (it.type.equals("movie")) movies = true;
+            if (it.type.equals("show")) shows = true;
+            if (want.isEmpty() || it.type.equals(want)) items.add(it);
+        }
+        if (filterBtn != null) filterBtn.setVisibility(movies && shows ? View.VISIBLE : View.GONE);
+        count.setText(items.size() + (items.size() == 1 ? " item" : " items"));
+        message.setVisibility(items.isEmpty() ? View.VISIBLE : View.GONE);
+        if (items.isEmpty()) message.setText("Nothing in here");
+        int cols = type.equals("photo") || parent != null ? 4 : 5;
+        int w = (int) ((W * 0.915f) / cols) - UiUtil.dp(BrowseActivity.this, 14);
+        int h = landscape ? (int) (w * 9f / 16f) : (int) (w * 3f / 2f);
+        grid.setAdapter(new PosterAdapter(items, w, h, landscape, BrowseActivity.this).withTitles());
+        boolean headerHasFocus = (sortBtn != null && sortBtn.hasFocus()) || (filterBtn != null && filterBtn.hasFocus());
+        if (firstLoad && !headerHasFocus) {
+            grid.post(() -> {
+                RecyclerView.ViewHolder vh = grid.findViewHolderForAdapterPosition(0);
+                if (vh != null) vh.itemView.requestFocus();
+            });
+        }
+    }
+
     private void styleShuffle(boolean focused) {
         shuffleBtn.setBackground(UiUtil.rounded(focused ? 0xFFFFFFFF : 0x33FFFFFF, H * 0.04f));
         shuffleBtn.setTextColor(focused ? 0xFF000000 : Color.WHITE);
@@ -174,25 +239,31 @@ public class BrowseActivity extends ReelActivity implements PosterAdapter.Listen
         final String url = path != null ? Plex.paged(path, 3000) : section != null
                 ? Plex.paged("/library/sections/" + section + "/all?sort=" + SORTS[sort][1], 5000)
                 : Plex.paged("/library/metadata/" + parent + "/children", 5000);
-        Plex.async(() -> Plex.items(url), new Plex.Callback<List<Plex.Item>>() {
+        final String[] multi = getIntent().getStringArrayExtra("paths");
+        java.util.concurrent.Callable<List<Plex.Item>> job = () -> Plex.items(url);
+        if (multi != null) {
+            // One genre across several libraries: merge them, A to Z
+            job = () -> {
+                java.util.Map<String, Plex.Item> merged = new java.util.LinkedHashMap<>();
+                for (String p : multi) {
+                    try {
+                        for (Plex.Item it : Plex.items(Plex.paged(p, 3000))) merged.putIfAbsent(it.key, it);
+                    } catch (Exception ignored) {
+                        // one library failing shouldn't blank the page
+                    }
+                }
+                List<Plex.Item> out = new ArrayList<>(merged.values());
+                java.util.Collections.sort(out, (a, b) -> a.title.compareToIgnoreCase(b.title));
+                return out;
+            };
+        }
+        Plex.async(job, new Plex.Callback<List<Plex.Item>>() {
             @Override
             public void ok(List<Plex.Item> list) {
                 if (isDestroyed() || mine != loadToken) return;
-                items.clear();
-                items.addAll(list);
-                count.setText(list.size() + (list.size() == 1 ? " item" : " items"));
-                message.setVisibility(list.isEmpty() ? View.VISIBLE : View.GONE);
-                if (list.isEmpty()) message.setText("Nothing in here");
-                int cols = type.equals("photo") || parent != null ? 4 : 5;
-                int w = (int) ((W * 0.915f) / cols) - UiUtil.dp(BrowseActivity.this, 14);
-                int h = landscape ? (int) (w * 9f / 16f) : (int) (w * 3f / 2f);
-                grid.setAdapter(new PosterAdapter(items, w, h, landscape, BrowseActivity.this).withTitles());
-                if (sortBtn == null || !sortBtn.hasFocus()) {
-                    grid.post(() -> {
-                        RecyclerView.ViewHolder vh = grid.findViewHolderForAdapterPosition(0);
-                        if (vh != null) vh.itemView.requestFocus();
-                    });
-                }
+                allItems.clear();
+                allItems.addAll(list);
+                showItems(true);
             }
 
             @Override

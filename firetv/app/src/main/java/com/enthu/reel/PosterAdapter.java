@@ -129,6 +129,21 @@ final class PosterAdapter extends RecyclerView.Adapter<PosterAdapter.VH> {
         card.addView(shade, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 (int) (h * 0.35f), Gravity.BOTTOM));
 
+        // Genre tiles: the genre's name big across darkened artwork
+        TextView genreName = new TextView(c);
+        genreName.setTag("genreName");
+        genreName.setTextColor(0xFFFFFFFF);
+        genreName.setTypeface(UiUtil.font(UiUtil.BOLD));
+        genreName.setTextSize(TypedValue.COMPLEX_UNIT_PX, sh * 0.038f);
+        genreName.setGravity(Gravity.CENTER);
+        genreName.setSingleLine(true);
+        genreName.setEllipsize(TextUtils.TruncateAt.END);
+        genreName.setPadding((int) (w * 0.06f), 0, (int) (w * 0.06f), 0);
+        genreName.setBackgroundColor(0x88000000);
+        genreName.setVisibility(View.GONE);
+        card.addView(genreName, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
         // Corner mark: a tick once watched, a "NEW" tag for things added this week
         TextView mark = new TextView(c);
         mark.setTag("mark");
@@ -243,8 +258,17 @@ final class PosterAdapter extends RecyclerView.Adapter<PosterAdapter.VH> {
         Glide.with(vh.image).load(Plex.img(path, w, h)).centerCrop()
                 .transition(DrawableTransitionOptions.withCrossFade(200)).into(vh.image);
 
+        boolean genre = it.type.equals("genre");
+        TextView genreName = (TextView) vh.card.findViewWithTag("genreName");
+        if (genreName != null) {
+            genreName.setText(it.title);
+            genreName.setVisibility(genre ? View.VISIBLE : View.GONE);
+        }
+
         TextView mark = (TextView) vh.card.findViewWithTag("mark");
-        if (mark != null) {
+        if (mark != null && genre) {
+            mark.setVisibility(View.GONE);
+        } else if (mark != null) {
             int md = (int) (sh * 0.032f);
             if (it.isNew()) {
                 mark.setText("NEW");
@@ -293,6 +317,10 @@ final class PosterAdapter extends RecyclerView.Adapter<PosterAdapter.VH> {
             String rem = left(it);
             if (rem != null) s = s.isEmpty() ? rem : s + " · " + rem;
             if (!it.watcher.isEmpty()) s = s.isEmpty() ? it.watcher : s + " · " + it.watcher;
+            if (genre) {
+                t = ""; // the name is already on the tile
+                s = "";
+            }
             vh.title.setText(t);
             vh.sub.setText(s);
             vh.sub.setVisibility(s.isEmpty() ? View.GONE : View.VISIBLE);

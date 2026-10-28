@@ -296,11 +296,21 @@ public class SettingsActivity extends ReelActivity {
             });
         }
         if (!libraryChoices.isEmpty()) {
-            int visible = 0;
-            for (Plex.Section s : libraryChoices) if (Plex.isLibraryEnabled(s.key)) visible++;
-            row("Home & movies libraries", visible + " / " + libraryChoices.size() + " shown",
-                    "Choose which Plex libraries appear in Home and Movies. Hidden libraries stay available elsewhere.",
-                    v -> chooseLibraries(libraryChoices, "visibleLibraries", "Libraries on Home & Movies", null));
+            // Home (and TV Shows) start from the old shared choice if there was one
+            final java.util.Set<String> homeDefaults = Plex.libraryChoice("visibleLibraries");
+            int homeShown = Plex.visibleSections(libraryChoices).size();
+            row("Home libraries", homeShown + " / " + libraryChoices.size() + " shown",
+                    "Choose which Plex libraries appear on the Home and TV Shows tabs. Hidden libraries stay available elsewhere.",
+                    v -> chooseLibraries(libraryChoices, "homeLibraries", "Libraries on Home", homeDefaults));
+
+            // Movies is its own list: tick any library to treat it as movies
+            final java.util.Set<String> movieDefaults = new java.util.HashSet<>();
+            for (Plex.Section s : libraryChoices) if (s.type.equals("movie")) movieDefaults.add(s.key);
+            int movieShown = Plex.movieSections(libraryChoices).size();
+            row("Movies libraries", movieShown + " / " + libraryChoices.size() + " used",
+                    "Choose which libraries count as movies. They fill the Movies tab and its Genres row. "
+                            + "Until you choose, every Plex movie library is used.",
+                    v -> chooseLibraries(libraryChoices, "movieLibraries", "Libraries on Movies", movieDefaults));
 
             java.util.Set<String> saverChoice = Plex.libraryChoice("screensaverLibraries");
             String saverValue;
@@ -441,6 +451,8 @@ public class SettingsActivity extends ReelActivity {
             chosen.addAll(saved);
         } else {
             for (Plex.Section s : sections) if (defaults == null || defaults.contains(s.key)) chosen.add(s.key);
+            // Nothing in common with the defaults (e.g. an old choice for libraries that are gone): show all
+            if (chosen.isEmpty()) for (Plex.Section s : sections) chosen.add(s.key);
         }
         final android.app.Dialog d = new android.app.Dialog(this);
         d.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
