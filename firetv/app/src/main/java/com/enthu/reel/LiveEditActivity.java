@@ -173,6 +173,11 @@ public class LiveEditActivity extends ReelActivity {
     }
 
     private void channelMenu(final Live.Channel c, final int at) {
+        channelMenu(c, at, "");
+    }
+
+    /** [stay] is the entry to keep the highlight on, so Move up / Move down can be pressed again and again. */
+    private void channelMenu(final Live.Channel c, final int at, String stay) {
         List<Entry> es = new ArrayList<>();
         final boolean hid = Live.isHidden(c.id);
         es.add(new Entry(hid ? "Show in the guide" : "Hide from the guide", "", "", () -> {
@@ -181,11 +186,11 @@ public class LiveEditActivity extends ReelActivity {
         }));
         if (at > 1) es.add(new Entry("Move up", "", "", () -> {
             Live.moveChannel(c.id, -1);
-            mainList(at - 1);
+            channelMenu(c, at - 1, "Move up");
         }));
         if (at < Live.allInOrder().size()) es.add(new Entry("Move down", "", "", () -> {
             Live.moveChannel(c.id, 1);
-            mainList(at + 1);
+            channelMenu(c, at + 1, "Move down");
         }));
         final Live.Custom def = Live.definition(c.id);
         if (def != null) {
@@ -215,7 +220,12 @@ public class LiveEditActivity extends ReelActivity {
         es.add(new Entry("Back", "", "", () -> mainList(at)));
         stack.clear();
         stack.add(() -> mainList(at));
-        screen("CH " + (hid ? "–" : shownNumber(c)) + "  " + c.name, c.custom ? describe(c.id) : "", es, 0);
+        int focus = 0;
+        for (int i = 0; i < es.size(); i++) if (es.get(i).label.equals(stay)) focus = i;
+        if (!stay.isEmpty() && focus == 0) { // it can't go further that way: land on the other direction
+            for (int i = 0; i < es.size(); i++) if (es.get(i).label.startsWith("Move")) focus = i;
+        }
+        screen("CH " + (hid ? "–" : shownNumber(c)) + "  " + c.name, c.custom ? describe(c.id) : "", es, focus);
     }
 
     private void rename(final Live.Custom def, final int at) {
