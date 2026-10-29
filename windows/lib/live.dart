@@ -390,13 +390,15 @@ class Live {
       LiveChannel c, List<Map<String, dynamic>> pool, Random rnd,
       {int maxShows = 8}) async {
     final lists = <List<LiveProg>>[];
-    for (var i = 0; i < pool.length && lists.length < maxShows; i++) {
-      final show = pool[i];
-      try {
-        final eps =
-            await _episodesOf('${show['ratingKey']}', '${show['title'] ?? ''}');
-        if (eps.isNotEmpty) lists.add(eps);
-      } catch (_) {}
+    // the shows' episode lists are fetched together, not one after the other
+    final jobs = <Future<List<LiveProg>>>[
+      for (var i = 0; i < pool.length && i < maxShows + 4; i++)
+        _episodesOf('${pool[i]['ratingKey']}', '${pool[i]['title'] ?? ''}')
+            .catchError((_) => <LiveProg>[])
+    ];
+    for (final eps in await Future.wait(jobs)) {
+      if (lists.length >= maxShows) break;
+      if (eps.isNotEmpty) lists.add(eps);
     }
     _mix(c, lists, rnd);
   }

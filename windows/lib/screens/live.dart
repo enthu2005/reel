@@ -145,7 +145,6 @@ class _LiveScreenState extends State<LiveScreen> {
             if (np is NativePlayer) np.setProperty('hwdec', 'no');
           }
         });
-        await p.setVolume(0);
         _pipPlayer = p;
         _pipVideo = VideoController(p,
             configuration:
@@ -291,7 +290,7 @@ class _LiveScreenState extends State<LiveScreen> {
                   style: reelText(h * 0.034, color: Reel.text2)),
             ]),
             SizedBox(
-                height: h * 0.2,
+                height: h * 0.245,
                 child: Padding(
                     padding: EdgeInsets.only(top: h * 0.018),
                     child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -302,8 +301,8 @@ class _LiveScreenState extends State<LiveScreen> {
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(h * 0.012),
                             child: Container(
-                              width: h * 0.2 * 16 / 9,
-                              height: h * 0.2,
+                              width: h * 0.225 * 16 / 9,
+                              height: h * 0.225,
                               color: Colors.black,
                               child: Stack(fit: StackFit.expand, children: [
                                 Video(

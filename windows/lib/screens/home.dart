@@ -14,6 +14,7 @@ import '../ui/preview.dart';
 import '../ui/motion.dart';
 import '../ui/theme.dart';
 import '../ui/resume.dart';
+import '../live.dart';
 import '../ui/widgets.dart';
 import 'detail.dart';
 import 'discover.dart';
@@ -133,6 +134,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _load() async {
     final mine = ++_loadToken;
+    // build the Live guide quietly now, so the Live tab opens at once
+    if (Live.cached == null) unawaited(Live.load().then((_) {}, onError: (_) {}));
     setState(() {
       _loading = _rows.isEmpty;
       _error = null;
@@ -1199,7 +1202,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _spotShown = it.key;
     _spotTimer?.cancel();
     // looks up the trailer (or best scene) now, and starts playing after the rest
-    Preview.focus(it, delay: Motion.previewDelay);
+    Preview.focus(it, delay: const Duration(seconds: 4));
   }
 
   void _spotMove(int d) {
@@ -1351,7 +1354,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 left: 0,
                 right: 0,
                 bottom: h * 0.06,
-                child:
+                child: ValueListenableBuilder<String?>(
+                  valueListenable: Preview.showing,
+                  builder: (c, showing, child) => AnimatedOpacity(
+                      opacity: showing == null ? 1 : 0,
+                      duration: const Duration(milliseconds: 300),
+                      child: child),
+                  child:
                     Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                   for (var i = 0; i < items.length; i++)
                     AnimatedContainer(
@@ -1366,6 +1375,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                 ]),
+                ),
               ),
             ]);
           },
