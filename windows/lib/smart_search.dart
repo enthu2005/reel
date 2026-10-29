@@ -315,7 +315,7 @@ class SmartSearch {
 
   // ------------------------------------------------------------ running it
 
-  static Future<List<PlexItem>> run(SmartQuery q) async {
+  static Future<List<PlexItem>> run(SmartQuery q, {int limit = 60}) async {
     final hits = <_Hit>[];
     final text = q.text.toLowerCase();
     final person = q.person.toLowerCase();
@@ -376,7 +376,7 @@ class SmartSearch {
       if (byRating || a.rating != b.rating) return b.rating.compareTo(a.rating);
       return a.item.title.toLowerCase().compareTo(b.item.title.toLowerCase());
     });
-    return [for (final h in hits.take(last ? 12 : 60)) h.item];
+    return [for (final h in hits.take(last ? 12 : limit)) h.item];
   }
 
   static int _int(Object? v) => v is num ? v.toInt() : int.tryParse('${v ?? ''}') ?? 0;

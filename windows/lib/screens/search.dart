@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../live.dart';
 import '../plex.dart';
 import '../prefs.dart';
 import '../smart_search.dart';
@@ -57,6 +58,19 @@ class _SearchScreenState extends State<SearchScreen> {
     ].take(_historyMax).toList();
     Prefs.searchHistory = h;
     _history = h;
+  }
+
+  /// Keeps the search as a channel on the Live guide: it plays whatever the words match.
+  void _saveChannel() {
+    final q = _text.text.trim();
+    if (q.isEmpty) return;
+    final name = q[0].toUpperCase() + q.substring(1);
+    Live.addCustom(CustomChannel(
+        'c:${DateTime.now().millisecondsSinceEpoch}', name, 'search',
+        ref: q));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Saved “$name” as a channel on Live'),
+        duration: const Duration(seconds: 3)));
   }
 
   void _searchFor(String t) {
@@ -169,6 +183,13 @@ class _SearchScreenState extends State<SearchScreen> {
               _field.requestFocus();
             }),
           ] else if (_message.isNotEmpty) Text(_message, style: reelText(h * 0.026, color: Reel.text2)),
+          if (_smartNote.isNotEmpty && _results.isNotEmpty)
+            Padding(
+              padding: EdgeInsets.only(top: h * 0.008),
+              child: Wrap(children: [
+                PillButton('Save as a Live channel', onPressed: _saveChannel),
+              ]),
+            ),
           if (_smartNote.isNotEmpty)
             Text(_smartNote,
                 maxLines: 1,

@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../live.dart';
 import '../plex.dart';
 import '../prefs.dart';
+import '../smart_search.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 
@@ -41,6 +44,11 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
   String _type = 'movie';
   final _name = TextEditingController();
   final _search = TextEditingController();
+  final _queryCtl = TextEditingController(); // 'A saved search'
+  String _queryNote = '';
+  String _queryCount = '';
+  Timer? _queryTimer;
+  int _queryToken = 0;
 
   static const _genreChoices = [
     'Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary', 'Drama',
@@ -76,6 +84,8 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
   void dispose() {
     _name.dispose();
     _search.dispose();
+    _queryCtl.dispose();
+    _queryTimer?.cancel();
     _searchField.dispose();
     // the guide shows the new lineup when it is next opened
     if (_changed) Live.rearrange();
@@ -128,10 +138,13 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
     _search.clear();
     _chosen = null;
     _picked.clear();
+    _queryCtl.clear();
+    _queryNote = '';
+    _queryCount = '';
     _genres.clear();
     _type = 'movie';
     _name.clear();
-    if (kind == 'genres') {
+    if (kind == 'genres' || kind == 'search') {
       setState(() => _step = _Step.pick);
     } else {
       setState(() => _step = _Step.pick);
@@ -144,6 +157,10 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
       if (_genres.isEmpty) return;
       final g = _genres.toList();
       _name.text = '${g.take(2).join(' & ')} ${_type == 'movie' ? 'Movies' : 'TV'}';
+    } else if (_kind == 'search') {
+      final q = _queryCtl.text.trim();
+      if (q.isEmpty) return;
+      _name.text = q[0].toUpperCase() + q.substring(1);
     } else if (_kind == 'shows') {
       if (_picked.isEmpty) return;
       _name.text = _picked.length == 1
@@ -162,7 +179,7 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
     if (name.isEmpty) return;
     final id = 'c:${DateTime.now().millisecondsSinceEpoch}';
     Live.addCustom(CustomChannel(id, name, _kind,
-        ref: _chosen?.key ?? '',
+        ref: _kind == 'search' ? _queryCtl.text.trim() : (_chosen?.key ?? ''),
         refTitle: _chosen?.title ?? '',
         refs: [for (final p in _picked) p.key],
         refTitles: [for (final p in _picked) p.title],
@@ -349,11 +366,82 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
           first: true),
       card('One show', 'Every episode of one show, in order, round and round. "Friends 24/7".', 'show'),
       card('A mix of shows', 'Pick several TV shows; their episodes are mixed together, like an evening of different shows.', 'shows'),
+      card('A saved search', 'Describe it in plain English: "80s horror rated 7+" or "unwatched sci-fi under 2 hours". It plays whatever matches.', 'search'),
       card('A mix of genres', 'Films or shows that match the genres you pick, shuffled.', 'genres'),
     ]);
   }
 
+  void _queryChanged(String v) {
+    _queryTimer?.cancel();
+    final q = v.trim();
+    if (q.isEmpty) {
+      setState(() {
+        _queryNote = '';
+        _queryCount = '';
+      });
+      return;
+    }
+    final sq = SmartSearch.parse(q);
+    setState(() {
+      _queryNote = sq.smart ? sq.describe() : 'Looking for “${sq.text}”';
+      _queryCount = 'Counting what matches…';
+    });
+    _queryTimer = Timer(const Duration(milliseconds: 600), () async {
+      final mine = ++_queryToken;
+      String c;
+      try {
+        final r = await SmartSearch.run(sq, limit: 400);
+        c = r.isEmpty ? 'Nothing matches yet' : '${r.length} matches';
+      } catch (_) {
+        c = '';
+      }
+      if (mounted && mine == _queryToken) setState(() => _queryCount = c);
+    });
+  }
+
+  Widget _searchStep(double h, double w) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('Describe what the channel should play',
+          style: reelText(h * 0.03, weight: FontWeight.w600)),
+      SizedBox(height: h * 0.012),
+      Text('Try "80s horror rated 7+", "unwatched comedy under 100 minutes", "tom hanks 4k".',
+          style: reelText(h * 0.022, color: Reel.text2)),
+      SizedBox(height: h * 0.02),
+      SizedBox(
+        width: w * 0.6,
+        child: TextField(
+          controller: _queryCtl,
+          autofocus: true,
+          onChanged: _queryChanged,
+          onSubmitted: (_) => _toName(),
+          style: reelText(h * 0.032, weight: FontWeight.w500),
+          cursorColor: Colors.white,
+          decoration: InputDecoration(
+            hintText: 'What should it play?',
+            hintStyle: reelText(h * 0.032, color: Reel.text3),
+            filled: true,
+            fillColor: Reel.card,
+            border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(h * 0.02),
+                borderSide: BorderSide.none),
+            contentPadding: EdgeInsets.symmetric(
+                horizontal: h * 0.02, vertical: h * 0.02),
+          ),
+        ),
+      ),
+      SizedBox(height: h * 0.015),
+      if (_queryNote.isNotEmpty)
+        Text('Understood as  $_queryNote',
+            style: reelText(h * 0.024, weight: FontWeight.w500, color: Reel.accent)),
+      if (_queryCount.isNotEmpty)
+        Text(_queryCount, style: reelText(h * 0.024, color: Reel.text2)),
+      SizedBox(height: h * 0.025),
+      PillButton('Next', primary: true, onPressed: _toName),
+    ]);
+  }
+
   Widget _pickStep(double h, double w) {
+    if (_kind == 'search') return _searchStep(h, w);
     if (_kind == 'genres') {
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text('Pick one or more genres',

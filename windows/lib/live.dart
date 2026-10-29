@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'plex.dart';
+import 'smart_search.dart';
 import 'prefs.dart';
 
 /// Pretend TV channels made from your own libraries. Each channel has a fixed, endless loop of films or
@@ -37,7 +38,7 @@ class LiveChannel {
 class CustomChannel {
   final String id;
   String name;
-  final String kind; // 'collection', 'show' or 'genres'
+  final String kind; // 'collection', 'show', 'shows', 'genres' or 'search'
   final String ref; // the collection's / show's key
   final String refTitle; // for showing in the editor
   final String type; // genres: 'movie' or 'show'
@@ -81,6 +82,7 @@ class CustomChannel {
         'collection' => 'Collection: $refTitle',
         'show' => 'Show: $refTitle',
         'shows' => 'Mix of shows: ${refTitles.join(', ')}',
+        'search' => 'Search: $ref',
         _ => '${type == 'movie' ? 'Movies' : 'TV'}: ${genres.join(', ')}',
       };
 }
@@ -240,6 +242,8 @@ class Live {
             await _fromCollection(c, cc.ref);
           case 'show':
             await _fromShow(c, cc.ref, cc.refTitle);
+          case 'search':
+            await _fromSearch(c, cc.ref);
           case 'shows':
             await _buildShows(
                 c,
@@ -308,6 +312,33 @@ class Live {
     }
   }
 
+  /// A saved smart search ("80s horror rated 7+"): whatever it finds today, films and shows mixed together.
+  static Future<void> _fromSearch(LiveChannel c, String query) async {
+    final items = await SmartSearch.run(SmartSearch.parse(query), limit: 300);
+    final rnd = Random(_hash(c.name));
+    final lists = <List<LiveProg>>[];
+    var shows = 0;
+    for (final it in items) {
+      if (it.type == 'movie') {
+        if (it.duration >= _minProg) {
+          lists.add([
+            LiveProg(it.key, it.title, it.year > 0 ? '${it.year}' : '', it.duration)
+          ]);
+        }
+      } else if (it.type == 'show' && shows < 12) {
+        try {
+          final eps = await _episodesOf(it.key, it.title);
+          if (eps.isNotEmpty) {
+            lists.add(eps);
+            shows++;
+          }
+        } catch (_) {}
+      }
+    }
+    lists.shuffle(rnd);
+    _mix(c, lists, rnd);
+  }
+
   /// One show, every episode in order, round and round (24/7).
   static Future<void> _fromShow(LiveChannel c, String key, String title) async {
     final eps = await _episodesOf(key, title, cap: 600);
@@ -367,6 +398,11 @@ class Live {
         if (eps.isNotEmpty) lists.add(eps);
       } catch (_) {}
     }
+    _mix(c, lists, rnd);
+  }
+
+  /// Takes the next programme from a randomly picked list, over and over, so each list stays in order.
+  static void _mix(LiveChannel c, List<List<LiveProg>> lists, Random rnd) {
     final at = List<int>.filled(lists.length, 0);
     while (c.loop.length < 400) {
       final live = [
