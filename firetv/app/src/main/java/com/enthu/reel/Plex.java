@@ -1351,16 +1351,25 @@ public final class Plex {
     /** Tells Plex what Reel can take, so it copies the video and only converts what it must. */
     /** Previews: stereo AAC, so the app can play them quietly (Dolby passthrough ignores the volume). */
     public static String previewProfile() {
+        return previewProfile(false);
+    }
+
+    /** [sdr]: h264 only, so Plex converts HDR / Dolby Vision pictures to plain SDR (an HDR picture shows dark in a small window). */
+    public static String previewProfile(boolean sdr) {
         return "add-transcode-target(type=videoProfile&context=streaming&protocol=hls"
-                + "&container=mpegts&videoCodec=h264,hevc&audioCodec=aac)"
+                + "&container=mpegts&videoCodec=" + (sdr ? "h264" : "h264,hevc") + "&audioCodec=aac)"
                 + "+add-limitation(scope=videoAudioCodec&scopeName=aac&type=upperBound"
                 + "&name=audio.channels&value=2)";
     }
 
     public static String previewUrl(String ratingKey, long offsetMs, String session) {
+        return previewUrl(ratingKey, offsetMs, session, false);
+    }
+
+    public static String previewUrl(String ratingKey, long offsetMs, String session, boolean sdr) {
         return transcodeUrl(ratingKey, offsetMs, session, 0, 0, false, 3500, "1280x720")
                 .replace("X-Plex-Client-Profile-Extra=" + enc(profileExtra(false)),
-                        "X-Plex-Client-Profile-Extra=" + enc(previewProfile()))
+                        "X-Plex-Client-Profile-Extra=" + enc(previewProfile(sdr)))
                 + "&directStreamAudio=0&audioChannelCount=2";
     }
 

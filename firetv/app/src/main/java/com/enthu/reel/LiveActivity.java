@@ -345,7 +345,7 @@ public class LiveActivity extends ReelActivity {
                          final String direct) {
         if (mine != pipToken || isDestroyed()) return;
         java.util.Map<String, String> hdr = new java.util.HashMap<>();
-        hdr.put("X-Plex-Client-Profile-Extra", Plex.previewProfile());
+        hdr.put("X-Plex-Client-Profile-Extra", Plex.previewProfile(true));
         hdr.put("X-Plex-Client-Identifier", Plex.clientId());
         hdr.put("X-Plex-Product", "Reel");
         hdr.put("X-Plex-Client-Profile-Name", "Konvergo");
@@ -381,7 +381,7 @@ public class LiveActivity extends ReelActivity {
         } else {
             pipSession = java.util.UUID.randomUUID().toString();
             p.setMediaItem(new androidx.media3.common.MediaItem.Builder()
-                    .setUri(Plex.previewUrl(s.prog.key, off, pipSession))
+                    .setUri(Plex.previewUrl(s.prog.key, off, pipSession, true))
                     .setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8).build());
         }
         p.setPlayWhenReady(true);
