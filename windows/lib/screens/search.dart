@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../plex.dart';
 import '../prefs.dart';
+import '../smart_search.dart';
 import '../ui/net_image.dart';
 import '../ui/preview.dart';
 import '../ui/theme.dart';
@@ -25,6 +26,7 @@ class _SearchScreenState extends State<SearchScreen> {
   List<PlexItem> _results = [];
   String _message = 'Type to search your library';
   int _token = 0;
+  String _smartNote = ''; // what the plain-English words were understood as
   static const _historyMax = 8;
   List<String> _history = Prefs.searchHistory;
 
@@ -69,6 +71,7 @@ class _SearchScreenState extends State<SearchScreen> {
     final query = q.trim();
     if (query.length < 2) {
       setState(() {
+        _smartNote = '';
         _results = [];
         _message = query.isEmpty ? 'Type to search your library' : 'Keep typing…';
       });
@@ -77,7 +80,13 @@ class _SearchScreenState extends State<SearchScreen> {
     _debounce = Timer(const Duration(milliseconds: 400), () async {
       final mine = ++_token;
       try {
-        final r = await Plex.search(query);
+        // Plain English ("unwatched sci-fi under two hours") becomes filters on your own library
+        final sq = SmartSearch.parse(query);
+        if (mounted) {
+          setState(() => _smartNote =
+              sq.smart ? 'Searching your library for  ${sq.describe()}' : '');
+        }
+        final r = sq.smart ? await SmartSearch.run(sq) : await Plex.search(query);
         if (!mounted || mine != _token) return;
         final urls = r.map((it) => PosterCard.imageUrl(it, 0, 0, true, 1.0)).toList();
         // the first screenfuls load straight away, the rest quietly behind them
@@ -130,7 +139,7 @@ class _SearchScreenState extends State<SearchScreen> {
           Text('Search', style: reelText(h * 0.05, weight: FontWeight.w700)),
           SizedBox(height: h * 0.025),
           SizedBox(
-            width: w * 0.5,
+            width: w * 0.6,
             child: TextField(
               controller: _text,
               focusNode: _field,
@@ -140,7 +149,7 @@ class _SearchScreenState extends State<SearchScreen> {
               style: reelText(h * 0.032, weight: FontWeight.w500),
               cursorColor: Colors.white,
               decoration: InputDecoration(
-                hintText: 'Movies, shows, episodes',
+                hintText: 'Movies, shows, actors… or "unwatched sci-fi under 2 hours"',
                 hintStyle: reelText(h * 0.032, color: Reel.text3),
                 filled: true,
                 fillColor: Reel.card,
@@ -160,6 +169,12 @@ class _SearchScreenState extends State<SearchScreen> {
               _field.requestFocus();
             }),
           ] else if (_message.isNotEmpty) Text(_message, style: reelText(h * 0.026, color: Reel.text2)),
+          if (_smartNote.isNotEmpty)
+            Text(_smartNote,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: reelText(h * 0.024,
+                    weight: FontWeight.w500, color: const Color(0xCCE8833A))),
           Expanded(
             child: GridView.builder(
               clipBehavior: Clip.hardEdge,

@@ -136,4 +136,15 @@ class Prefs {
   static set searchHistory(List<String> v) => v.isEmpty
       ? _p.remove('searchHistory')
       : _p.setStringList('searchHistory', v);
+
+  /// "Still watching?": autoplay pauses and asks once several episodes have started by themselves
+  /// and it is late at night or has been running a long time.
+  static bool get stillOn => _p.getBool('stillOn') ?? true;
+  static set stillOn(bool v) => _p.setBool('stillOn', v);
+  static int get stillEpisodes => _p.getInt('stillEpisodes') ?? 3;
+  static set stillEpisodes(int v) => _p.setInt('stillEpisodes', v);
+  static bool get stillNight => _p.getBool('stillNight') ?? true;
+  static set stillNight(bool v) => _p.setBool('stillNight', v);
+  static int get stillHours => _p.getInt('stillHours') ?? 3;
+  static set stillHours(int v) => _p.setInt('stillHours', v);
 }

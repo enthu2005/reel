@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../live.dart';
 import '../main.dart' as app;
 import '../plex.dart';
 import '../prefs.dart';
@@ -14,6 +15,7 @@ import '../ui/net_image.dart';
 import '../ui/preview.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
+import 'live.dart' show tuneChannel;
 
 /// Plays a library item (direct play: the original file, no conversion) or any URL (trailers).
 /// Controls in the style of the new Plex player.
@@ -24,13 +26,18 @@ class PlayerScreen extends StatefulWidget {
   final String? title;
   final List<PlexItem>? queue;
 
+  /// The Live channel being watched (0 = not a channel): it carries on by itself and never marks
+  /// anything watched.
+  final int channel;
+
   const PlayerScreen(
       {super.key,
       this.ratingKey,
       this.startMs = 0,
       this.url,
       this.title,
-      this.queue});
+      this.queue,
+      this.channel = 0});
 
   @override
   State<PlayerScreen> createState() => _PlayerScreenState();
@@ -102,6 +109,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
   int _queueStart = 0;
   bool _upNextCancelled = false;
   bool _transitioning = false;
+
+  // "Still watching?": asks before autoplay carries on once nobody seems to be there
+  static int _chain = 0; // episodes that started on their own since the last key press
+  static DateTime _chainStart = DateTime.fromMillisecondsSinceEpoch(0);
+  static DateTime _lastSeen = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _still = false;
+  final _stillNode = FocusNode();
+
+  // Live channel list (Down)
+  bool _chanOpen = false;
+  final _chanNode = FocusNode();
   int _upNextLeftMs = 10000;
   DateTime? _upNextTick;
 
@@ -109,6 +127,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void initState() {
     super.initState();
     app.watching.value = true;
+    // Coming back after a while is a fresh start for the "Still watching?" count
+    if (_chainStart.millisecondsSinceEpoch == 0 ||
+        DateTime.now().difference(_lastSeen).inMinutes > 10) {
+      _touched();
+    }
     _subPos = Prefs.subPosition;
     Preview.stop();
     _start();
@@ -256,7 +279,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
             }
           }
         }
-        if (widget.queue != null && widget.queue!.isNotEmpty) {
+        if (widget.channel > 0) {
+          // a channel carries on by itself: no episodes panel, no Up Next
+        } else if (widget.queue != null && widget.queue!.isNotEmpty) {
           _episodes = List<PlexItem>.of(widget.queue!);
           final i = _episodes.indexWhere((x) => x.key == it.key);
           if (i >= 0)
@@ -291,7 +316,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       });
     }
 
-    if (_item != null) {
+    if (_item != null && widget.channel == 0) {
       _report =
           Timer.periodic(const Duration(seconds: 10), (_) => _reportProgress());
     }
@@ -385,13 +410,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
-  void _reportProgress([String? state]) {
+  void _reportProgress([String? state, int? atMs]) {
     final it = _item;
-    if (it == null) return;
+    if (it == null || widget.channel > 0) return;
     Plex.timeline(
         it.key,
         state ?? (_playing ? 'playing' : 'paused'),
-        _pos.inMilliseconds,
+        atMs ?? _pos.inMilliseconds,
         _dur.inMilliseconds > 0 ? _dur.inMilliseconds : it.duration);
   }
 
@@ -399,12 +424,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void dispose() {
     app.watching.value = false;
     final it = _item;
-    if (it != null && !_reportedEnd) {
-      _reportProgress('stopped');
+    _lastSeen = DateTime.now();
+    // Channel viewing is just TV in the background: it never marks things watched or fills Continue Watching
+    if (it != null && !_reportedEnd && widget.channel == 0) {
+      // Quit within the first five minutes of something you only just started: don't leave it in Continue Watching
+      const sample = 5 * 60 * 1000;
+      final justSampled = _pos.inMilliseconds < sample &&
+          widget.startMs < sample &&
+          it.viewOffset <= 0;
+      _reportProgress('stopped', justSampled ? 0 : null);
       final d = _dur.inMilliseconds > 0 ? _dur.inMilliseconds : it.duration;
       if (d > 0 && _pos.inMilliseconds > d * 0.92)
         Plex.setWatched(it.key, true);
     }
+    _stillNode.dispose();
+    _chanNode.dispose();
     _panelScope.dispose();
     _trickTimer?.cancel();
     _infoTimer?.cancel();
@@ -463,9 +497,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _commit = Timer(const Duration(milliseconds: 650), _commitScrub);
   }
 
-  // ---- Fast forward / rewind, the way Plex does it: only the timeline moves, at 2x / 4x / 8x / 16x
-  // (10 / 30 / 90 / 240 seconds of film per real second). Enter plays from there, Esc cancels.
-  static const _trickRate = [10, 30, 90, 240];
+  // ---- Fast forward / rewind, the way Plex does it: only the timeline moves, at 2x / 4x / 8x / 16x / 32x
+  // (10 / 30 / 90 / 240 / 600 seconds of film per real second). Enter plays from there, Esc cancels.
+  static const _trickRate = [10, 30, 90, 240, 600];
   int _trickDir = 0; // -1 rewinding, 0 off, 1 forwarding
   int _trickLvl = 0;
   Timer? _trickTimer;
@@ -647,7 +681,177 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (_upNextTick != null && _playing)
       _upNextLeftMs -= now.difference(_upNextTick!).inMilliseconds;
     _upNextTick = now;
-    if (_upNextLeftMs <= 0) _playNext();
+    if (_upNextLeftMs <= 0) _advanceAuto();
+  }
+
+  void _touched() {
+    _chain = 0;
+    _chainStart = DateTime.now();
+  }
+
+  bool _shouldAskStillWatching() {
+    if (!Prefs.stillOn) return false;
+    if (_chain + 1 < Prefs.stillEpisodes) return false;
+    final night = Prefs.stillNight && DateTime.now().hour < 6; // 12am to 6am
+    final hours = Prefs.stillHours;
+    final long = hours > 0 &&
+        DateTime.now().difference(_chainStart).inMinutes >= hours * 60;
+    return night || long;
+  }
+
+  /// Autoplay's way to the next episode: asks first if nobody seems to be watching.
+  void _advanceAuto() {
+    if (_next == null || _still || _transitioning) return;
+    if (!_shouldAskStillWatching()) {
+      _chain++;
+      _playNext();
+      return;
+    }
+    _player.pause();
+    setState(() => _still = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _still) _stillNode.requestFocus();
+    });
+  }
+
+  void _answerStill() {
+    _touched();
+    setState(() => _still = false);
+    _focus.requestFocus();
+    _playNext();
+  }
+
+  // ------------------------------------------------------------ live channels
+
+  /// Next (+1) or previous (-1) channel.
+  void _zap(int delta) {
+    final all = Live.cached;
+    if (widget.channel <= 0 || all == null || all.length < 2 || _transitioning) {
+      return;
+    }
+    var at = all.indexWhere((c) => c.num == widget.channel);
+    if (at < 0) at = 0;
+    _transitioning = true;
+    tuneChannel(context, all[(at + delta) % all.length], replace: true);
+  }
+
+  void _closeChannels() {
+    setState(() => _chanOpen = false);
+    _focus.requestFocus();
+  }
+
+  void _openChannels() {
+    final all = Live.cached;
+    if (all == null || all.isEmpty) return;
+    setState(() => _chanOpen = true);
+    _showOsd(stay: true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _chanOpen) _chanNode.requestFocus();
+    });
+  }
+
+  Widget _channelList(double h, double w) {
+    final all = Live.cached ?? const <LiveChannel>[];
+    return Positioned(
+      left: w * 0.04,
+      top: h * 0.16,
+      child: Container(
+        width: w * 0.3,
+        height: h * 0.6,
+        padding: EdgeInsets.all(h * 0.02),
+        decoration: BoxDecoration(
+            color: const Color(0xF01C1C1E),
+            borderRadius: BorderRadius.circular(h * 0.025)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Page Up / Page Down changes channel',
+              style: reelText(h * 0.02, color: Reel.text3)),
+          SizedBox(height: h * 0.01),
+          Expanded(
+            child: ListView(children: [
+              for (final c in all)
+                () {
+                  final cur = c.num == widget.channel;
+                  final now = Live.nowOn(c);
+                  return Pressable(
+                    focusNode: cur ? _chanNode : null,
+                    autofocus: cur,
+                    scrollAlignment: 0.5,
+                    onPressed: () {
+                      if (cur) {
+                        _closeChannels();
+                      } else if (!_transitioning) {
+                        _transitioning = true;
+                        tuneChannel(context, c, replace: true);
+                      }
+                    },
+                    builder: (ctx, f) => Container(
+                      margin: EdgeInsets.only(bottom: h * 0.004),
+                      padding: EdgeInsets.symmetric(
+                          horizontal: h * 0.02, vertical: h * 0.01),
+                      decoration: BoxDecoration(
+                        color: f
+                            ? const Color(0xFFE8833A)
+                            : (cur ? const Color(0x33E8833A) : null),
+                        borderRadius: BorderRadius.circular(h * 0.015),
+                      ),
+                      child: Text(
+                          '${c.num}   ${c.name}${now != null ? '\n${now.prog.title}' : ''}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: reelText(h * 0.026,
+                              weight: FontWeight.w500,
+                              color: f ? Colors.black : Colors.white)),
+                    ),
+                  );
+                }(),
+            ]),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _stillCard(double h, double w) {
+    return Positioned.fill(
+      child: Container(
+        color: const Color(0x99000000),
+        alignment: Alignment.center,
+        child: Container(
+          padding: EdgeInsets.symmetric(horizontal: h * 0.08, vertical: h * 0.04),
+          decoration: BoxDecoration(
+              color: const Color(0xF01C1C1E),
+              borderRadius: BorderRadius.circular(h * 0.03)),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text('Still watching?',
+                style: reelText(h * 0.05, weight: FontWeight.w600)),
+            SizedBox(height: h * 0.012),
+            Text(
+                '${_chain + 1} episodes have played without a button press.\nPaused until you answer.',
+                textAlign: TextAlign.center,
+                style: reelText(h * 0.025, color: Reel.text2)),
+            SizedBox(height: h * 0.03),
+            Pressable(
+              focusNode: _stillNode,
+              autofocus: true,
+              onPressed: _answerStill,
+              builder: (c, f) => Container(
+                padding: EdgeInsets.symmetric(
+                    horizontal: h * 0.04, vertical: h * 0.016),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE8833A),
+                  borderRadius: BorderRadius.circular(h),
+                  border: Border.all(
+                      color: f ? Colors.white : Colors.transparent, width: 3),
+                ),
+                child: Text('Yes, keep watching',
+                    style: reelText(h * 0.028,
+                        weight: FontWeight.w600, color: Colors.black)),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
   }
 
   void _playNext() {
@@ -684,12 +888,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   void _finished() {
     if (!mounted || _transitioning) return;
+    if (widget.channel > 0) {
+      // on to whatever is next on the channel
+      final c = Live.byNum(widget.channel);
+      if (c != null) {
+        _transitioning = true;
+        tuneChannel(context, c, replace: true);
+        return;
+      }
+    }
     if (Prefs.autoPlayNext && _next != null && !_upNextCancelled) {
-      _playNext();
+      _advanceAuto();
       return;
     }
     final it = _item;
-    if (it != null) {
+    if (it != null && widget.channel == 0) {
       _reportedEnd = true;
       Plex.setWatched(it.key, true);
       Plex.timeline(it.key, 'stopped', it.duration, it.duration);
@@ -953,6 +1166,35 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   KeyEventResult _onKey(FocusNode n, KeyEvent e) {
     final k = e.logicalKey;
+    if (e is KeyDownEvent && !_still) _touched();
+    if (_still) {
+      // Only Enter answers; the rest of the keyboard is held until then (Esc still leaves)
+      if (k == LogicalKeyboardKey.escape ||
+          k == LogicalKeyboardKey.browserBack) {
+        return KeyEventResult.ignored;
+      }
+      if (k == LogicalKeyboardKey.enter ||
+          k == LogicalKeyboardKey.numpadEnter ||
+          k == LogicalKeyboardKey.select) {
+        if (e is KeyDownEvent) _answerStill();
+      }
+      return KeyEventResult.handled;
+    }
+    if (widget.channel > 0) {
+      if (k == LogicalKeyboardKey.pageUp || k == LogicalKeyboardKey.pageDown) {
+        if (e is KeyUpEvent) _zap(k == LogicalKeyboardKey.pageUp ? 1 : -1);
+        return KeyEventResult.handled;
+      }
+      if (_chanOpen) {
+        if (e is KeyDownEvent &&
+            (k == LogicalKeyboardKey.escape ||
+                k == LogicalKeyboardKey.browserBack)) {
+          _closeChannels();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored; // arrows and Enter go to the list
+      }
+    }
     if (_info) {
       if (e is KeyDownEvent &&
           (k == LogicalKeyboardKey.escape ||
@@ -1074,6 +1316,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.arrowDown) {
+      if (widget.channel > 0) {
+        _openChannels();
+        return KeyEventResult.handled;
+      }
       setState(() => _queueOpen = true);
       _showOsd(stay: true);
       return KeyEventResult.handled;
@@ -1125,9 +1371,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
         : 0.0;
     final it = _item;
     final title = widget.title ?? it?.displayTitle ?? '';
-    final sub = it?.type == 'episode'
+    final epSub = it?.type == 'episode'
         ? 'S${it!.parentIndex} · E${it.index}  ${it.title}'
         : null;
+    final chan = widget.channel > 0 ? Live.byNum(widget.channel) : null;
+    final sub = widget.channel > 0
+        ? 'CH ${widget.channel}${chan != null ? '  ·  ${chan.name}' : ''}${epSub != null ? '  ·  $epSub' : ''}'
+        : epSub;
     final skip = _skipRange;
     _keepSubsOnScreen(w, h);
 
@@ -1138,7 +1388,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
         autofocus: true,
         onKeyEvent: _onKey,
         child: MouseRegion(
-          onHover: (_) => _showOsd(),
+          onHover: (_) {
+            if (!_still) _touched();
+            _showOsd();
+          },
           onExit: (_) {
             if (mounted) {
               setState(() {
@@ -1248,7 +1501,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       _actionHint(h, Icons.keyboard_arrow_up_rounded,
                           'Audio & subtitles', () => _openPanel(1)),
                       SizedBox(width: h * 0.02),
-                      if (_episodes.isNotEmpty) ...[
+                      if (widget.channel > 0) ...[
+                        _actionHint(h, Icons.keyboard_arrow_down_rounded,
+                            'Channels', _openChannels),
+                        SizedBox(width: h * 0.02),
+                      ] else if (_episodes.isNotEmpty) ...[
                         _actionHint(h, Icons.keyboard_arrow_down_rounded,
                             'Episodes', () {
                           setState(() => _queueOpen = true);
@@ -1466,6 +1723,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
             if (_panel) _trackPanel(h, w),
             if (_info) _infoPanel(h, w),
+            if (_chanOpen && widget.channel > 0) _channelList(h, w),
+            if (_still) _stillCard(h, w),
           ]),
         ),
       ),
@@ -1934,8 +2193,30 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final abit = dnum('audio-bitrate');
     final fps = dnum('estimated-vf-fps');
     final size = dnum('file-size');
+    // A checklist: does this PC handle the file without trouble?
+    final checks = <String>[];
+    void tick(bool ok, String text) => checks.add('${ok ? '✓' : '✗'}  $text');
+    final hwdec = _stats['hwdec-current'];
+    if (hwdec != null) {
+      final codec = (v != null && v.isNotEmpty) ? v.first.codec.toUpperCase() : 'Video';
+      tick(hwdec != 'no',
+          '$codec ${hwdec == 'no' ? 'software decode (heavy on the CPU)' : 'hardware decode'}');
+    }
+    final dropped = (int.tryParse(num('frame-drop-count')) ?? 0) +
+        (int.tryParse(num('decoder-frame-drop-count')) ?? 0);
+    if (fps != null) tick(dropped < 30, dropped < 30 ? 'Smooth playback' : '$dropped frames dropped');
+    final avgMbps = (size != null && size > 0 && _dur.inSeconds > 0)
+        ? size * 8 / _dur.inSeconds / 1000000
+        : 0.0;
+    if (avgMbps > 0 && !_stereo && speed != null && speed > 0) {
+      final est = speed * 8 / 1000000;
+      tick(est >= avgMbps * 1.3,
+          est >= avgMbps * 1.3 ? 'Bandwidth sufficient' : 'Bandwidth is tight for this file');
+    }
+    tick(!_stereo, _stereo ? 'Sound converted by the server' : 'DIRECT PLAY${avgMbps > 0 ? ' — ${avgMbps.toStringAsFixed(1)} Mbps' : ''}');
     final rows = <List<String>>[
       ['Title', widget.title ?? it?.displayTitle ?? ''],
+      ['Checks', checks.join('\n')],
       if (it != null) ['Quality', it.badges.join('  ·  ')],
       if (it != null && it.directors.isNotEmpty)
         ['Director', it.directors.map((d) => d.name).join(', ')],

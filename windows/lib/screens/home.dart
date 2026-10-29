@@ -17,6 +17,7 @@ import '../ui/widgets.dart';
 import 'detail.dart';
 import 'discover.dart';
 import 'libraries.dart';
+import 'live.dart';
 import '../seerr.dart';
 import '../ui/net_image.dart' show ImageLoader;
 import 'player.dart';
@@ -55,6 +56,7 @@ class _HomeScreenState extends State<HomeScreen> {
     'TV Shows',
     'Libraries',
     'Discover',
+    'Live',
     'Search',
     'Settings'
   ];
@@ -793,6 +795,11 @@ class _HomeScreenState extends State<HomeScreen> {
           .push(MaterialPageRoute(builder: (_) => const LibrariesScreen()));
       return;
     }
+    if (_tabs[i] == 'Live') {
+      await Navigator.of(context)
+          .push(MaterialPageRoute(builder: (_) => const LiveScreen()));
+      return;
+    }
     if (_tabs[i] == 'Search') {
       await Navigator.of(context)
           .push(MaterialPageRoute(builder: (_) => const SearchScreen()));
@@ -935,9 +942,11 @@ class _HomeScreenState extends State<HomeScreen> {
           bottom: 0,
           child: ClipRect(
             child: _loading
-                ? Center(
-                    child: Text('Loading…',
-                        style: reelText(h * 0.03, color: Reel.text2)))
+                ? (_discover
+                    ? _Skeleton(h: h, w: Reel.w(context))
+                    : Center(
+                        child: Text('Loading…',
+                            style: reelText(h * 0.03, color: Reel.text2))))
                 : _error != null
                     ? Center(
                         child:
@@ -1428,6 +1437,61 @@ class _HomeScreenState extends State<HomeScreen> {
           ]),
         ),
       ),
+    );
+  }
+}
+
+
+/// Grey placeholder title and poster rows that pulse while Seerr loads.
+class _Skeleton extends StatefulWidget {
+  final double h;
+  final double w;
+  const _Skeleton({required this.h, required this.w});
+
+  @override
+  State<_Skeleton> createState() => _SkeletonState();
+}
+
+class _SkeletonState extends State<_Skeleton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 900))
+    ..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  Widget _bar(double w, double h, double r, double left, double top) =>
+      Positioned(
+        left: left,
+        top: top,
+        width: w,
+        height: h,
+        child: DecoratedBox(
+            decoration: BoxDecoration(
+                color: const Color(0x26FFFFFF),
+                borderRadius: BorderRadius.circular(r))),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final h = widget.h, w = widget.w;
+    final left = w * 0.05;
+    final cw = w * 0.097;
+    final gap = h * 0.022;
+    return FadeTransition(
+      opacity: Tween(begin: 0.35, end: 1.0).animate(_c),
+      child: Stack(children: [
+        _bar(w * 0.38, h * 0.05, h * 0.012, left, h * 0.06),
+        _bar(w * 0.45, h * 0.022, h * 0.008, left, h * 0.14),
+        _bar(w * 0.40, h * 0.022, h * 0.008, left, h * 0.18),
+        _bar(w * 0.16, h * 0.032, h * 0.01, left, h * 0.37),
+        for (var i = 0; i * (cw + gap) < w; i++)
+          _bar(cw, cw * 1.5, h * 0.014, left + i * (cw + gap), h * 0.43),
+      ]),
     );
   }
 }

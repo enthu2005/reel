@@ -130,6 +130,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
               () {
             setState(() => Prefs.autoPlayNext = !Prefs.autoPlayNext);
           }),
+          _row(h, 'Still watching?', Prefs.stillOn ? 'On' : 'Off',
+              'Autoplay pauses and asks "Still watching?" when several episodes in a row have started on their own with no key pressed, and it is also late at night or has been playing a long time. Turn it off to let autoplay run all night.',
+              () {
+            setState(() => Prefs.stillOn = !Prefs.stillOn);
+          }),
+          if (Prefs.stillOn) ...[
+            _row(h, 'Ask after episodes', '${Prefs.stillEpisodes} in a row',
+                'How many episodes can start on their own, with no key pressed, before it may ask.',
+                () {
+              const eps = [2, 3, 4, 5, 6];
+              final at = eps.indexOf(Prefs.stillEpisodes);
+              setState(
+                  () => Prefs.stillEpisodes = eps[(at + 1) % eps.length]);
+            }),
+            _row(h, 'Late at night', Prefs.stillNight ? '12am to 6am' : 'Off',
+                'Between midnight and 6am it asks as soon as the episode count above is reached.',
+                () {
+              setState(() => Prefs.stillNight = !Prefs.stillNight);
+            }),
+            _row(
+                h,
+                'Long viewing time',
+                Prefs.stillHours == 0 ? 'Off' : 'After ${Prefs.stillHours} hours',
+                'At any hour, it also asks once autoplay has run this long with no key pressed.',
+                () {
+              const hrs = [0, 2, 3, 4, 6];
+              final at = hrs.indexOf(Prefs.stillHours);
+              setState(() => Prefs.stillHours = hrs[(at + 1) % hrs.length]);
+            }),
+          ],
           _row(h, 'Stay signed in', Prefs.staySignedIn ? 'On' : 'Off',
               'Keep this Plex profile signed in on this Windows account.', () {
             setState(() => Prefs.staySignedIn = !Prefs.staySignedIn);

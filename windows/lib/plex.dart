@@ -926,6 +926,40 @@ class Plex {
       items('/library/metadata/$ratingKey/children');
 
   /// The first episode of a show (used for a preview when the show has no trailer).
+  /// Every movie / show of a library as the raw JSON Plex sends (genres, cast, resolution and so on),
+  /// kept for ten minutes. Smart search and Live both read whole libraries.
+  static final Map<String, (DateTime, List<Map<String, dynamic>>)> _rawCache = {};
+
+  static Future<List<Map<String, dynamic>>> rawAll(String sectionKey) async {
+    final hit = _rawCache[sectionKey];
+    if (hit != null &&
+        DateTime.now().difference(hit.$1) < const Duration(minutes: 10)) {
+      return hit.$2;
+    }
+    final body = await _send(
+        'GET',
+        '$server${paged('/library/sections/$sectionKey/all?sort=titleSort', 5000)}',
+        timeout: const Duration(seconds: 60));
+    final list = await Isolate.run(() {
+      final mc = (jsonDecode(body) as Map)['MediaContainer'] as Map;
+      return [
+        for (final m in (mc['Metadata'] as List? ?? const []))
+          Map<String, dynamic>.from(m as Map)
+      ];
+    });
+    _rawCache[sectionKey] = (DateTime.now(), list);
+    return list;
+  }
+
+  /// The libraries Smart search and Live look in: the ones shown on Home or Movies.
+  static List<PlexSection> enabledSections(List<PlexSection> all) {
+    final keys = <String>{};
+    return [
+      for (final s in [...homeSections(all), ...movieSections(all)])
+        if (keys.add(s.key)) s
+    ];
+  }
+
   static Future<PlexItem?> firstEpisode(String showKey) async {
     final l = await items(paged('/library/metadata/$showKey/allLeaves', 1));
     return l.isEmpty ? null : l.first;
