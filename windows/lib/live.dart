@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:math';
 
 import 'plex.dart';
+import 'prefs.dart';
 
 /// Pretend TV channels made from your own libraries. Each channel has a fixed, endless loop of films or
 /// episodes, and the loop is laid against the clock, so what is "on" right now is the same every time you
@@ -21,37 +23,82 @@ class LiveSlot {
 }
 
 class LiveChannel {
-  final int num;
+  /// The number shown on the guide: its place in the (reordered, unhidden) list.
+  int num;
+  final String id;
   final String name;
+  final bool custom;
   final List<LiveProg> loop = [];
   int total = 0;
-  LiveChannel(this.num, this.name);
+  LiveChannel(this.num, this.id, this.name, {this.custom = false});
+}
+
+/// A channel you made: from a collection, one show, or a mix of genres.
+class CustomChannel {
+  final String id;
+  String name;
+  final String kind; // 'collection', 'show' or 'genres'
+  final String ref; // the collection's / show's key
+  final String refTitle; // for showing in the editor
+  final String type; // genres: 'movie' or 'show'
+  final List<String> genres;
+
+  CustomChannel(this.id, this.name, this.kind,
+      {this.ref = '', this.refTitle = '', this.type = 'movie', this.genres = const []});
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'kind': kind,
+        'ref': ref,
+        'refTitle': refTitle,
+        'type': type,
+        'genres': genres,
+      };
+
+  static CustomChannel fromJson(Map m) => CustomChannel(
+        '${m['id']}',
+        '${m['name']}',
+        '${m['kind']}',
+        ref: '${m['ref'] ?? ''}',
+        refTitle: '${m['refTitle'] ?? ''}',
+        type: '${m['type'] ?? 'movie'}',
+        genres: [for (final g in (m['genres'] as List? ?? const [])) '$g'],
+      );
+
+  String get describe => switch (kind) {
+        'collection' => 'Collection: $refTitle',
+        'show' => 'Show: $refTitle',
+        _ => '${type == 'movie' ? 'Movies' : 'TV'}: ${genres.join(', ')}',
+      };
 }
 
 class Live {
   Live._();
 
-  /// {channel number, name, genre words (any matches), "movie" or "show"}
+  /// {id and name, genre words (any matches), "movie" or "show"}
   static const _lineup = [
-    ['1', 'Adventure', 'adventure', 'movie'],
-    ['2', 'Action Movies', 'action', 'movie'],
-    ['3', 'Comedy TV', 'comedy', 'show'],
-    ['4', 'Sci-Fi', 'science fiction,sci-fi', 'movie'],
-    ['5', 'Drama TV', 'drama', 'show'],
-    ['6', 'Horror', 'horror', 'movie'],
-    ['7', 'Comedy Movies', 'comedy', 'movie'],
-    ['8', 'Animation', 'animation', 'movie'],
-    ['9', 'Crime TV', 'crime', 'show'],
-    ['10', 'Thrillers', 'thriller', 'movie'],
-    ['11', 'Documentaries', 'documentary', 'movie'],
-    ['12', 'Sci-Fi & Fantasy TV', 'sci-fi,fantasy,science fiction', 'show'],
+    ['Adventure', 'adventure', 'movie'],
+    ['Action Movies', 'action', 'movie'],
+    ['Comedy TV', 'comedy', 'show'],
+    ['Sci-Fi', 'science fiction,sci-fi', 'movie'],
+    ['Drama TV', 'drama', 'show'],
+    ['Horror', 'horror', 'movie'],
+    ['Comedy Movies', 'comedy', 'movie'],
+    ['Animation', 'animation', 'movie'],
+    ['Crime TV', 'crime', 'show'],
+    ['Thrillers', 'thriller', 'movie'],
+    ['Documentaries', 'documentary', 'movie'],
+    ['Sci-Fi & Fantasy TV', 'sci-fi,fantasy,science fiction', 'show'],
   ];
 
   // any fixed moment: the loops start here
   static final int _epoch = 1700000000000;
   static const _minProg = 4 * 60000;
-  static List<LiveChannel>? _built;
+  static List<LiveChannel>? _everything; // every channel built, hidden or not, in the usual order
+  static List<LiveChannel>? _built; // what the guide shows: unhidden, in your order, numbered
   static DateTime _builtAt = DateTime.fromMillisecondsSinceEpoch(0);
+  static final Map<String, List<LiveProg>> _epCache = {};
 
   static List<LiveChannel>? get cached => _built;
 
@@ -61,6 +108,82 @@ class Live {
     }
     return null;
   }
+
+  // ------------------------------------------------------------ your own channels
+
+  static List<CustomChannel> customChannels() {
+    try {
+      return [
+        for (final m in (jsonDecode(Prefs.liveCustom) as List))
+          CustomChannel.fromJson(m as Map)
+      ];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static void _saveCustom(List<CustomChannel> l) {
+    Prefs.liveCustom = jsonEncode([for (final c in l) c.toJson()]);
+    invalidate();
+  }
+
+  static void addCustom(CustomChannel c) =>
+      _saveCustom([...customChannels(), c]);
+
+  static void removeCustom(String id) {
+    _saveCustom([for (final c in customChannels()) if (c.id != id) c]);
+    Prefs.liveHidden = [for (final x in Prefs.liveHidden) if (x != id) x];
+    Prefs.liveOrder = [for (final x in Prefs.liveOrder) if (x != id) x];
+  }
+
+  /// Forget what was built, so the next load builds the channels again.
+  static void invalidate() {
+    _builtAt = DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  /// Every channel in the guide's order (hidden ones included), for the editor.
+  static List<LiveChannel> allInOrder() => _arranged(_everything ?? const [], hidden: false);
+
+  static List<LiveChannel> _arranged(List<LiveChannel> all, {required bool hidden}) {
+    final order = Prefs.liveOrder;
+    final hide = Prefs.liveHidden.toSet();
+    final rest = [...all];
+    final out = <LiveChannel>[];
+    for (final id in order) {
+      final i = rest.indexWhere((c) => c.id == id);
+      if (i >= 0) out.add(rest.removeAt(i));
+    }
+    out.addAll(rest);
+    return hidden ? [for (final c in out) if (!hide.contains(c.id)) c] : out;
+  }
+
+  /// Re-applies your order and hidden choices without building anything again.
+  static void rearrange() {
+    final l = _arranged(_everything ?? const [], hidden: true);
+    for (var i = 0; i < l.length; i++) {
+      l[i].num = i + 1;
+    }
+    _built = l;
+  }
+
+  static void moveChannel(String id, int delta) {
+    final ids = [for (final c in allInOrder()) c.id];
+    final i = ids.indexOf(id);
+    final j = i + delta;
+    if (i < 0 || j < 0 || j >= ids.length) return;
+    ids.insert(j, ids.removeAt(i));
+    Prefs.liveOrder = ids;
+    rearrange();
+  }
+
+  static void setHidden(String id, bool hide) {
+    final h = Prefs.liveHidden.where((x) => x != id).toList();
+    if (hide) h.add(id);
+    Prefs.liveHidden = h;
+    rearrange();
+  }
+
+  // ------------------------------------------------------------ building
 
   /// Java's String.hashCode, so a channel's order never changes between runs.
   static int _hash(String s) {
@@ -90,27 +213,95 @@ class Live {
     shows.sort(byKey);
     final out = <LiveChannel>[];
     for (final def in _lineup) {
-      final c = LiveChannel(int.parse(def[0]), def[1]);
-      final rnd = Random(_hash(def[1]));
-      final pool = _match(def[3] == 'movie' ? movies : shows, def[2].split(','))
-        ..shuffle(rnd);
-      if (def[3] == 'movie') {
-        for (final m in pool) {
-          if (c.loop.length >= 150) break;
-          final p = _prog(m);
-          if (p != null) c.loop.add(p);
-        }
-      } else {
-        await _buildShows(c, pool, rnd);
-      }
+      final c = LiveChannel(0, def[0], def[0]);
+      await _fromGenres(c, def[1].split(','), def[2] == 'movie', movies, shows);
       for (final p in c.loop) {
         c.total += p.durMs;
       }
       if (c.total > 0) out.add(c);
     }
-    _built = out;
+    for (final cc in customChannels()) {
+      final c = LiveChannel(0, cc.id, cc.name, custom: true);
+      try {
+        switch (cc.kind) {
+          case 'collection':
+            await _fromCollection(c, cc.ref);
+          case 'show':
+            await _fromShow(c, cc.ref, cc.refTitle);
+          default:
+            await _fromGenres(c, cc.genres.map((g) => g.toLowerCase()).toList(),
+                cc.type == 'movie', movies, shows);
+        }
+      } catch (_) {}
+      for (final p in c.loop) {
+        c.total += p.durMs;
+      }
+      if (c.total > 0) out.add(c);
+    }
+    _everything = out;
     _builtAt = now;
-    return out;
+    rearrange();
+    return _built!;
+  }
+
+  static Future<void> _fromGenres(
+      LiveChannel c,
+      List<String> words,
+      bool movie,
+      List<Map<String, dynamic>> movies,
+      List<Map<String, dynamic>> shows) async {
+    final rnd = Random(_hash(c.name));
+    final pool = _match(movie ? movies : shows, words)..shuffle(rnd);
+    if (movie) {
+      for (final m in pool) {
+        if (c.loop.length >= 150) break;
+        final p = _prog(m);
+        if (p != null) c.loop.add(p);
+      }
+    } else {
+      await _buildShows(c, pool, rnd);
+    }
+  }
+
+  /// A collection plays in release order (a marathon); a collection of shows mixes their episodes.
+  static Future<void> _fromCollection(LiveChannel c, String key) async {
+    final items = await Plex.children(key);
+    if (items.isEmpty) return;
+    if (items.first.type == 'show') {
+      await _buildShows(c, [
+        for (final s in items) {'ratingKey': s.key, 'title': s.title}
+      ], Random(_hash(c.name)));
+      return;
+    }
+    final movies = items.where((m) => m.type == 'movie').toList()
+      ..sort((a, b) {
+        final y = a.year.compareTo(b.year);
+        return y != 0 ? y : a.title.compareTo(b.title);
+      });
+    for (final m in movies) {
+      if (m.duration < _minProg) continue;
+      c.loop.add(LiveProg(m.key, m.title, m.year > 0 ? '${m.year}' : '', m.duration));
+    }
+  }
+
+  /// One show, every episode in order, round and round (24/7).
+  static Future<void> _fromShow(LiveChannel c, String key, String title) async {
+    final eps = await _episodesOf(key, title, cap: 600);
+    c.loop.addAll(eps);
+  }
+
+  static Future<List<LiveProg>> _episodesOf(String showKey, String showTitle,
+      {int cap = 120}) async {
+    final cached = _epCache['$showKey/$cap'];
+    if (cached != null) return cached;
+    final eps = <LiveProg>[];
+    for (final e in await Plex.allEpisodes(showKey)) {
+      if (e.duration < _minProg || e.parentIndex <= 0) continue; // skip specials
+      eps.add(LiveProg(e.key, showTitle,
+          'S${e.parentIndex} · E${e.index}  ${e.title}', e.duration));
+      if (eps.length >= cap) break;
+    }
+    return _epCache['$showKey/$cap'] = eps;
   }
 
   static List<Map<String, dynamic>> _match(
@@ -145,16 +336,11 @@ class Live {
     final lists = <List<LiveProg>>[];
     for (var i = 0; i < pool.length && lists.length < 8; i++) {
       final show = pool[i];
-      final eps = <LiveProg>[];
       try {
-        for (final e in await Plex.allEpisodes('${show['ratingKey']}')) {
-          if (e.duration < _minProg || e.parentIndex <= 0) continue; // skip specials
-          eps.add(LiveProg(e.key, '${show['title'] ?? ''}',
-              'S${e.parentIndex} · E${e.index}  ${e.title}', e.duration));
-          if (eps.length >= 120) break;
-        }
+        final eps =
+            await _episodesOf('${show['ratingKey']}', '${show['title'] ?? ''}');
+        if (eps.isNotEmpty) lists.add(eps);
       } catch (_) {}
-      if (eps.isNotEmpty) lists.add(eps);
     }
     final at = List<int>.filled(lists.length, 0);
     while (c.loop.length < 400) {

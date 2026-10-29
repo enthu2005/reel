@@ -9,6 +9,7 @@ import '../plex.dart';
 import '../prefs.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
+import 'live_edit.dart';
 import 'player.dart';
 
 
@@ -212,6 +213,18 @@ class _LiveScreenState extends State<LiveScreen> {
               Expanded(
                   child: Text('Live',
                       style: reelText(h * 0.05, weight: FontWeight.w700))),
+              PillButton('Edit channels', icon: Icons.tune_rounded,
+                  onPressed: () async {
+                _pipToken++;
+                _pipDelay?.cancel();
+                await Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const LiveEditScreen()));
+                if (!mounted) return;
+                // the lineup may have changed
+                final r = Live.cached ?? await Live.load();
+                if (mounted) setState(() => _channels = r);
+              }),
+              SizedBox(width: w * 0.02),
               Text(_clock(_now),
                   style: reelText(h * 0.034, color: Reel.text2)),
             ]),

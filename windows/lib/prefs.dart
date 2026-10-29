@@ -151,4 +151,13 @@ class Prefs {
   /// Seasonal look: 0 none, 1 Christmas, 2 Halloween.
   static int get theme => _p.getInt('theme') ?? 0;
   static set theme(int v) => _p.setInt('theme', v);
+
+  /// Live: channels you made yourself (a JSON list), the ids of channels hidden from the guide, and
+  /// the order of the guide (ids; anything missing follows in the usual order).
+  static String get liveCustom => _p.getString('liveCustom') ?? '[]';
+  static set liveCustom(String v) => _p.setString('liveCustom', v);
+  static List<String> get liveHidden => _p.getStringList('liveHidden') ?? const [];
+  static set liveHidden(List<String> v) => _p.setStringList('liveHidden', v);
+  static List<String> get liveOrder => _p.getStringList('liveOrder') ?? const [];
+  static set liveOrder(List<String> v) => _p.setStringList('liveOrder', v);
 }

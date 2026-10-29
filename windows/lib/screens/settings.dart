@@ -8,6 +8,7 @@ import '../ui/net_image.dart';
 import 'discover.dart';
 import '../ui/preview.dart';
 import '../ui/seasonal.dart';
+import 'stats.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 import 'login.dart';
@@ -161,6 +162,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               setState(() => Prefs.stillHours = hrs[(at + 1) % hrs.length]);
             }),
           ],
+          _row(h, 'Stats and Wrapped', 'Open',
+              'Hours watched, your top genres and actors, when you watch, and a year-end Wrapped slideshow.',
+              () => Navigator.of(context)
+                  .push(MaterialPageRoute(builder: (_) => const StatsScreen()))),
           _row(h, 'Theme', seasonName(Prefs.theme),
               'A seasonal look for special occasions: snow and red and green for Christmas, rising embers and orange and purple for Halloween. It pauses while a film plays.',
               () {

@@ -951,6 +951,21 @@ class Plex {
     return list;
   }
 
+  /// Every episode in a show library that you have watched, as raw JSON (with when you last watched it).
+  static Future<List<Map<String, dynamic>>> rawWatchedEpisodes(String sectionKey) async {
+    final body = await _send(
+        'GET',
+        '$server${paged('/library/sections/$sectionKey/all?type=4&unwatched=0&sort=lastViewedAt:desc', 30000)}',
+        timeout: const Duration(seconds: 90));
+    return Isolate.run(() {
+      final mc = (jsonDecode(body) as Map)['MediaContainer'] as Map;
+      return [
+        for (final m in (mc['Metadata'] as List? ?? const []))
+          Map<String, dynamic>.from(m as Map)
+      ];
+    });
+  }
+
   /// The libraries Smart search and Live look in: the ones shown on Home or Movies.
   static List<PlexSection> enabledSections(List<PlexSection> all) {
     final keys = <String>{};
