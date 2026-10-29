@@ -127,6 +127,13 @@ final class PhoneRemote {
         return ip == null ? null : "http://" + ip + ":" + port + "/?t=" + token;
     }
 
+    /** http://192.168.x.x:8765 (no code), or null when there's no network. */
+    static synchronized String baseUrl() {
+        if (server == null) return null;
+        String ip = localIp();
+        return ip == null ? null : "http://" + ip + ":" + port;
+    }
+
     private static String localIp() {
         try {
             String fallback = null;
@@ -172,6 +179,26 @@ final class PhoneRemote {
                 path = path.substring(0, qi);
             }
             OutputStream out = s.getOutputStream();
+            if (path.startsWith("/party")) {
+                // Guests: their own link code, which only lets them vote
+                if (!Party.valid(q.get("p"))) {
+                    reply(out, 403, "text/plain", "This party has ended.");
+                } else if (path.equals("/party")) {
+                    reply(out, 200, "text/html; charset=utf-8", asset("party.html"));
+                } else if (path.equals("/party/state")) {
+                    reply(out, 200, "application/json; charset=utf-8", Party.stateJson(q.get("g")));
+                } else if (path.equals("/party/vote")) {
+                    boolean ok = Party.vote(q.get("g"), q.get("key"));
+                    reply(out, 200, "application/json; charset=utf-8", Party.stateJson(q.get("g")).replaceFirst("^\\{", "{\"ok\":" + ok + ","));
+                } else if (path.equals("/party/img")) {
+                    String pth = q.get("path");
+                    if (pth != null && Party.allowsThumb(pth)) image(out, pth);
+                    else reply(out, 404, "text/plain", "Not found");
+                } else {
+                    reply(out, 404, "text/plain", "Not found");
+                }
+                return;
+            }
             if (token == null || !token.equals(q.get("t"))) {
                 reply(out, 403, "text/plain", "Scan the QR code on the TV again.");
                 return;

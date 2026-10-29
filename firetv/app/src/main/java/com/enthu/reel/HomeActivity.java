@@ -1414,7 +1414,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         // Coming up from the page onto the top bar lands on the tab you are on, not on the first one
         root.getViewTreeObserver().addOnGlobalFocusChangeListener((oldF, newF) -> {
             if (newF == null || tab < 0 || tab >= tabViews.length || tabViews[tab] == null) return;
-            if (!isNavTab(newF) || isNavTab(oldF) || oldF == cornerSettings || oldF == cornerMoon || newF == tabViews[tab]) return;
+            if (!isNavTab(newF) || isNavTab(oldF) || oldF == cornerSettings || oldF == cornerMoon || oldF == cornerParty || newF == tabViews[tab]) return;
             final View target = tabViews[tab];
             handler.post(target::requestFocus);
         });
@@ -1458,6 +1458,32 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                     android.widget.Toast.LENGTH_SHORT).show();
         });
         paintMoon.run();
+
+        // Party mode: guests vote on ten random films from their phones
+        final TextView party = makeTab(" ");
+        cornerParty = party;
+        final StarDrawable partyIcon = new StarDrawable((int) moonSize);
+        party.setCompoundDrawablesRelative(partyIcon, null, null, null);
+        party.setCompoundDrawablePadding(0);
+        party.setPadding((int) (W * 0.010f), (int) (H * 0.012f), (int) (W * 0.010f), (int) (H * 0.012f));
+        party.setContentDescription("Party mode");
+        final Runnable paintParty = () -> {
+            partyIcon.set(party.hasFocus() ? 0xFF000000 : 0xFFFFFFFF);
+            party.setAlpha(party.hasFocus() ? 1f : 0.45f);
+        };
+        final View.OnFocusChangeListener partyBase = party.getOnFocusChangeListener();
+        party.setOnFocusChangeListener((v, f) -> {
+            if (partyBase != null) partyBase.onFocusChange(v, f);
+            paintParty.run();
+        });
+        paintParty.run();
+        party.setOnClickListener(v -> {
+            SoundFx.click();
+            stopPreview();
+            stopHeroPreview();
+            startActivity(new Intent(this, PartyActivity.class));
+        });
+        corner.addView(party);
         corner.addView(moon);
 
         TextView settings = makeTab("Settings");
@@ -1473,6 +1499,45 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         soLp.topMargin = (int) (H * 0.045f);
         soLp.rightMargin = (int) (W * 0.03f);
         root.addView(corner, soLp);
+    }
+
+    /** A small outlined star: the Party mode button. */
+    private static final class StarDrawable extends android.graphics.drawable.Drawable {
+        private final int size;
+        private final android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+
+        StarDrawable(int size) {
+            this.size = size;
+            setBounds(0, 0, size, size);
+            paint.setStyle(android.graphics.Paint.Style.STROKE);
+            paint.setStrokeJoin(android.graphics.Paint.Join.ROUND);
+            paint.setStrokeWidth(Math.max(2f, size * 0.09f));
+        }
+
+        void set(int color) {
+            paint.setColor(color);
+            invalidateSelf();
+        }
+
+        @Override
+        public void draw(android.graphics.Canvas c) {
+            float cx = size / 2f, cy = size / 2f + size * 0.03f;
+            android.graphics.Path p = new android.graphics.Path();
+            for (int i = 0; i < 10; i++) {
+                double a = -Math.PI / 2 + i * Math.PI / 5;
+                float r = size * (i % 2 == 0 ? 0.46f : 0.2f);
+                float x = cx + (float) Math.cos(a) * r, y = cy + (float) Math.sin(a) * r;
+                if (i == 0) p.moveTo(x, y); else p.lineTo(x, y);
+            }
+            p.close();
+            c.drawPath(p, paint);
+        }
+
+        @Override public void setAlpha(int a) { paint.setAlpha(a); }
+        @Override public void setColorFilter(android.graphics.ColorFilter cf) { paint.setColorFilter(cf); }
+        @Override public int getOpacity() { return android.graphics.PixelFormat.TRANSLUCENT; }
+        @Override public int getIntrinsicWidth() { return size; }
+        @Override public int getIntrinsicHeight() { return size; }
     }
 
     /** A crescent moon (outlined faintly when quiet mode is off, filled when on). */
@@ -2589,6 +2654,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     private View navGlass;
     private TextView cornerSettings;
     private TextView cornerMoon;
+    private TextView cornerParty;
     private int[] navColors = {0x8C1C1C1E, 0x8C1C1C1E};
     private android.animation.ValueAnimator navAnim;
 
@@ -2735,7 +2801,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         // Up on the top bar stays on the tab you are on (it used to wander off to the moon / Settings)
         if (e.getKeyCode() == KeyEvent.KEYCODE_DPAD_UP && !heroFull && !previewFullscreen) {
             View f = getCurrentFocus();
-            if (isNavTab(f) || f == cornerMoon || f == cornerSettings) return true;
+            if (isNavTab(f) || f == cornerMoon || f == cornerParty || f == cornerSettings) return true;
         }
         if (heroFull) {
             // Full-screen spotlight preview: OK opens the title, anything else goes back to the page
@@ -2751,7 +2817,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         // Back from anywhere on the page goes up to the top bar (on the tab you are on), silent;
         // Back on the top bar behaves as before.
         if (e.getKeyCode() == KeyEvent.KEYCODE_BACK && !previewFullscreen && tabViews[tab] != null) {
-            boolean onBar = (cornerSettings != null && cornerSettings.hasFocus()) || (cornerMoon != null && cornerMoon.hasFocus());
+            boolean onBar = (cornerSettings != null && cornerSettings.hasFocus()) || (cornerMoon != null && cornerMoon.hasFocus()) || (cornerParty != null && cornerParty.hasFocus());
             for (TextView tv : tabViews) if (tv != null && tv.hasFocus()) onBar = true;
             if (!onBar) {
                 if (e.getAction() == KeyEvent.ACTION_UP) {

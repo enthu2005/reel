@@ -80,6 +80,11 @@
             android:screenOrientation="landscape" />
 
         <activity
+            android:name=".PartyActivity"
+            android:exported="false"
+            android:screenOrientation="landscape" />
+
+        <activity
             android:name=".LiveEditActivity"
             android:exported="false"
             android:screenOrientation="landscape" />

@@ -3547,7 +3547,7 @@ public class PlayerActivity extends Activity {
     }
 
     /** A QR code for [text] as a bitmap, dark on white. */
-    private static android.graphics.Bitmap qr(String text, int px) {
+    static android.graphics.Bitmap qr(String text, int px) {
         try {
             com.google.zxing.common.BitMatrix m = new com.google.zxing.qrcode.QRCodeWriter()
                     .encode(text, com.google.zxing.BarcodeFormat.QR_CODE, px, px);

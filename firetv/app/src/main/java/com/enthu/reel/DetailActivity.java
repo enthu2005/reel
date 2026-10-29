@@ -513,6 +513,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
      * start it behind the page two seconds after the page opened.
      */
     private void startBehindWhenReady() {
+        android.util.Log.w("ReelDetail", "behind? destroyed=" + isDestroyed() + " started=" + behindStarted + " playing=" + previewPlaying() + " item=" + (item != null) + " auto=" + autoTrailer());
         if (isDestroyed() || behindStarted || previewPlaying() || item == null || !autoTrailer()) return;
         behindStarted = true;
         final Plex.Item it = item;
@@ -520,6 +521,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         Plex.async(() -> known != null ? known : PreviewCard.plexSource(it), new Plex.Callback<String[]>() {
             @Override
             public void ok(final String[] src) {
+                android.util.Log.w("ReelDetail", "preview source for " + key + ": " + (src == null ? "null" : src[0] + (src.length > 3 ? " " + src[3] : "")));
                 if (isDestroyed() || src == null || src[0].equals("none")) return;
                 long wait = Math.max(0, BEHIND_DELAY_MS - (android.os.SystemClock.uptimeMillis() - openedAt));
                 if (src[0].equals("yt")) {
@@ -1665,6 +1667,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
 
             @Override
             public void onPlayerError(androidx.media3.common.PlaybackException error) {
+                android.util.Log.w("ReelDetail", "preview failed: " + error.getErrorCodeName() + " " + error.getMessage());
                 endPreview();
             }
         });
