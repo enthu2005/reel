@@ -38,6 +38,7 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
     private int suggToken = 0;
     private static final int SUGG_ROW_H_DIV = 16; // row height = screen height / this
     private TextView message;
+    private TextView smartNote;
     private View firstKeyView;
     private RecyclerView grid;
     private int token = 0;
@@ -126,6 +127,7 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
         grid = new RecyclerView(this);
         grid.setLayoutManager(new GridLayoutManager(this, 3));
         grid.setClipToPadding(false);
+        grid.setClipChildren(false);
         grid.setItemAnimator(null);
         grid.setPadding((int) (W * 0.02f), (int) (H * 0.08f), (int) (W * 0.03f), (int) (H * 0.06f));
         FrameLayout.LayoutParams gLp = new FrameLayout.LayoutParams(
@@ -141,6 +143,19 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
         sLp.topMargin = (int) (H * 0.08f);
         sLp.rightMargin = (int) (W * 0.03f);
         root.addView(suggBox, sLp);
+
+        smartNote = new TextView(this);
+        smartNote.setTextColor(0xCCE8833A);
+        smartNote.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.024f);
+        smartNote.setTypeface(UiUtil.font(UiUtil.MEDIUM));
+        smartNote.setSingleLine(true);
+        smartNote.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        smartNote.setVisibility(View.GONE);
+        FrameLayout.LayoutParams nLp = new FrameLayout.LayoutParams(
+                (int) (W * 0.55f), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END | Gravity.TOP);
+        nLp.topMargin = (int) (H * 0.04f);
+        nLp.rightMargin = (int) (W * 0.03f);
+        root.addView(smartNote, nLp);
 
         message = new TextView(this);
         message.setTextColor(0x99FFFFFF);
@@ -257,7 +272,7 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
 
     private void setQuery(String text) {
         String t = text == null ? "" : text.trim().toLowerCase();
-        if (t.length() > 40) t = t.substring(0, 40);
+        if (t.length() > 90) t = t.substring(0, 90);
         if (t.equals(query.toString())) return;
         query.setLength(0);
         query.append(t);
@@ -404,7 +419,7 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
 
     private void type(String c) {
         SoundFx.click();
-        if (query.length() < 40) query.append(c.toLowerCase());
+        if (query.length() < 90) query.append(c.toLowerCase());
         changed();
     }
 
@@ -421,6 +436,7 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
         final int mine = ++token;
         loadSuggestions(q);
         if (q.length() < 2) {
+            smartNote.setVisibility(View.GONE);
             results.clear();
             grid.setAdapter(null);
             message.setText(q.isEmpty() ? "Type a title or an actor" : "Keep typing…");
@@ -428,7 +444,13 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
             message.setVisibility(q.isEmpty() && suggBox.getChildCount() > 0 ? View.GONE : View.VISIBLE);
             return;
         }
-        pending = () -> Plex.async(() -> Plex.search(q), new Plex.Callback<List<Plex.Item>>() {
+        // Plain English ("unwatched sci-fi under two hours") becomes filters on your own library
+        final SmartSearch.Query sq = SmartSearch.parse(q);
+        final java.util.concurrent.Callable<List<Plex.Item>> job = sq.smart()
+                ? () -> SmartSearch.run(sq) : () -> Plex.search(q);
+        smartNote.setText(sq.smart() ? "Searching your library for  " + sq.describe() : "");
+        smartNote.setVisibility(sq.smart() ? View.VISIBLE : View.GONE);
+        pending = () -> Plex.async(job, new Plex.Callback<List<Plex.Item>>() {
             @Override
             public void ok(List<Plex.Item> list) {
                 if (isDestroyed() || mine != token) return;

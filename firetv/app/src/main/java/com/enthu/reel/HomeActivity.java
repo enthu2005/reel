@@ -52,7 +52,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     private static final int TAB_HOME = 0;
     private static final int TAB_MOVIES = 1;
     private static final int TAB_SHOWS = 2;
-    private static final String[] TAB_NAMES = {"Home", "Movies", "TV Shows", "Libraries", "Discover", "Search"};
+    private static final String[] TAB_NAMES = {"Home", "Movies", "TV Shows", "Libraries", "Discover", "Live", "Search"};
     private static final long SPOTLIGHT_MS = 12000L;
     private static final int SPOTLIGHT_COUNT = 10;
 
@@ -77,7 +77,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final List<Row> rows = new ArrayList<>();
     private final List<Plex.Item> spotlight = new ArrayList<>();
-    private final TextView[] tabViews = new TextView[6];
+    private final TextView[] tabViews = new TextView[7];
 
     private int W;
     private int H;
@@ -976,6 +976,9 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         FrameLayout root = new FrameLayout(this);
         rootView = root;
         root.setBackgroundColor(UiUtil.BG);
+        // A focused button grows past its container's edge; don't clip each child to its own box or the
+        // growing button's rounded left end is cut flat
+        root.setClipChildren(false);
 
         // Backdrop: two layers, newest on top
         bgBox = new FrameLayout(this);
@@ -1191,6 +1194,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         buttons.setOrientation(LinearLayout.HORIZONTAL);
         buttons.setGravity(Gravity.CENTER_VERTICAL);
         buttons.setClipChildren(false);
+        buttons.setClipToPadding(false); // the left padding is room for the button to grow into, not a clip line
         buttons.setPadding((int) (W * 0.012f), 0, 0, 0);
         hero.setClipChildren(false);
         hero.setClipToPadding(false);
@@ -1278,6 +1282,9 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         LinearLayout nav = new LinearLayout(this);
         nav.setOrientation(LinearLayout.HORIZONTAL);
         nav.setGravity(Gravity.CENTER_VERTICAL);
+        // A focused tab grows a little; clipping it to the padded area flattened its top and bottom
+        nav.setClipChildren(false);
+        nav.setClipToPadding(false);
         int pad = (int) (H * 0.008f);
         nav.setPadding(pad * 2, pad, pad * 2, pad);
         for (int i = 0; i < TAB_NAMES.length; i++) {
@@ -1287,7 +1294,8 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 SoundFx.click();
                 if (index == 3) startActivity(new Intent(this, LibrariesActivity.class));
                 else if (index == 4) startActivity(new Intent(this, SeerrActivity.class));
-                else if (index == 5) startActivity(new Intent(this, SearchActivity.class));
+                else if (index == 5) startActivity(new Intent(this, LiveActivity.class));
+                else if (index == 6) startActivity(new Intent(this, SearchActivity.class));
                 else switchTab(index);
             });
             tabViews[i] = t;
@@ -1329,6 +1337,9 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         LinearLayout corner = new LinearLayout(this);
         corner.setOrientation(LinearLayout.HORIZONTAL);
         corner.setGravity(Gravity.CENTER_VERTICAL);
+        // The moon and Settings grow when focused; don't cut them off at their own edges
+        corner.setClipChildren(false);
+        corner.setClipToPadding(false);
 
         // Quiet mode: a small moon, easy to miss on purpose
         final TextView moon = makeTab(" ");

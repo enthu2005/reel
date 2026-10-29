@@ -2,7 +2,7 @@
 #   powershell -ExecutionPolicy Bypass -File .\reel-log.ps1
 param([string]$Name = "reel-log", [int]$Seconds = 25)
 $ErrorActionPreference = "Stop"
-$fireTv = "192.168.0.225:5555"
+$fireTv = "192.168.1.8:5555"
 $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
 if (-not (Test-Path $adb)) { $adb = (Get-Command adb -ErrorAction SilentlyContinue).Source }
 if (-not $adb) { $adb = "$env:LOCALAPPDATA\Reel\platform-tools\adb.exe" }

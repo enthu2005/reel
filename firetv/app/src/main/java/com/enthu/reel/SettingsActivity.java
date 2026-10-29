@@ -40,8 +40,12 @@ public class SettingsActivity extends ReelActivity {
 
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
+        // The scroll area reaches this far past the column on each side so the focused row has room to grow
+        int grow = (int) (W * 0.02f);
         int side = (int) (W * 0.12f);
         col.setPadding(side, (int) (H * 0.10f), side, (int) (H * 0.06f));
+        col.setClipToPadding(false);
+        col.setClipChildren(false);
 
         TextView title = new TextView(this);
         title.setText("Settings");
@@ -61,10 +65,18 @@ public class SettingsActivity extends ReelActivity {
         scroll.setVerticalScrollBarEnabled(false);
         list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
+        list.setPadding(grow, (int) (H * 0.012f), grow, (int) (H * 0.012f));
+        list.setClipToPadding(false);
+        list.setClipChildren(false);
+        scroll.setClipToPadding(false);
+        scroll.setClipChildren(false);
         scroll.addView(list, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        col.addView(scroll, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
+        slp.leftMargin = -grow;
+        slp.rightMargin = -grow;
+        col.addView(scroll, slp);
 
         root.addView(col, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -138,6 +150,47 @@ public class SettingsActivity extends ReelActivity {
                     prefs.edit().putBoolean("autoPlay", !prefs.getBoolean("autoPlay", true)).apply();
                     render(false);
                 });
+
+        boolean stillOn = prefs.getBoolean("stillOn", true);
+        row("Still watching?", stillOn ? "On" : "Off",
+                "Autoplay pauses and asks \"Still watching?\" when several episodes in a row have started on "
+                        + "their own with no button pressed, and it is also late at night or has been playing a long time. "
+                        + "Turn it off to let autoplay run all night.",
+                v -> {
+                    prefs.edit().putBoolean("stillOn", !prefs.getBoolean("stillOn", true)).apply();
+                    render(false);
+                });
+        if (stillOn) {
+            final int[] eps = {2, 3, 4, 5, 6};
+            int ne = prefs.getInt("stillEpisodes", 3);
+            row("Ask after episodes", ne + " in a row",
+                    "How many episodes can start on their own, with no button pressed, before it may ask.",
+                    v -> {
+                        int cur = prefs.getInt("stillEpisodes", 3);
+                        int at = 0;
+                        for (int i = 0; i < eps.length; i++) if (eps[i] == cur) at = i;
+                        prefs.edit().putInt("stillEpisodes", eps[(at + 1) % eps.length]).apply();
+                        render(false);
+                    });
+            boolean night = prefs.getBoolean("stillNight", true);
+            row("Late at night", night ? "12am to 6am" : "Off",
+                    "Between midnight and 6am it asks as soon as the episode count above is reached.",
+                    v -> {
+                        prefs.edit().putBoolean("stillNight", !prefs.getBoolean("stillNight", true)).apply();
+                        render(false);
+                    });
+            final int[] hrs = {0, 2, 3, 4, 6};
+            int hh = prefs.getInt("stillHours", 3);
+            row("Long viewing time", hh == 0 ? "Off" : "After " + hh + " hours",
+                    "At any hour, it also asks once autoplay has run this long with no button pressed.",
+                    v -> {
+                        int cur = prefs.getInt("stillHours", 3);
+                        int at = 0;
+                        for (int i = 0; i < hrs.length; i++) if (hrs[i] == cur) at = i;
+                        prefs.edit().putInt("stillHours", hrs[(at + 1) % hrs.length]).apply();
+                        render(false);
+                    });
+        }
 
         final int[] saverMins = {0, 3, 5, 10, 15};
         int saver = prefs.getInt("screensaverMin", 3);

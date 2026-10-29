@@ -1,7 +1,7 @@
 # Builds Reel and installs it on the Fire TV. Run from this folder:
 #   powershell -ExecutionPolicy Bypass -File .\build-and-install.ps1
 # Another Fire TV:  ... -File .\build-and-install.ps1 -Ip 192.168.1.13
-param([string]$Ip = "192.168.0.225")
+param([string]$Ip = "192.168.1.8")
 $ErrorActionPreference = "Stop"
 $fireTv = "${Ip}:5555"
 

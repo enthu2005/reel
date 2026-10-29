@@ -237,6 +237,19 @@ final class PosterAdapter extends RecyclerView.Adapter<PosterAdapter.VH> {
         @Override public int getIntrinsicHeight() { return size; }
     }
 
+    /** A Seerr title with a request status to show (Available, Requested, ...). */
+    private static boolean isSeerrStatus(Plex.Item it) {
+        return it.key != null && it.key.startsWith("seerr:") && !it.watcher.isEmpty();
+    }
+
+    private static int statusColor(String status) {
+        if (status.startsWith("Available")) return 0xFF30D158;
+        if (status.startsWith("Partly")) return 0xFFFF9F0A;
+        if (status.startsWith("Declined")) return 0xFFFF453A;
+        if (status.startsWith("Downloading")) return 0xFFBF5AF2;
+        return 0xFF0A84FF; // Requested, Waiting for approval
+    }
+
     private static String left(Plex.Item it) {
         if (it.viewOffset <= 0 || it.duration <= 0) return null;
         long min = Math.max(1, (it.duration - it.viewOffset) / 60000L);
@@ -276,7 +289,19 @@ final class PosterAdapter extends RecyclerView.Adapter<PosterAdapter.VH> {
             mark.setVisibility(View.GONE);
         } else if (mark != null) {
             int md = (int) (sh * 0.032f);
-            if (it.isNew()) {
+            if (isSeerrStatus(it)) {
+                // Seerr titles: Available / Requested / ... as a coloured corner badge
+                mark.setText(it.watcher);
+                mark.setCompoundDrawables(null, null, null, null);
+                mark.setSingleLine(true);
+                mark.setEllipsize(TextUtils.TruncateAt.END);
+                mark.setMaxWidth((int) (w * 0.9f));
+                mark.setPadding((int) (sh * 0.011f), (int) (sh * 0.004f), (int) (sh * 0.011f), (int) (sh * 0.004f));
+                mark.setBackground(UiUtil.rounded(statusColor(it.watcher), sh * 0.012f));
+                mark.setMinWidth(0);
+                mark.setMinHeight(0);
+                mark.setVisibility(View.VISIBLE);
+            } else if (it.isNew()) {
                 mark.setText("NEW");
                 mark.setCompoundDrawables(null, null, null, null);
                 mark.setPadding((int) (sh * 0.011f), (int) (sh * 0.004f), (int) (sh * 0.011f), (int) (sh * 0.004f));
@@ -322,7 +347,7 @@ final class PosterAdapter extends RecyclerView.Adapter<PosterAdapter.VH> {
             }
             String rem = left(it);
             if (rem != null) s = s.isEmpty() ? rem : s + " · " + rem;
-            if (!it.watcher.isEmpty()) s = s.isEmpty() ? it.watcher : s + " · " + it.watcher;
+            if (!it.watcher.isEmpty() && !isSeerrStatus(it)) s = s.isEmpty() ? it.watcher : s + " · " + it.watcher;
             if (genre) {
                 t = ""; // the name is already on the tile
                 s = "";

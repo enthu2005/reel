@@ -312,7 +312,8 @@ final class PlayerOsd {
                 lastRepeat = now;
             }
             long held = e.getEventTime() - e.getDownTime();
-            long step = held < 1500 ? 10_000 : held < 4000 ? 30_000 : 60_000;
+            // Holding speeds up: 10 s, then 30 s, then 1 min, then 5 min a step
+            long step = held < 1500 ? 10_000 : held < 3000 ? 30_000 : held < 5000 ? 60_000 : 300_000;
             boolean media = code == KeyEvent.KEYCODE_MEDIA_REWIND || code == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD;
             if (media) step = 30_000;
             scrub(right ? step : -step);
