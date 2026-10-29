@@ -1,8 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 
 import '../live.dart';
+import '../plex.dart';
+import '../prefs.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 import 'player.dart';
@@ -54,6 +58,69 @@ class _LiveScreenState extends State<LiveScreen> {
   LiveChannel? _dCh;
   LiveSlot? _dSlot;
 
+  // The little picture-in-picture: what is on the highlighted channel right now, muted, like Sky's mini TV
+  Player? _pipPlayer;
+  VideoController? _pipVideo;
+  Timer? _pipDelay;
+  int _pipChannel = 0;
+  bool _pipShowing = false;
+  int _pipToken = 0;
+
+  bool get _pipAllowed => Prefs.previews && !Prefs.quiet;
+
+  void _pipTo(LiveChannel c) {
+    if (!_pipAllowed || c.num == _pipChannel) return;
+    _pipDelay?.cancel();
+    _pipDelay = Timer(const Duration(milliseconds: 700), () => _pipStart(c));
+  }
+
+  Future<void> _pipStart(LiveChannel c) async {
+    final t = Live.tuneIn(c);
+    if (t == null || !mounted) return;
+    final mine = ++_pipToken;
+    try {
+      final it = await Plex.metadata(t.$1.key);
+      final url = Plex.directUrl(it);
+      if (url == null || !mounted || mine != _pipToken) return;
+      if (_pipPlayer == null) {
+        final p = Player(
+            configuration: const PlayerConfiguration(
+                title: 'Reel', bufferSize: 32 * 1024 * 1024));
+        p.stream.error.listen((e) {
+          if (RegExp(r'avhw|hwdec|hw device|hardware|d3d11|dxva|cuda|vaapi',
+                  caseSensitive: false)
+              .hasMatch(e)) {
+            final np = p.platform;
+            if (np is NativePlayer) np.setProperty('hwdec', 'no');
+          }
+        });
+        await p.setVolume(0);
+        _pipPlayer = p;
+        _pipVideo = VideoController(p,
+            configuration:
+                const VideoControllerConfiguration(hwdec: 'auto-copy'));
+      }
+      _pipChannel = c.num;
+      await _pipPlayer!.open(
+          Media(url, start: Duration(milliseconds: t.$2)),
+          play: true);
+      if (mounted && mine == _pipToken) setState(() => _pipShowing = true);
+    } catch (_) {}
+  }
+
+  Future<void> _tune(LiveChannel c) async {
+    _pipToken++;
+    _pipDelay?.cancel();
+    await _pipPlayer?.pause();
+    if (!mounted) return;
+    await tuneChannel(context, c);
+    // back from watching: the programme has moved on, so pick the picture up again
+    if (mounted && _dCh != null) {
+      _pipChannel = 0;
+      _pipStart(_dCh!);
+    }
+  }
+
   static int _windowStart() {
     final n = DateTime.now().millisecondsSinceEpoch;
     return n - n % _halfHour;
@@ -85,6 +152,8 @@ class _LiveScreenState extends State<LiveScreen> {
 
   @override
   void dispose() {
+    _pipDelay?.cancel();
+    _pipPlayer?.dispose();
     _tick?.cancel();
     super.dispose();
   }
@@ -144,7 +213,44 @@ class _LiveScreenState extends State<LiveScreen> {
                 height: h * 0.2,
                 child: Padding(
                     padding: EdgeInsets.only(top: h * 0.018),
-                    child: _detail(h))),
+                    child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Expanded(child: _detail(h)),
+                      if (_pipShowing && _pipVideo != null && _pipAllowed)
+                        Padding(
+                          padding: EdgeInsets.only(left: w * 0.02),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(h * 0.012),
+                            child: Container(
+                              width: h * 0.2 * 16 / 9,
+                              height: h * 0.2,
+                              color: Colors.black,
+                              child: Stack(fit: StackFit.expand, children: [
+                                Video(
+                                    controller: _pipVideo!,
+                                    controls: NoVideoControls,
+                                    fill: Colors.black),
+                                Positioned(
+                                  left: h * 0.008,
+                                  top: h * 0.008,
+                                  child: Container(
+                                    padding: EdgeInsets.symmetric(
+                                        horizontal: h * 0.008,
+                                        vertical: h * 0.002),
+                                    decoration: BoxDecoration(
+                                        color: _liveAccent,
+                                        borderRadius:
+                                            BorderRadius.circular(h * 0.006)),
+                                    child: Text('CH $_pipChannel',
+                                        style: reelText(h * 0.016,
+                                            weight: FontWeight.w700,
+                                            color: Colors.black)),
+                                  ),
+                                ),
+                              ]),
+                            ),
+                          ),
+                        ),
+                    ]))),
             SizedBox(
               height: h * 0.045,
               child: Stack(children: [
@@ -228,9 +334,10 @@ class _LiveScreenState extends State<LiveScreen> {
                                       _dCh = ch;
                                       _dSlot = s;
                                     });
+                                    _pipTo(ch);
                                   }
                                 },
-                                onPressed: () => tuneChannel(context, ch),
+                                onPressed: () => _tune(ch),
                                 builder: (c, f) => AnimatedContainer(
                                   duration: const Duration(milliseconds: 120),
                                   clipBehavior: Clip.hardEdge,

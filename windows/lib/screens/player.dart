@@ -1488,16 +1488,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   Positioned(
                     left: w * 0.12,
                     top: h * 0.05,
-                    right: w * 0.34,
+                    // a channel has an extra button, so the title leaves more room for the buttons
+                    right: w * (widget.channel > 0 ? 0.47 : 0.34),
                     child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(title,
                               maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                               style:
                                   reelText(h * 0.04, weight: FontWeight.w700)),
                           if (sub != null)
                             Text(sub,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: reelText(h * 0.026,
                                     color: const Color(0xE6FFFFFF))),
                         ]),
