@@ -315,9 +315,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (mounted) setState(() => _status = 'Nothing to play');
       return;
     }
-    await _openWhenVideoReady(url);
+    // Open straight at the start position (a channel joins part-way through): seeking after the file is
+    // open could stall on "buffering" for a big file from a slow server. The server-converted sound stream
+    // has no usable start option, so that one still seeks afterwards.
+    final openAt = !_stereo && widget.startMs > 0
+        ? Duration(milliseconds: widget.startMs)
+        : null;
+    await _openWhenVideoReady(url, start: openAt);
     if (!mounted) return;
-    if (widget.startMs > 0) {
+    if (widget.startMs > 0 && openAt == null) {
       // Seek once the file is open and its length is known.
       _player.stream.duration.firstWhere((d) => d > Duration.zero).then((_) {
         if (mounted) _player.seek(Duration(milliseconds: widget.startMs));
@@ -331,8 +337,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _showOsd();
   }
 
-  Future<void> _openWhenVideoReady(String url) async {
-    await _player.open(Media(url), play: false);
+  Future<void> _openWhenVideoReady(String url, {Duration? start}) async {
+    await _player.open(Media(url, start: start), play: false);
     if (!mounted) return;
     try {
       await _player.stream.tracks
