@@ -31,7 +31,9 @@ public class LiveEditActivity extends ReelActivity {
         final String label;
         final String value;
         final String help;
-        final Runnable click;
+        Runnable click;
+        TextView valueView;
+        TextView labelView;
 
         Entry(String label, String value, String help, Runnable click) {
             this.label = label;
@@ -47,6 +49,7 @@ public class LiveEditActivity extends ReelActivity {
     private TextView title;
     private TextView note;
     private final List<Runnable> stack = new ArrayList<>();
+    private Live.Custom editing; // set while choosing new contents for an existing channel
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -142,6 +145,7 @@ public class LiveEditActivity extends ReelActivity {
 
     private void mainList(final int focus) {
         stack.clear();
+        editing = null;
         List<Entry> es = new ArrayList<>();
         es.add(new Entry("+  Add a channel", "", "From a collection, a show, a mix of shows or genres. "
                 + "To make one from a search, search for it and press Menu on the results.",
@@ -152,7 +156,7 @@ public class LiveEditActivity extends ReelActivity {
             final int at = i + 1;
             boolean hid = Live.isHidden(c.id);
             es.add(new Entry(c.name, hid ? "Hidden" : "CH " + shownNumber(c),
-                    c.custom ? describe(c.id) : "Standard channel", () -> channelMenu(c, at)));
+                    describe(c.id), () -> channelMenu(c, at)));
         }
         screen("Live channels", "OK on a channel to hide it, move it or remove it. Back when you're done.", es, focus);
     }
@@ -164,8 +168,8 @@ public class LiveEditActivity extends ReelActivity {
     }
 
     private static String describe(String id) {
-        for (Live.Custom c : Live.customChannels()) if (c.id.equals(id)) return c.describe();
-        return "";
+        Live.Custom c = Live.definition(id);
+        return c == null ? "" : (c.builtin ? (Live.changed(id) ? "Changed: " : "Standard: ") : "") + c.describe();
     }
 
     private void channelMenu(final Live.Channel c, final int at) {
@@ -183,6 +187,26 @@ public class LiveEditActivity extends ReelActivity {
             Live.moveChannel(c.id, 1);
             mainList(at + 1);
         }));
+        final Live.Custom def = Live.definition(c.id);
+        if (def != null) {
+            es.add(new Entry("Rename", "", "Now called “" + c.name + "”.", () -> rename(def, at)));
+            es.add(new Entry("Change what it plays", "", def.describe(), () -> {
+                editing = def;
+                go(() -> channelMenu(c, at), this::addMenu);
+            }));
+            if (def.kind.equals("genres")) {
+                es.add(new Entry("Libraries it uses", def.libs.isEmpty() ? "All" : def.libs.size() + " picked",
+                        "Only look in the libraries you choose.", () -> go(() -> channelMenu(c, at),
+                        () -> pickLibraries(def, c, at))));
+            }
+            if (def.builtin && Live.changed(c.id)) {
+                es.add(new Entry("Put back as it came", "", "Forget your changes to this standard channel.", () -> {
+                    Live.resetDefinition(c.id);
+                    toast("Reset " + c.name);
+                    main();
+                }));
+            }
+        }
         if (c.custom) es.add(new Entry("Remove this channel", "", "It was made by you; this deletes it.", () -> {
             Live.removeCustom(c.id);
             toast("Removed " + c.name);
@@ -192,6 +216,62 @@ public class LiveEditActivity extends ReelActivity {
         stack.clear();
         stack.add(() -> mainList(at));
         screen("CH " + (hid ? "–" : shownNumber(c)) + "  " + c.name, c.custom ? describe(c.id) : "", es, 0);
+    }
+
+    private void rename(final Live.Custom def, final int at) {
+        final android.widget.EditText in = new android.widget.EditText(this);
+        in.setText(def.name);
+        in.setSingleLine();
+        in.setSelectAllOnFocus(true);
+        in.setTextColor(Color.WHITE);
+        in.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
+        final android.app.AlertDialog d = new android.app.AlertDialog.Builder(this,
+                android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Name this channel").setView(in)
+                .setPositiveButton("Save", (x, y) -> {
+                    String n = in.getText().toString().trim();
+                    if (n.isEmpty()) return;
+                    def.name = n;
+                    Live.saveDefinition(def);
+                    main();
+                })
+                .setNegativeButton("Cancel", null).create();
+        in.setOnEditorActionListener((v, action, ev) -> {
+            d.getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick();
+            return true;
+        });
+        d.show();
+        in.requestFocus();
+    }
+
+    /** Which libraries a genre channel may take its titles from (none picked = all of them). */
+    private void pickLibraries(final Live.Custom def, final Live.Channel c, final int at) {
+        busy("Finding libraries…");
+        Plex.async(() -> {
+            List<String[]> out = new ArrayList<>();
+            for (Plex.Section s : Plex.allSections()) {
+                if (Plex.isLibraryEnabled(s.key) && s.type.equals(def.type)) out.add(new String[]{s.key, s.title});
+            }
+            return out;
+        }, new Plex.Callback<List<String[]>>() {
+            @Override
+            public void ok(final List<String[]> r) {
+                if (isDestroyed()) return;
+                List<Integer> pre = new ArrayList<>();
+                for (int i = 0; i < r.size(); i++) if (def.libs.contains(r.get(i)[0])) pre.add(i);
+                multi("Libraries for " + def.name, r, pre, (picked) -> {
+                    def.libs.clear();
+                    if (picked.size() < r.size()) for (int i : picked) def.libs.add(r.get(i)[0]);
+                    Live.saveDefinition(def);
+                    main();
+                });
+            }
+
+            @Override
+            public void fail(Exception e) {
+                if (!isDestroyed()) screen("Couldn't load libraries", e.getMessage(), new ArrayList<Entry>(), 0);
+            }
+        });
     }
 
     // ------------------------------------------------------------------ adding
@@ -208,10 +288,31 @@ public class LiveEditActivity extends ReelActivity {
                 () -> go(this::addMenu, () -> pickGenres("movie"))));
         es.add(new Entry("TV by genre", "", "Choose one or more genres.",
                 () -> go(this::addMenu, () -> pickGenres("show"))));
-        screen("Add a channel", "", es, 0);
+        screen(editing != null ? "What “" + editing.name + "” plays" : "Add a channel",
+                editing != null ? "Pick what it should be made from now." : "", es, 0);
     }
 
     private void done(Live.Custom c, String name) {
+        if (editing != null) {
+            // new contents for an existing channel; its name, number and libraries stay as they are
+            Live.Custom e = editing;
+            editing = null;
+            e.kind = c.kind;
+            e.ref = c.ref;
+            e.refTitle = c.refTitle;
+            e.type = c.type;
+            e.genres.clear();
+            e.genres.addAll(c.genres);
+            e.refs.clear();
+            e.refs.addAll(c.refs);
+            e.refTitles.clear();
+            e.refTitles.addAll(c.refTitles);
+            if (!e.kind.equals("genres")) e.libs.clear();
+            Live.saveDefinition(e);
+            toast("Updated “" + e.name + "”");
+            main();
+            return;
+        }
         c.id = "c" + System.currentTimeMillis();
         c.name = name;
         Live.addCustom(c);
@@ -290,7 +391,9 @@ public class LiveEditActivity extends ReelActivity {
                     }
                     screen("Pick a show", "", es, 0);
                 } else {
-                    multi("Pick the shows to mix", r, new ArrayList<Integer>(), (picked) -> {
+                    List<Integer> pre = new ArrayList<>();
+                    if (editing != null) for (int i = 0; i < r.size(); i++) if (editing.refs.contains(r.get(i)[0])) pre.add(i);
+                    multi("Pick the shows to mix", r, pre, (picked) -> {
                         Live.Custom cu = new Live.Custom();
                         cu.kind = "shows";
                         List<String> names = new ArrayList<>();
@@ -328,7 +431,13 @@ public class LiveEditActivity extends ReelActivity {
             @Override
             public void ok(final List<String[]> r) {
                 if (isDestroyed()) return;
-                multi("Pick genres", r, new ArrayList<Integer>(), (picked) -> {
+                List<Integer> pre = new ArrayList<>();
+                if (editing != null && editing.type.equals(type)) {
+                    for (int i = 0; i < r.size(); i++) {
+                        for (String g : editing.genres) if (g.equalsIgnoreCase(r.get(i)[1])) pre.add(i);
+                    }
+                }
+                multi("Pick genres", r, pre, (picked) -> {
                     Live.Custom cu = new Live.Custom();
                     cu.kind = "genres";
                     cu.type = type;
@@ -353,31 +462,34 @@ public class LiveEditActivity extends ReelActivity {
         void run(List<Integer> picked);
     }
 
-    /** A list where OK ticks and unticks, with "Done" at the top. */
+    /** A list where OK ticks and unticks, with "Done" at the top. Ticking only changes that row (no redraw). */
     private void multi(final String heading, final List<String[]> items, final List<Integer> picked, final Picked then) {
-        multi(heading, items, picked, then, 0);
-    }
-
-    private void multi(final String heading, final List<String[]> items, final List<Integer> picked,
-                       final Picked then, int focus) {
         List<Entry> es = new ArrayList<>();
-        es.add(new Entry(picked.isEmpty() ? "Done (pick at least one)" : "Done  ·  " + picked.size() + " picked", "", "",
-                () -> {
-                    if (picked.isEmpty()) {
-                        toast("Pick at least one first");
-                        return;
-                    }
-                    then.run(picked);
-                }));
+        final Entry done = new Entry(doneLabel(picked), "", "", null);
+        done.click = () -> {
+            if (picked.isEmpty()) {
+                toast("Pick at least one first");
+                return;
+            }
+            then.run(picked);
+        };
+        es.add(done);
         for (int i = 0; i < items.size(); i++) {
             final int at = i;
-            es.add(new Entry(items.get(i)[1], picked.contains(i) ? "☑" : "☐", "", () -> {
+            final Entry e = new Entry(items.get(i)[1], picked.contains(i) ? "☑" : "☐", "", null);
+            e.click = () -> {
                 if (picked.contains(at)) picked.remove((Integer) at);
                 else picked.add(at);
-                multi(heading, items, picked, then, at + 1);
-            }));
+                e.valueView.setText(picked.contains(at) ? "☑" : "☐");
+                done.labelView.setText(doneLabel(picked));
+            };
+            es.add(e);
         }
-        screen(heading, "OK ticks or unticks. Choose Done at the top when you have them all.", es, focus);
+        screen(heading, "OK ticks or unticks. Choose Done at the top when you have them all.", es, 0);
+    }
+
+    private static String doneLabel(List<Integer> picked) {
+        return picked.isEmpty() ? "Done (pick at least one)" : "Done  ·  " + picked.size() + " picked";
     }
 
     // ------------------------------------------------------------------ one row
@@ -410,6 +522,8 @@ public class LiveEditActivity extends ReelActivity {
         v.setTextColor(UiUtil.TEXT2);
         v.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.028f);
         v.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+        e.labelView = n;
+        e.valueView = v;
         top.addView(v);
         r.addView(top);
         final TextView h = new TextView(this);

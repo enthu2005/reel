@@ -240,6 +240,7 @@ public class PlayerActivity extends Activity {
 
     // ---- Live channels: playing a programme of the pretend TV schedule (see Live)
     private int channelNum = 0;
+    private boolean liveSynced;
     private LinearLayout chanCard;
 
     /** Next (+1) or previous (-1) channel. */
@@ -1672,6 +1673,16 @@ public class PlayerActivity extends Activity {
 
             @Override
             public void onPlaybackStateChanged(int state) {
+                if (state == Player.STATE_READY && !liveSynced && channelNum > 0) {
+                    // Live: the stream took a few seconds to open, so jump forward to where the channel is by now
+                    // (the little picture on the guide was already there)
+                    liveSynced = true;
+                    long liveStart = getIntent().getLongExtra("liveStart", 0);
+                    if (liveStart > 0 && item != null) {
+                        long target = System.currentTimeMillis() - liveStart;
+                        if (target - currentMs() > 1500 && target < item.duration - 8000) seekAbs(target);
+                    }
+                }
                 if (state == Player.STATE_READY) handler.postDelayed(() -> seekingTo = -1, 300);
                 if (state == Player.STATE_READY && bigBuffer != null) bigBuffer.playerReady();
                 if (state == Player.STATE_READY && transcoding && !baseChecked && player != null) {

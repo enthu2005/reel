@@ -53,12 +53,14 @@ final class Live {
         final List<String> genres = new ArrayList<>();
         final List<String> refs = new ArrayList<>();
         final List<String> refTitles = new ArrayList<>();
+        final List<String> libs = new ArrayList<>();   // library keys it may use (empty = every enabled library)
+        boolean builtin;        // one of the standard channels (kept as a changed copy once you edit it)
 
         JSONObject toJson() throws org.json.JSONException {
             JSONObject o = new JSONObject();
             o.put("id", id).put("name", name).put("kind", kind).put("ref", ref).put("refTitle", refTitle)
                     .put("type", type).put("genres", new JSONArray(genres)).put("refs", new JSONArray(refs))
-                    .put("refTitles", new JSONArray(refTitles));
+                    .put("refTitles", new JSONArray(refTitles)).put("libs", new JSONArray(libs)).put("builtin", builtin);
             return o;
         }
 
@@ -73,6 +75,8 @@ final class Live {
             fill(c.genres, o.optJSONArray("genres"));
             fill(c.refs, o.optJSONArray("refs"));
             fill(c.refTitles, o.optJSONArray("refTitles"));
+            fill(c.libs, o.optJSONArray("libs"));
+            c.builtin = o.optBoolean("builtin");
             return c;
         }
 
@@ -165,6 +169,75 @@ final class Live {
         putStrings("liveOrder", o);
     }
 
+
+    // ------------------------------------------------------------------ what every channel is made from
+
+    private static Custom standard(String[] def) {
+        Custom c = new Custom();
+        c.id = def[0];
+        c.name = def[0];
+        c.builtin = true;
+        c.kind = "genres";
+        c.type = def[2];
+        for (String g : def[1].split(",")) c.genres.add(g.trim());
+        return c;
+    }
+
+    private static JSONObject overrides() {
+        try {
+            return new JSONObject(Plex.prefs().getString("liveOver", "{}"));
+        } catch (Exception e) {
+            return new JSONObject();
+        }
+    }
+
+    /** Every channel's recipe: the standard ones (or your changed copy of them) then the ones you made. */
+    static List<Custom> definitions() {
+        List<Custom> out = new ArrayList<>();
+        JSONObject over = overrides();
+        for (String[] def : LINEUP) {
+            JSONObject o = over.optJSONObject(def[0]);
+            out.add(o == null ? standard(def) : Custom.fromJson(o));
+        }
+        out.addAll(customChannels());
+        return out;
+    }
+
+    static Custom definition(String id) {
+        for (Custom c : definitions()) if (c.id.equals(id)) return c;
+        return null;
+    }
+
+    /** True when a standard channel has been changed from how it came. */
+    static boolean changed(String id) {
+        return overrides().has(id);
+    }
+
+    /** Saves a changed recipe (name, what it plays, which libraries) for a standard or own channel. */
+    static void saveDefinition(Custom c) {
+        if (c.builtin) {
+            JSONObject over = overrides();
+            try {
+                over.put(c.id, c.toJson());
+            } catch (org.json.JSONException ignored) {
+                return;
+            }
+            Plex.prefs().edit().putString("liveOver", over.toString()).apply();
+            invalidate();
+            return;
+        }
+        List<Custom> l = customChannels();
+        for (int i = 0; i < l.size(); i++) if (l.get(i).id.equals(c.id)) l.set(i, c);
+        saveCustom(l);
+    }
+
+    /** Puts a standard channel back as it came. */
+    static void resetDefinition(String id) {
+        JSONObject over = overrides();
+        over.remove(id);
+        Plex.prefs().edit().putString("liveOver", over.toString()).apply();
+        invalidate();
+    }
     /** Forget what was built, so the next load builds the channels again. */
     static synchronized void invalidate() {
         builtAt = 0;
@@ -254,23 +327,20 @@ final class Live {
             boolean movie = s.type.equals("movie");
             if (!movie && !s.type.equals("show")) continue;
             JSONArray all = Plex.listAll(s.key);
-            for (int i = 0; i < all.length(); i++) (movie ? movies : shows).add(all.getJSONObject(i));
+            for (int i = 0; i < all.length(); i++) {
+                JSONObject o = all.getJSONObject(i);
+                o.put("_lib", s.key);
+                (movie ? movies : shows).add(o);
+            }
         }
         sortByKey(movies);
         sortByKey(shows);
         List<Channel> out = new ArrayList<>();
-        for (String[] def : LINEUP) {
-            Channel c = new Channel();
-            c.id = def[0];
-            c.name = def[0];
-            fromGenres(c, def[1].split(","), def[2].equals("movie"), movies, shows);
-            addIfAny(out, c);
-        }
-        for (Custom cc : customChannels()) {
+        for (Custom cc : definitions()) {
             Channel c = new Channel();
             c.id = cc.id;
             c.name = cc.name;
-            c.custom = true;
+            c.custom = !cc.builtin;
             try {
                 switch (cc.kind) {
                     case "collection":
@@ -290,13 +360,13 @@ final class Live {
                             o.put("title", i < cc.refTitles.size() ? cc.refTitles.get(i) : "");
                             pool.add(o);
                         }
-                        buildShows(c, pool, new Random(c.name.hashCode()), 12);
+                        buildShows(c, pool, new Random(c.id.hashCode()), 12);
                         break;
                     }
                     default: {
                         String[] words = new String[cc.genres.size()];
                         for (int i = 0; i < words.length; i++) words[i] = cc.genres.get(i).toLowerCase();
-                        fromGenres(c, words, cc.type.equals("movie"), movies, shows);
+                        fromGenres(c, words, cc.type.equals("movie"), movies, shows, cc.libs);
                     }
                 }
             } catch (Exception ignored) {
@@ -316,9 +386,9 @@ final class Live {
     }
 
     private static void fromGenres(Channel c, String[] words, boolean movie, List<JSONObject> movies,
-                                   List<JSONObject> shows) {
-        Random rnd = new Random(c.name.hashCode());
-        List<JSONObject> pool = match(movie ? movies : shows, words);
+                                   List<JSONObject> shows, List<String> libs) {
+        Random rnd = new Random(c.id.hashCode());
+        List<JSONObject> pool = match(movie ? movies : shows, words, libs);
         Collections.shuffle(pool, rnd);
         if (movie) {
             for (JSONObject m : pool) {
@@ -338,7 +408,7 @@ final class Live {
         if (items.get(0).type.equals("show")) {
             List<JSONObject> pool = new ArrayList<>();
             for (Plex.Item s : items) pool.add(new JSONObject().put("ratingKey", s.key).put("title", s.title));
-            buildShows(c, pool, new Random(c.name.hashCode()), 8);
+            buildShows(c, pool, new Random(c.id.hashCode()), 8);
             return;
         }
         List<Plex.Item> movies = new ArrayList<>();
@@ -363,7 +433,7 @@ final class Live {
     /** A saved smart search ("80s horror rated 7+"): whatever it finds today, films and shows mixed together. */
     private static void fromSearch(Channel c, String query) throws Exception {
         List<Plex.Item> items = SmartSearch.run(SmartSearch.parse(query));
-        Random rnd = new Random(c.name.hashCode());
+        Random rnd = new Random(c.id.hashCode());
         List<List<Prog>> lists = new ArrayList<>();
         int shows = 0;
         for (int n = 0; n < items.size() && n < 300; n++) {
@@ -417,9 +487,10 @@ final class Live {
         Collections.sort(l, (a, b) -> a.optString("ratingKey").compareTo(b.optString("ratingKey")));
     }
 
-    private static List<JSONObject> match(List<JSONObject> src, String[] words) {
+    private static List<JSONObject> match(List<JSONObject> src, String[] words, List<String> libs) {
         List<JSONObject> out = new ArrayList<>();
         for (JSONObject m : src) {
+            if (!libs.isEmpty() && !libs.contains(m.optString("_lib"))) continue;
             JSONArray g = m.optJSONArray("Genre");
             if (g == null) continue;
             boolean hit = false;
@@ -529,6 +600,7 @@ final class Live {
         i.putExtra("key", s.prog.key);
         i.putExtra("start", off);
         i.putExtra("channel", c.num);
+        i.putExtra("liveStart", off > 0 ? s.start : 0L); // lets the player catch up to the clock once it has opened
         ctx.startActivity(i);
         if (ctx instanceof Activity) ((Activity) ctx).overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
     }
