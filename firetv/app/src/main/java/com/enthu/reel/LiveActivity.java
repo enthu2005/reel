@@ -284,14 +284,54 @@ public class LiveActivity extends ReelActivity {
         pipStop();
         final int mine = ++pipToken;
         pipChannel = c.num;
-        long off = Math.max(0, System.currentTimeMillis() - s.start);
+        pipPlay(mine, c, s, Math.max(0, System.currentTimeMillis() - s.start), 0);
+    }
+
+    /**
+     * Stage 0 and 1: the light converted stream from the server (the second try is for a server that said no for a
+     * moment). Stage 2: the original file, if the converted stream keeps failing. Then it gives up quietly.
+     */
+    private void pipPlay(final int mine, final Live.Channel c, final Live.Slot s, final long off, final int stage) {
+        if (mine != pipToken || isDestroyed()) return;
+        if (pipPlayer != null) {
+            pipPlayer.release();
+            pipPlayer = null;
+        }
+        if (pipSession != null) {
+            Plex.stopTranscode(pipSession);
+            pipSession = null;
+        }
+        if (stage == 2) {
+            Plex.async(() -> {
+                Plex.Item it = Plex.metadata(s.prog.key);
+                return it == null || it.partKey == null ? "" : Plex.directUrl(it);
+            }, new Plex.Callback<String>() {
+                @Override
+                public void ok(String url) {
+                    if (!url.isEmpty()) pipOpen(mine, c, s, off, stage, url);
+                }
+
+                @Override
+                public void fail(Exception e) {
+                    // nothing more to try
+                }
+            });
+            return;
+        }
+        pipOpen(mine, c, s, off, stage, null);
+    }
+
+    private void pipOpen(final int mine, final Live.Channel c, final Live.Slot s, final long off, final int stage,
+                         final String direct) {
+        if (mine != pipToken || isDestroyed()) return;
         java.util.Map<String, String> hdr = new java.util.HashMap<>();
         hdr.put("X-Plex-Client-Profile-Extra", Plex.previewProfile());
         hdr.put("X-Plex-Client-Identifier", Plex.clientId());
         hdr.put("X-Plex-Product", "Reel");
         hdr.put("X-Plex-Client-Profile-Name", "Konvergo");
-        pipPlayer = PreviewHandoff.newPlayer(this, hdr);
-        pipPlayer.addListener(new androidx.media3.common.Player.Listener() {
+        final androidx.media3.exoplayer.ExoPlayer p = PreviewHandoff.newPlayer(this, hdr);
+        pipPlayer = p;
+        p.addListener(new androidx.media3.common.Player.Listener() {
             @Override
             public void onVideoSizeChanged(androidx.media3.common.VideoSize v) {
                 if (mine == pipToken) pipFit(v);
@@ -304,16 +344,28 @@ public class LiveActivity extends ReelActivity {
 
             @Override
             public void onPlayerError(androidx.media3.common.PlaybackException error) {
-                if (mine == pipToken) pipStop();
+                android.util.Log.w("ReelPip", "channel " + c.num + " " + s.prog.title + " key " + s.prog.key
+                        + " stage " + stage + " failed: " + error.getErrorCodeName());
+                if (mine != pipToken || stage >= 2) {
+                    if (mine == pipToken) pipStop();
+                    return;
+                }
+                // a short pause, then the next try
+                handler.postDelayed(() -> pipPlay(mine, c, s, Math.max(0, System.currentTimeMillis() - s.start),
+                        stage + 1), stage == 0 ? 1500 : 0);
             }
         });
-        pipPlayer.setVideoTextureView(pipTex);
-        pipSession = java.util.UUID.randomUUID().toString();
-        pipPlayer.setMediaItem(new androidx.media3.common.MediaItem.Builder()
-                .setUri(Plex.previewUrl(s.prog.key, off, pipSession))
-                .setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8).build());
-        pipPlayer.setPlayWhenReady(true);
-        pipPlayer.prepare();
+        p.setVideoTextureView(pipTex);
+        if (direct != null) {
+            p.setMediaItem(androidx.media3.common.MediaItem.fromUri(direct), off);
+        } else {
+            pipSession = java.util.UUID.randomUUID().toString();
+            p.setMediaItem(new androidx.media3.common.MediaItem.Builder()
+                    .setUri(Plex.previewUrl(s.prog.key, off, pipSession))
+                    .setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8).build());
+        }
+        p.setPlayWhenReady(true);
+        p.prepare();
     }
 
     /** Fits the picture inside the 16:9 box at its own shape, centred, so wide films are not stretched. */
