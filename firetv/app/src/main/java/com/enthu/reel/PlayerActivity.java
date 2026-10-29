@@ -253,6 +253,64 @@ public class PlayerActivity extends Activity {
         finish();
     }
 
+    private LinearLayout chanBanner;
+
+    /** A short banner when a channel is tuned (or surfed to): its number, name, what is on now and what is next. */
+    private void showChannelBanner(Live.Channel ch) {
+        if (ch == null || root == null || chanBanner != null) return;
+        long now = System.currentTimeMillis();
+        List<Live.Slot> upcoming = Live.window(ch, now, now + 4 * 3600_000L);
+        LinearLayout b = new LinearLayout(this);
+        b.setOrientation(LinearLayout.HORIZONTAL);
+        b.setGravity(Gravity.CENTER_VERTICAL);
+        int pad = (int) (H * 0.025f);
+        b.setPadding(pad * 2, pad, pad * 2, pad);
+        b.setBackground(UiUtil.rounded(0xE61C1C1E, H * 0.025f));
+        TextView num = new TextView(this);
+        num.setText(String.valueOf(ch.num));
+        num.setTextColor(0xFFE8833A);
+        num.setTypeface(UiUtil.font(UiUtil.SEMIBOLD));
+        num.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.085f);
+        num.setPadding(0, 0, pad * 2, 0);
+        b.addView(num);
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        TextView name = new TextView(this);
+        name.setText(ch.name);
+        name.setTextColor(0xFFFFFFFF);
+        name.setTypeface(UiUtil.font(UiUtil.SEMIBOLD));
+        name.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.036f);
+        col.addView(name);
+        for (int i = 0; i < Math.min(2, upcoming.size()); i++) {
+            Live.Slot s = upcoming.get(i);
+            TextView t = new TextView(this);
+            t.setText((i == 0 ? "Now  " : "Next  ") + s.prog.title + (s.prog.code().isEmpty() ? "" : "  ·  " + s.prog.code()));
+            t.setTextColor(i == 0 ? 0xFFFFFFFF : 0xB3FFFFFF);
+            t.setTypeface(UiUtil.font(UiUtil.MEDIUM));
+            t.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.026f);
+            t.setSingleLine(true);
+            t.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            t.setMaxWidth((int) (W * 0.4f));
+            col.addView(t);
+        }
+        b.addView(col);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.START);
+        lp.leftMargin = (int) (W * 0.04f);
+        lp.topMargin = (int) (H * 0.06f);
+        b.setAlpha(0f);
+        root.addView(b, lp);
+        chanBanner = b;
+        b.animate().alpha(1f).setDuration(Motion.MEDIUM_MS).start();
+        handler.postDelayed(() -> {
+            if (chanBanner != b) return;
+            b.animate().alpha(0f).setDuration(Motion.LONG_MS).withEndAction(() -> {
+                root.removeView(b);
+                if (chanBanner == b) chanBanner = null;
+            }).start();
+        }, 4500);
+    }
+
     private void closeChannels() {
         if (chanCard != null) root.removeView(chanCard);
         chanCard = null;
@@ -1002,6 +1060,7 @@ public class PlayerActivity extends Activity {
                             + (!ep.isEmpty() ? "  ·  " + ep
                             : subText.getVisibility() == View.VISIBLE ? "  ·  " + subText.getText() : ""));
                     subText.setVisibility(View.VISIBLE);
+                    showChannelBanner(ch);
                 }
                 if (it.logo != null) {
                     com.bumptech.glide.Glide.with(PlayerActivity.this).load(Plex.raw(it.logo))
