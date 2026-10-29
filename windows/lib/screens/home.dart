@@ -1324,8 +1324,18 @@ class _HomeScreenState extends State<HomeScreen> {
                 left: w * 0.05,
                 bottom: h * 0.12,
                 width: w * 0.42,
-                child: AnimatedBuilder(
-                    animation: _metaTick, builder: (c, _) => _spotInfo(it, h)),
+                // the title, details and button drop while the preview plays, so the picture is easy to see
+                child: ValueListenableBuilder<String?>(
+                  valueListenable: Preview.showing,
+                  builder: (c, showing, child) => AnimatedSlide(
+                      offset: Offset(0, showing == null ? 0 : 0.3),
+                      duration: const Duration(milliseconds: 600),
+                      curve: Curves.easeInOutSine,
+                      child: child),
+                  child: AnimatedBuilder(
+                      animation: _metaTick,
+                      builder: (c, _) => _spotInfo(it, h)),
+                ),
               ),
               // Arrows for the mouse
               Positioned(
