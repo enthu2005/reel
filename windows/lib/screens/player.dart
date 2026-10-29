@@ -315,14 +315,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (mounted) setState(() => _status = 'Nothing to play');
       return;
     }
-    await _openWhenVideoReady(url);
+    // Starting at the right place (resume, or part-way into a Live programme) is part of opening the file,
+    // so nothing is fetched from the beginning first.
+    await _openWhenVideoReady(url,
+        start: widget.startMs > 0
+            ? Duration(milliseconds: widget.startMs)
+            : null);
     if (!mounted) return;
-    if (widget.startMs > 0) {
-      // Seek once the file is open and its length is known.
-      _player.stream.duration.firstWhere((d) => d > Duration.zero).then((_) {
-        if (mounted) _player.seek(Duration(milliseconds: widget.startMs));
-      });
-    }
+    if (widget.channel > 0) _watchChannelStart();
 
     if (_item != null && widget.channel == 0) {
       _report =
@@ -331,8 +331,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _showOsd();
   }
 
-  Future<void> _openWhenVideoReady(String url) async {
-    await _player.open(Media(url), play: false);
+  /// A channel that is still stuck buffering at the start after a while is tuned again.
+  void _watchChannelStart() {
+    Future.delayed(const Duration(seconds: 25), () {
+      if (!mounted || _transitioning || _pos > const Duration(seconds: 2)) {
+        return;
+      }
+      final c = Live.byNum(widget.channel);
+      if (c != null) {
+        _transitioning = true;
+        tuneChannel(context, c, replace: true);
+      }
+    });
+  }
+
+  Future<void> _openWhenVideoReady(String url, {Duration? start}) async {
+    await _player.open(Media(url, start: start), play: false);
     if (!mounted) return;
     try {
       await _player.stream.tracks

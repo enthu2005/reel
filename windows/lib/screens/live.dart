@@ -111,8 +111,15 @@ class _LiveScreenState extends State<LiveScreen> {
   Future<void> _tune(LiveChannel c) async {
     _pipToken++;
     _pipDelay?.cancel();
-    await _pipPlayer?.pause();
+    // let go of the little picture completely: two streams from the server at once can stall the real one
+    final p = _pipPlayer;
+    _pipPlayer = null;
+    _pipVideo = null;
+    _pipShowing = false;
+    _pipChannel = 0;
+    await p?.dispose();
     if (!mounted) return;
+    setState(() {});
     await tuneChannel(context, c);
     // back from watching: the programme has moved on, so pick the picture up again
     if (mounted && _dCh != null) {
