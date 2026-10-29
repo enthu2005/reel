@@ -123,6 +123,74 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     private final Runnable previewEnd = this::stopPreview;
 
     private FrameLayout rootView;
+    private SeasonalView season;
+
+    /** Christmas / Halloween (Settings), drawn over the page. */
+    private void applySeason() {
+        int t = SeasonalView.theme();
+        if (season != null && season.getTag() != null && (Integer) season.getTag() == t) return;
+        if (season != null) rootView.removeView(season);
+        season = null;
+        if (t == SeasonalView.NONE || rootView == null) return;
+        season = new SeasonalView(this, t);
+        season.setTag(t);
+        rootView.addView(season, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        applySeason();
+        checkElsewhere();
+    }
+
+    private static boolean elsewhereChecked;
+
+    /**
+     * "Continue from another device": the newest thing you were partway through is newer than anything this
+     * device has played, so it was watched somewhere else. Asked once each time Reel opens.
+     */
+    private void checkElsewhere() {
+        if (elsewhereChecked || !Plex.isReady() || Plex.prefs() == null) return;
+        elsewhereChecked = true;
+        Plex.async(() -> {
+            Plex.Item best = null;
+            for (Plex.Item x : Plex.items(Plex.paged("/library/onDeck", 20))) {
+                if (x.viewOffset <= 0 || x.duration <= 0 || x.lastViewedAt <= 0) continue;
+                if (best == null || x.lastViewedAt > best.lastViewedAt) best = x;
+            }
+            if (best == null) return new Object[0];
+            // only if it was played in the last 5 minutes, otherwise it is just noise
+            long recent = System.currentTimeMillis() / 1000 - 5 * 60;
+            if (best.lastViewedAt < recent || best.lastViewedAt <= Plex.prefs().getLong("lastPlayedAt", 0) + 90) {
+                return new Object[0];
+            }
+            if (Plex.prefs().getString("dismissedBanner", "").equals(best.key + "@" + best.viewOffset)) {
+                return new Object[0];
+            }
+            String[] d = Plex.lastDevice(best.key);
+            if (d[1].equals("1")) return new Object[0]; // that was this device
+            return new Object[]{best, d[0]};
+        }, new Plex.Callback<Object[]>() {
+            @Override
+            public void ok(Object[] r) {
+                if (r.length == 0 || isDestroyed() || isFinishing()) return;
+                final Plex.Item it = (Plex.Item) r[0];
+                String name = it.type.equals("episode") && it.gpTitle != null
+                        ? it.gpTitle + "  S" + it.parentIndex + " E" + it.index : it.title;
+                Runnable dismiss = () -> Plex.prefs().edit().putString("dismissedBanner", it.key + "@" + it.viewOffset).apply();
+                ResumeDialog.elsewhere(HomeActivity.this, name, (String) r[1], it.viewOffset, () -> {
+                    dismiss.run();
+                    PlayerActivity.start(HomeActivity.this, it.key, it.viewOffset);
+                }, dismiss);
+            }
+
+            @Override
+            public void fail(Exception e) {
+            }
+        });
+    }
     private View focusedCardRoot;  // the focused card's whole item view
     private View focusedCard;      // its picture
     private View hiddenCardRoot;   // the original card, hidden while its preview card is up
@@ -2674,7 +2742,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         if (isRequest(current)) {
             openDetail(current);
         } else if (current.isPlayable()) {
-            PlayerActivity.start(this, current.key, current.viewOffset);
+            ResumeDialog.play(this, current);
         } else {
             openDetail(current);
         }

@@ -676,6 +676,54 @@ public final class Plex {
         return items(paged("/library/metadata/" + showKey + "/allLeaves", 600));
     }
 
+    /** The items inside a collection (or the seasons of a show). */
+    public static List<Item> children(String ratingKey) throws Exception {
+        return items(paged("/library/metadata/" + ratingKey + "/children", 600));
+    }
+
+    /** Where Reel keeps its small settings (Live channels, banners and so on). */
+    public static SharedPreferences prefs() {
+        return prefs;
+    }
+
+    /** Every episode in a show library that you have watched, as raw JSON, newest first. */
+    public static JSONArray listWatchedEpisodes(String sectionKey) throws Exception {
+        JSONObject mc = get("/library/sections/" + sectionKey
+                + "/all?type=4&unwatched=0&sort=lastViewedAt:desc&X-Plex-Container-Start=0&X-Plex-Container-Size=30000")
+                .getJSONObject("MediaContainer");
+        JSONArray m = mc.optJSONArray("Metadata");
+        return m == null ? new JSONArray() : m;
+    }
+
+    /**
+     * The device that last watched [ratingKey]: {name, "1" if that was this device}. Best effort: the server may
+     * not keep this, in which case the name is empty.
+     */
+    public static String[] lastDevice(String ratingKey) {
+        try {
+            JSONObject h = get("/status/sessions/history/all?metadataItemID=" + ratingKey
+                    + "&sort=viewedAt:desc&X-Plex-Container-Start=0&X-Plex-Container-Size=1");
+            JSONArray list = h.getJSONObject("MediaContainer").optJSONArray("Metadata");
+            if (list == null || list.length() == 0) return new String[]{"", "0"};
+            String id = list.getJSONObject(0).optString("deviceID");
+            JSONArray devs = get("/devices").getJSONObject("MediaContainer").optJSONArray("Device");
+            if (devs == null) return new String[]{"", "0"};
+            for (int i = 0; i < devs.length(); i++) {
+                JSONObject d = devs.getJSONObject(i);
+                if (!id.equals(d.optString("id"))) continue;
+                boolean mine = clientId != null && clientId.equals(d.optString("clientIdentifier"));
+                String name = d.optString("name");
+                String platform = d.optString("platform");
+                if ((name.isEmpty() || name.equals("Reel")) && !platform.isEmpty()) name = platform;
+                if (name.equals("Reel")) name = "";
+                return new String[]{name, mine ? "1" : "0"};
+            }
+        } catch (Exception ignored) {
+            // the server keeps no such history
+        }
+        return new String[]{"", "0"};
+    }
+
     /** Every title of a library as Plex's raw JSON (genres, cast and so on included), for the smart search. */
     public static JSONArray listAll(String sectionKey) throws Exception {
         long now = System.currentTimeMillis();

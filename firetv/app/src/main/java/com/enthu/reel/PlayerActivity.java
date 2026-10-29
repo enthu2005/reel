@@ -1874,6 +1874,8 @@ public class PlayerActivity extends Activity {
         long here = currentMs();
         if (item.duration <= 0 || here < item.duration * 0.9) lastGood = here;
         Plex.timeline(key, state, currentMs(), item.duration);
+        // so Home can tell when something was last watched on another device
+        Plex.prefs().edit().putLong("lastPlayedAt", System.currentTimeMillis() / 1000).apply();
     }
 
     private boolean viewUsed;

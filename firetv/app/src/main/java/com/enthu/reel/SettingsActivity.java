@@ -253,6 +253,18 @@ public class SettingsActivity extends ReelActivity {
                     render(false);
                 });
 
+        row("Theme", SeasonalView.name(SeasonalView.theme()),
+                "A seasonal look for special occasions: falling snow for Christmas, rising embers for Halloween. "
+                        + "It shows on the Home page. Press to change.",
+                v -> {
+                    SeasonalView.setTheme((SeasonalView.theme() + 1) % 3);
+                    render(false);
+                });
+
+        row("Stats and Wrapped", "Open",
+                "Hours watched, your top genres and actors, when you watch, and a year-end Wrapped slideshow.",
+                v -> startActivity(new android.content.Intent(this, StatsActivity.class)));
+
         Seerr.init(this);
         String seerr = Seerr.base();
         row("Seerr", seerr.isEmpty() ? "Not set up" : seerr.replaceFirst("^https?://", ""),

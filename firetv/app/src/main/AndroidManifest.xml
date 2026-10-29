@@ -75,6 +75,16 @@
             android:screenOrientation="landscape" />
 
         <activity
+            android:name=".StatsActivity"
+            android:exported="false"
+            android:screenOrientation="landscape" />
+
+        <activity
+            android:name=".LiveEditActivity"
+            android:exported="false"
+            android:screenOrientation="landscape" />
+
+        <activity
             android:name=".LibrariesActivity"
             android:exported="false"
             android:screenOrientation="landscape" />

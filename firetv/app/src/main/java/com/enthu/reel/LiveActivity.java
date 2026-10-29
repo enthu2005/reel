@@ -1,5 +1,6 @@
 package com.enthu.reel;
 
+import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Bundle;
@@ -8,6 +9,7 @@ import android.os.Looper;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
@@ -39,6 +41,7 @@ public class LiveActivity extends ReelActivity {
     private TextView dSub;
     private TextView dTime;
     private List<Live.Channel> channels = new ArrayList<>();
+    private View[] nowBlocks = new View[0]; // the programme on air now, per channel row
     private long t0;
     private int gridW;
     private int nameW;
@@ -85,13 +88,15 @@ public class LiveActivity extends ReelActivity {
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
         col.setPadding((int) (W * 0.045f), (int) (H * 0.06f), (int) (W * 0.045f), (int) (H * 0.04f));
-        col.setClipChildren(false);
+        col.setClipChildren(true);
 
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = text("Live", H * 0.06f, Color.WHITE, true);
         head.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView hint = text("Menu: edit channels   ", H * 0.022f, 0x80FFFFFF, false);
+        head.addView(hint);
         clock = text(fmt.format(new Date()), H * 0.034f, UiUtil.TEXT2, false);
         head.addView(clock);
         col.addView(head);
@@ -119,8 +124,8 @@ public class LiveActivity extends ReelActivity {
 
         scroll = new ScrollView(this);
         scroll.setVerticalScrollBarEnabled(false);
-        scroll.setClipChildren(false);
-        scroll.setClipToPadding(false);
+        scroll.setClipChildren(true);
+        scroll.setClipToPadding(true);
         rows = new LinearLayout(this);
         rows.setOrientation(LinearLayout.VERTICAL);
         rows.setClipChildren(false);
@@ -158,6 +163,57 @@ public class LiveActivity extends ReelActivity {
         super.onResume();
         handler.removeCallbacks(tick);
         handler.postDelayed(tick, 20_000);
+        // back from the channel editor: the list may have changed
+        if (editing) {
+            editing = false;
+            Plex.async(Live::load, new Plex.Callback<List<Live.Channel>>() {
+                @Override
+                public void ok(List<Live.Channel> r) {
+                    if (isDestroyed()) return;
+                    channels = r;
+                    if (r.isEmpty()) {
+                        rows.removeAllViews();
+                        message.setText("No channels. Press Menu to add or show some.");
+                        message.setVisibility(View.VISIBLE);
+                    } else {
+                        message.setVisibility(View.GONE);
+                        render(0);
+                    }
+                }
+
+                @Override
+                public void fail(Exception e) {
+                }
+            });
+        }
+    }
+
+    private boolean editing;
+
+    private void openEditor() {
+        editing = true;
+        startActivity(new Intent(this, LiveEditActivity.class));
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent e) {
+        if (e.getAction() == KeyEvent.ACTION_DOWN) {
+            int k = e.getKeyCode();
+            if (k == KeyEvent.KEYCODE_MENU) {
+                openEditor();
+                return true;
+            }
+            // Up and Down land on what is on air now in the next channel, not on a programme hours away
+            if ((k == KeyEvent.KEYCODE_DPAD_UP || k == KeyEvent.KEYCODE_DPAD_DOWN) && getCurrentFocus() != null
+                    && getCurrentFocus().getTag() instanceof Integer) {
+                int r = (Integer) getCurrentFocus().getTag() + (k == KeyEvent.KEYCODE_DPAD_UP ? -1 : 1);
+                if (r >= 0 && r < nowBlocks.length && nowBlocks[r] != null) {
+                    nowBlocks[r].requestFocus();
+                    return true;
+                }
+            }
+        }
+        return super.dispatchKeyEvent(e);
     }
 
     @Override
@@ -200,6 +256,7 @@ public class LiveActivity extends ReelActivity {
         }
 
         rows.removeAllViews();
+        nowBlocks = new View[channels.size()];
         View toFocus = null;
         float gap = H * 0.004f;
         for (int ci = 0; ci < channels.size(); ci++) {
@@ -252,6 +309,7 @@ public class LiveActivity extends ReelActivity {
                 lp.leftMargin = (int) ((a - t0) * ppm + gap);
                 lp.topMargin = (int) gap;
                 area.addView(blk, lp);
+                if (live) nowBlocks[ci] = blk;
                 if (ci == focusRow && toFocus == null && s.start <= now && now < s.end) toFocus = blk;
             }
             line.addView(area, new LinearLayout.LayoutParams(gridW, rowH));

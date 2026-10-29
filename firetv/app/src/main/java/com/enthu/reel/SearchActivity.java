@@ -284,6 +284,19 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
         if (preview != null && preview.handleKey(e)) return true;
         // The search / voice keys some remotes have
         int k = e.getKeyCode();
+        // Menu on the results of a plain-English search saves it as a Live channel
+        if (k == android.view.KeyEvent.KEYCODE_MENU && e.getAction() == android.view.KeyEvent.ACTION_DOWN
+                && smartQuery != null && !results.isEmpty()) {
+            Live.Custom cu = new Live.Custom();
+            cu.id = "c" + System.currentTimeMillis();
+            cu.kind = "search";
+            cu.ref = smartQuery;
+            String nm = smartQuery.trim();
+            cu.name = nm.isEmpty() ? "Search" : Character.toUpperCase(nm.charAt(0)) + nm.substring(1);
+            Live.addCustom(cu);
+            android.widget.Toast.makeText(this, "Saved as Live channel “" + cu.name + "”", android.widget.Toast.LENGTH_LONG).show();
+            return true;
+        }
         if ((k == android.view.KeyEvent.KEYCODE_SEARCH || k == android.view.KeyEvent.KEYCODE_VOICE_ASSIST)
                 && e.getAction() == android.view.KeyEvent.ACTION_UP) {
             voiceSearch();
@@ -423,6 +436,8 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
         changed();
     }
 
+    private String smartQuery; // the words of the plain-English search on screen, if it is one
+
     private void changed() {
         if (query.length() == 0) {
             queryView.setText("Search titles, shows and actors");
@@ -436,6 +451,7 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
         final int mine = ++token;
         loadSuggestions(q);
         if (q.length() < 2) {
+            smartQuery = null;
             smartNote.setVisibility(View.GONE);
             results.clear();
             grid.setAdapter(null);
@@ -448,7 +464,8 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
         final SmartSearch.Query sq = SmartSearch.parse(q);
         final java.util.concurrent.Callable<List<Plex.Item>> job = sq.smart()
                 ? () -> SmartSearch.run(sq) : () -> Plex.search(q);
-        smartNote.setText(sq.smart() ? "Searching your library for  " + sq.describe() : "");
+        smartQuery = sq.smart() ? q : null;
+        smartNote.setText(sq.smart() ? "Searching your library for  " + sq.describe() + "     (Menu: save as a Live channel)" : "");
         smartNote.setVisibility(sq.smart() ? View.VISIBLE : View.GONE);
         pending = () -> Plex.async(job, new Plex.Callback<List<Plex.Item>>() {
             @Override

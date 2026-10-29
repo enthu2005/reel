@@ -1675,7 +1675,8 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
     private void play(boolean fromStart) {
         Plex.Item t = target();
         if (t == null) return;
-        PlayerActivity.start(this, t.key, fromStart ? 0 : t.viewOffset);
+        if (fromStart) PlayerActivity.start(this, t.key, 0);
+        else ResumeDialog.play(this, t); // a partly watched title asks: resume, or start over
     }
 
     @Override
@@ -1685,6 +1686,6 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
 
     @Override
     public void onClicked(Plex.Item it) {
-        if (it.isPlayable()) PlayerActivity.start(this, it.key, it.viewOffset);
+        if (it.isPlayable()) ResumeDialog.play(this, it);
     }
 }
