@@ -672,8 +672,14 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         rowsView.animate().cancel();
         rowsView.animate().translationY(down ? H * 0.34f : 0f).setDuration(down ? Motion.LONG_MS : Motion.SLOW_MS)
                 .setInterpolator(Motion.EASE).start();
+        // The title, details and button drop too, so the picture above them is easy to see
+        if (heroOuter != null) {
+            heroOuter.animate().cancel();
+            heroOuter.animate().translationY(down ? H * 0.3f : 0f).setDuration(down ? Motion.LONG_MS : Motion.SLOW_MS)
+                    .setInterpolator(Motion.EASE).start();
+        }
     }
-    private static final long HERO_PREVIEW_MS = 3000;
+    private static final long HERO_PREVIEW_MS = 2000;
     private final Runnable heroDue = () -> {
         heroPrevDue = true;
         if (heroPrevReady && heroPlayer != null) heroPlayer.play();
