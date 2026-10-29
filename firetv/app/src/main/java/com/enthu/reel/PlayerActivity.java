@@ -1343,8 +1343,19 @@ public class PlayerActivity extends Activity {
         }
         releasePlayer();
         Plex.async(() -> {
-            Plex.setPartSubtitle(item.partKey, want);
-            return true;
+            // Plex burns in whichever subtitle the server has marked selected, so this has to land: a miss
+            // means its pick is burned in under the one the app draws. Try a few times.
+            Exception last = null;
+            for (int i = 0; i < 3; i++) {
+                try {
+                    Plex.setPartSubtitle(item.partKey, want);
+                    return true;
+                } catch (Exception e) {
+                    last = e;
+                    Thread.sleep(400);
+                }
+            }
+            throw last;
         }, new Plex.Callback<Boolean>() {
             @Override
             public void ok(Boolean r) {
@@ -1354,7 +1365,10 @@ public class PlayerActivity extends Activity {
 
             @Override
             public void fail(Exception e) {
-                if (!isDestroyed()) beginNow(positionMs, wantTranscode); // carry on without it
+                if (isDestroyed()) return;
+                Toast.makeText(PlayerActivity.this, "Couldn't reset the server's subtitle choice; you may see a second subtitle",
+                        Toast.LENGTH_LONG).show();
+                beginNow(positionMs, wantTranscode); // carry on without it
             }
         });
     }
@@ -1564,8 +1578,17 @@ public class PlayerActivity extends Activity {
         view.setPlayer(player);
         player.setMediaItem(buildItem(transcode));
         if (!transcode && positionMs > 0) player.seekTo(positionMs);
-        if (!transcode && externalSub != null) enableText(true);
-        if (transcode && sidecarSub() != null) enableText(true);
+        // Exactly one subtitle source at a time: a track the player draws, or one Plex burns in, never both.
+        // Without this the player also shows whatever track the file flags as default (an Off choice still
+        // showed it, and a second one drawn on top of the one you picked).
+        if (transcode) {
+            enableText(sidecarSub() != null);
+        } else if (externalSub != null) {
+            enableText(true);
+        } else if (pendingSub == null) {
+            if (subChosen && curSub != null) pendingSub = curSub; // re-apply your pick once tracks are known
+            else enableText(false);
+        }
 
         player.addListener(new Player.Listener() {
             @Override
