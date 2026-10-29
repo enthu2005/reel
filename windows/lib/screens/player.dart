@@ -232,6 +232,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (done) _finished();
     }));
     _subs.add(_player.stream.error.listen((e) {
+      // No usable graphics chip (a virtual machine, say): decode in software and keep the message off the picture.
+      if (RegExp(r'avhw|hwdec|hw device|hardware|d3d11|dxva|cuda|vaapi',
+              caseSensitive: false)
+          .hasMatch(e)) {
+        final np = _player.platform;
+        if (np is NativePlayer) np.setProperty('hwdec', 'no');
+        return;
+      }
       // Sound this PC can't handle (TrueHD, DTS-HD): switch to a 2-channel version from the server.
       if (!_stereo &&
           _item != null &&
