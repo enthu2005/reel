@@ -442,6 +442,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _reportProgress([String? state, int? atMs]) {
     final it = _item;
     if (it == null || widget.channel > 0) return;
+    Prefs.lastPlayedAt = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     Plex.timeline(
         it.key,
         state ?? (_playing ? 'playing' : 'paused'),

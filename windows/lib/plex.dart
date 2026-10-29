@@ -951,6 +951,30 @@ class Plex {
     return list;
   }
 
+  /// The device that last watched [ratingKey]: its name, and whether that was this device. Best effort: the
+  /// server may not keep this, in which case the name is empty.
+  static Future<(String, bool)> lastDevice(String ratingKey) async {
+    try {
+      final h = await _get(
+          '/status/sessions/history/all?metadataItemID=$ratingKey&sort=viewedAt:desc&X-Plex-Container-Start=0&X-Plex-Container-Size=1');
+      final list = (h['MediaContainer'] as Map)['Metadata'] as List?;
+      if (list == null || list.isEmpty) return ('', false);
+      final id = '${(list.first as Map)['deviceID']}';
+      final d = await _get('/devices');
+      for (final x in ((d['MediaContainer'] as Map)['Device'] as List? ?? const [])) {
+        final m = x as Map;
+        if ('${m['id']}' != id) continue;
+        final mine = '${m['clientIdentifier'] ?? ''}' == Prefs.clientId;
+        var name = '${m['name'] ?? ''}';
+        final platform = '${m['platform'] ?? ''}';
+        if ((name.isEmpty || name == 'Reel') && platform.isNotEmpty) name = platform;
+        if (name == 'Reel') name = '';
+        return (name, mine);
+      }
+    } catch (_) {}
+    return ('', false);
+  }
+
   /// Every episode in a show library that you have watched, as raw JSON (with when you last watched it).
   static Future<List<Map<String, dynamic>>> rawWatchedEpisodes(String sectionKey) async {
     final body = await _send(

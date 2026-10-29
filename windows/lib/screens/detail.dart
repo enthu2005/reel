@@ -11,6 +11,7 @@ import '../ui/net_image.dart';
 import '../ui/preview.dart';
 import '../ui/motion.dart';
 import '../ui/theme.dart';
+import '../ui/resume.dart';
 import '../ui/widgets.dart';
 import 'player.dart';
 
@@ -268,10 +269,12 @@ class _DetailScreenState extends State<DetailScreen> {
     return s;
   }
 
-  Future<void> _play(PlexItem it, {bool fromStart = false}) async {
+  Future<void> _play(PlexItem it) async {
+    // a partly watched title asks: resume, or start over
+    final start = await askResume(context, it);
+    if (start == null || !mounted) return;
     await Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => PlayerScreen(
-            ratingKey: it.key, startMs: fromStart ? 0 : it.viewOffset)));
+        builder: (_) => PlayerScreen(ratingKey: it.key, startMs: start)));
     if (mounted && _pageScroll.hasClients) {
       _resetPageTop();
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -459,12 +462,6 @@ class _DetailScreenState extends State<DetailScreen> {
                                                       'Collection · in release order',
                                                   oldestFirst: true)));
                                         }),
-                                      if (target != null &&
-                                          target.viewOffset > 0)
-                                        PillButton('Start over',
-                                            icon: Icons.replay_rounded,
-                                            onPressed: () =>
-                                                _play(target, fromStart: true)),
                                       PillButton(
                                           watched
                                               ? 'Mark unwatched'

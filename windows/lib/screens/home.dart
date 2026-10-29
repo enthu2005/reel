@@ -13,6 +13,7 @@ import '../ui/net_image.dart';
 import '../ui/preview.dart';
 import '../ui/motion.dart';
 import '../ui/theme.dart';
+import '../ui/resume.dart';
 import '../ui/widgets.dart';
 import 'detail.dart';
 import 'discover.dart';
@@ -172,6 +173,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _secs = tabSecs;
         final parts = await Future.wait<List<_Row>>([
           Plex.onDeck().then((d) {
+            _checkElsewhere(d);
             final keep = _deckFor(d)
                 .where((x) => !hiddenSectionKeys.contains(x.librarySectionKey))
                 .toList();
@@ -783,10 +785,102 @@ class _HomeScreenState extends State<HomeScreen> {
       _open(it);
       return;
     }
+    final start = await askResume(context, it);
+    if (start == null || !mounted) return;
     await Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) =>
-            PlayerScreen(ratingKey: it.key, startMs: it.viewOffset)));
+        builder: (_) => PlayerScreen(ratingKey: it.key, startMs: start)));
     _refreshDeck();
+  }
+
+  // ---- "Continue from another device": the newest thing you were partway through is newer than anything
+  // this device has played, so it was watched somewhere else.
+  static bool _elsewhereChecked = false;
+  PlexItem? _elsewhere;
+  String _elsewhereDevice = '';
+
+  Future<void> _checkElsewhere(List<PlexItem> deck) async {
+    if (_elsewhereChecked) return;
+    _elsewhereChecked = true;
+    PlexItem? best;
+    for (final x in deck) {
+      if (x.viewOffset <= 0 || x.duration <= 0 || x.lastViewedAt <= 0) continue;
+      if (best == null || x.lastViewedAt > best.lastViewedAt) best = x;
+    }
+    final it = best;
+    if (it == null) return;
+    final week = DateTime.now().millisecondsSinceEpoch ~/ 1000 - 7 * 86400;
+    if (it.lastViewedAt < week || it.lastViewedAt <= Prefs.lastPlayedAt + 90) return;
+    if (Prefs.dismissedBanner == '${it.key}@${it.viewOffset}') return;
+    final d = await Plex.lastDevice(it.key);
+    if (d.$2 || !mounted) return; // that was this device
+    setState(() {
+      _elsewhere = it;
+      _elsewhereDevice = d.$1;
+    });
+  }
+
+  void _dismissElsewhere() {
+    final it = _elsewhere;
+    if (it != null) Prefs.dismissedBanner = '${it.key}@${it.viewOffset}';
+    setState(() => _elsewhere = null);
+  }
+
+  Future<void> _resumeElsewhere() async {
+    final it = _elsewhere;
+    if (it == null) return;
+    _dismissElsewhere();
+    await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => PlayerScreen(ratingKey: it.key, startMs: it.viewOffset)));
+    _refreshDeck();
+  }
+
+  Widget _elsewhereBanner(double h) {
+    final it = _elsewhere;
+    if (it == null) return const SizedBox.shrink();
+    String t(int ms) {
+      final s = ms ~/ 1000;
+      final hh = s ~/ 3600;
+      final m = (s % 3600) ~/ 60;
+      final ss = (s % 60).toString().padLeft(2, '0');
+      return hh > 0 ? '$hh:${m.toString().padLeft(2, '0')}:$ss' : '$m:$ss';
+    }
+
+    final name = it.type == 'episode'
+        ? '${it.gpTitle ?? ''} S${it.parentIndex} E${it.index}'
+        : it.title;
+    final from = _elsewhereDevice.isEmpty ? 'another device' : _elsewhereDevice;
+    return Positioned(
+      top: h * 0.115,
+      left: 0,
+      right: 0,
+      child: Center(
+        child: Container(
+          padding: EdgeInsets.symmetric(horizontal: h * 0.024, vertical: h * 0.012),
+          decoration: BoxDecoration(
+            color: const Color(0xF01C1C1E),
+            borderRadius: BorderRadius.circular(h),
+            border: Border.all(color: const Color(0x33FFFFFF)),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Text('Continue ',
+                style: reelText(h * 0.024, color: Reel.text2)),
+            ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: Reel.w(context) * 0.3),
+              child: Text(name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: reelText(h * 0.024, weight: FontWeight.w700)),
+            ),
+            Text(' from $from, at ${t(it.viewOffset)}',
+                style: reelText(h * 0.024, color: Reel.text2)),
+            SizedBox(width: h * 0.024),
+            PillButton('Resume', primary: true, onPressed: _resumeElsewhere),
+            SizedBox(width: h * 0.01),
+            PillButton('Not now', onPressed: _dismissElsewhere),
+          ]),
+        ),
+      ),
+    );
   }
 
   void _selectTab(int i) async {
@@ -1005,6 +1099,8 @@ class _HomeScreenState extends State<HomeScreen> {
           right: 0,
           child: Center(child: _tabBar(h)),
         ),
+
+        _elsewhereBanner(h),
 
         // Quiet mode: a small moon beside full screen. Mutes previews, saved until you change it.
         Positioned(

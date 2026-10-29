@@ -160,4 +160,11 @@ class Prefs {
   static set liveHidden(List<String> v) => _p.setStringList('liveHidden', v);
   static List<String> get liveOrder => _p.getStringList('liveOrder') ?? const [];
   static set liveOrder(List<String> v) => _p.setStringList('liveOrder', v);
+
+  /// When this device last reported watching something (seconds since 1970), and the "continue from another
+  /// device" banner you dismissed (key@position), so it does not come back.
+  static int get lastPlayedAt => _p.getInt('lastPlayedAt') ?? 0;
+  static set lastPlayedAt(int v) => _p.setInt('lastPlayedAt', v);
+  static String get dismissedBanner => _p.getString('dismissedBanner') ?? '';
+  static set dismissedBanner(String v) => _p.setString('dismissedBanner', v);
 }
