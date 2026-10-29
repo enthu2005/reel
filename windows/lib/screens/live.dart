@@ -116,7 +116,6 @@ class _LiveScreenState extends State<LiveScreen> {
   int _pipChannel = 0;
   bool _pipShowing = false;
   int _pipToken = 0;
-  String _pipSession = '';
 
   bool get _pipAllowed => Prefs.previews && !Prefs.quiet;
 
@@ -131,12 +130,9 @@ class _LiveScreenState extends State<LiveScreen> {
     if (t == null || !mounted) return;
     final mine = ++_pipToken;
     try {
-      // the light 720p stream from the server (it starts at the right minute), not the whole original file
-      final session = 'pip${DateTime.now().millisecondsSinceEpoch}';
-      final url = Plex.previewUrl(t.$1.key, t.$2, session);
-      if (_pipSession.isNotEmpty) Plex.stopTranscode(_pipSession);
-      _pipSession = session;
-      if (!mounted || mine != _pipToken) return;
+      final it = await Plex.metadata(t.$1.key);
+      final url = Plex.directUrl(it);
+      if (url == null || !mounted || mine != _pipToken) return;
       if (_pipPlayer == null) {
         final p = Player(
             configuration: const PlayerConfiguration(
@@ -157,7 +153,7 @@ class _LiveScreenState extends State<LiveScreen> {
       }
       _pipChannel = c.num;
       await _pipPlayer!.open(
-          Media(url),
+          Media(url, start: Duration(milliseconds: t.$2)),
           play: true);
       if (mounted && mine == _pipToken) setState(() => _pipShowing = true);
     } catch (_) {}
@@ -173,8 +169,6 @@ class _LiveScreenState extends State<LiveScreen> {
     _pipShowing = false;
     _pipChannel = 0;
     await p?.dispose();
-    if (_pipSession.isNotEmpty) Plex.stopTranscode(_pipSession);
-    _pipSession = '';
     if (!mounted) return;
     setState(() {});
     await tuneChannel(context, c);
@@ -222,7 +216,6 @@ class _LiveScreenState extends State<LiveScreen> {
     _scroll.dispose();
     _pipDelay?.cancel();
     _pipPlayer?.dispose();
-    if (_pipSession.isNotEmpty) Plex.stopTranscode(_pipSession);
     _tick?.cancel();
     super.dispose();
   }
