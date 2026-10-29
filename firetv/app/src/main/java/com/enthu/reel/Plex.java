@@ -71,6 +71,7 @@ public final class Plex {
         public int bitDepth;
         public int height;
         public int bitrate;
+        public JSONObject raw; // everything Plex says about this stream, for the nerdy Info page
 
         public boolean isExternal() {
             return type == 3 && key != null && !key.isEmpty();
@@ -145,6 +146,9 @@ public final class Plex {
         public long fileSize;         // bytes of the media file (0 = not known)
         public String videoRes = "";
         public int videoHeight;
+        public JSONObject media; // Plex's "Media" block for the file (container, bitrate, codecs...)
+        public JSONObject part;  // and its "Part" block (path on the server, size...)
+        public int mediaCount;   // how many versions of this title the server has
         public String watcher = ""; // who is watching it right now (sessions only)
         public List<Stream> streams = new ArrayList<>();
 
@@ -1241,9 +1245,12 @@ public final class Plex {
             JSONObject m0 = media.optJSONObject(0);
             i.videoRes = m0.optString("videoResolution", "");
             i.videoHeight = m0.optInt("height", 0);
+            i.media = m0;
+            i.mediaCount = media.length();
             JSONArray parts = m0.optJSONArray("Part");
             if (parts != null && parts.length() > 0) {
                 JSONObject p0 = parts.optJSONObject(0);
+                i.part = p0;
                 i.partKey = opt(p0, "key");
                 i.fileSize = p0.optLong("size", 0);
                 JSONArray ss = p0.optJSONArray("Stream");
@@ -1282,6 +1289,7 @@ public final class Plex {
         s.bitDepth = o.optInt("bitDepth", 0);
         s.height = o.optInt("height", 0);
         s.bitrate = o.optInt("bitrate", 0);
+        s.raw = o;
         return s;
     }
 

@@ -3262,7 +3262,118 @@ public class PlayerActivity extends Activity {
             add.accept("App memory", used + " MB  (device free " + (mi.availMem >> 20) + " of " + (mi.totalMem >> 20) + " MB)");
         } catch (RuntimeException ignored) {
         }
+        for (String[] r : nerdRows()) add.accept(r[0], r[1]);
         if (!lastError.isEmpty()) add.accept("Last error", lastError);
+        return out;
+    }
+
+    private static String mb(long bytes) {
+        return bytes >= 1073741824L ? String.format(Locale.US, "%.2f GB", bytes / 1073741824.0)
+                : String.format(Locale.US, "%.1f MB", bytes / 1048576.0);
+    }
+
+    private static String kbps(long kbit) {
+        return kbit >= 1000 ? String.format(Locale.US, "%.2f Mbit/s", kbit / 1000.0) : kbit + " kbit/s";
+    }
+
+    /** Hours:minutes:seconds.millis for a length in ms. */
+    private static String hms(long ms) {
+        return String.format(Locale.US, "%d:%02d:%02d.%03d", ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60, ms % 1000);
+    }
+
+    /**
+     * The nerdy extras, as {name, value} rows (an empty value makes a heading): what is in the original file
+     * as Plex sees it, and how the disk and memory buffers are doing. Used by the phone page and the TV Info tab.
+     */
+    private List<String[]> nerdRows() {
+        List<String[]> out = new ArrayList<>();
+        if (item == null) return out;
+        org.json.JSONObject m = item.media == null ? new org.json.JSONObject() : item.media;
+        org.json.JSONObject pt = item.part == null ? new org.json.JSONObject() : item.part;
+        out.add(new String[]{"ORIGINAL FILE", ""});
+        String file = pt.optString("file", "");
+        if (!file.isEmpty()) out.add(new String[]{"Path on server", file});
+        String cont = pt.optString("container", m.optString("container", ""));
+        out.add(new String[]{"Container", (cont.isEmpty() ? "?" : cont.toUpperCase(Locale.ROOT))
+                + (pt.optBoolean("optimizedForStreaming", false) ? "  (optimised for streaming)" : "")});
+        if (item.fileSize > 0) {
+            out.add(new String[]{"Size", mb(item.fileSize) + "  (" + String.format(Locale.US, "%,d", item.fileSize) + " bytes)"});
+        }
+        long fdur = pt.optLong("duration", item.duration);
+        if (fdur > 0) out.add(new String[]{"Duration", hms(fdur)});
+        if (m.optLong("bitrate", 0) > 0) out.add(new String[]{"Overall bitrate", kbps(m.optLong("bitrate"))});
+        if (item.mediaCount > 1) out.add(new String[]{"Versions on server", item.mediaCount + " (playing the first)"});
+        if (!m.optString("videoFrameRate", "").isEmpty()) out.add(new String[]{"Frame rate class", m.optString("videoFrameRate")});
+        if (!m.optString("aspectRatio", "").isEmpty()) out.add(new String[]{"Aspect ratio", m.optString("aspectRatio") + " : 1"});
+        int n = 0;
+        int subCount = 0;
+        for (Plex.Stream s : item.streams) {
+            org.json.JSONObject r = s.raw == null ? new org.json.JSONObject() : s.raw;
+            n++;
+            if (s.type == 1) {
+                out.add(new String[]{"VIDEO STREAM #" + r.optInt("index", n - 1), ""});
+                out.add(new String[]{"Codec", (s.codec.isEmpty() ? "?" : s.codec.toUpperCase(Locale.ROOT))
+                        + (s.profile.isEmpty() ? "" : "  profile " + s.profile)
+                        + (r.has("level") ? "  level " + r.optInt("level") : "")});
+                out.add(new String[]{"Frame size", r.optInt("width", 0) + " × " + r.optInt("height", s.height)
+                        + (r.has("codedWidth") ? "  (coded " + r.optInt("codedWidth") + " × " + r.optInt("codedHeight") + ")" : "")});
+                out.add(new String[]{"Frame rate", r.optString("frameRate", "?") + " fps"
+                        + (r.optString("scanType", "").isEmpty() ? "" : "  " + r.optString("scanType"))});
+                out.add(new String[]{"Bit depth / chroma", (s.bitDepth > 0 ? s.bitDepth + "-bit" : "?") + "  "
+                        + r.optString("chromaSubsampling", "?")
+                        + (r.optString("chromaLocation", "").isEmpty() ? "" : "  (" + r.optString("chromaLocation") + ")")});
+                out.add(new String[]{"Colour", r.optString("colorSpace", "?") + "  primaries " + r.optString("colorPrimaries", "?")
+                        + "  transfer " + (s.colorTrc.isEmpty() ? "?" : s.colorTrc) + "  range " + r.optString("colorRange", "?")});
+                if (r.has("refFrames")) out.add(new String[]{"Reference frames", String.valueOf(r.optInt("refFrames"))});
+                if (s.bitrate > 0) out.add(new String[]{"Video bitrate", kbps(s.bitrate)});
+                if (s.dovi) {
+                    out.add(new String[]{"Dolby Vision", "profile " + s.doviProfile + "  level " + r.optInt("DOVILevel", 0)
+                            + "  BL " + (r.optBoolean("DOVIBLPresent") ? "yes" : "no")
+                            + "  EL " + (r.optBoolean("DOVIELPresent") ? "yes" : "no")
+                            + "  RPU " + (r.optBoolean("DOVIRPUPresent") ? "yes" : "no")
+                            + (r.has("DOVIBLCompatID") ? "  BL compat " + r.optInt("DOVIBLCompatID") : "")});
+                }
+            } else if (s.type == 2) {
+                out.add(new String[]{"AUDIO STREAM #" + r.optInt("index", n - 1) + (s.selected ? "  (selected)" : ""), ""});
+                out.add(new String[]{"Codec", (s.codec.isEmpty() ? "?" : s.codec.toUpperCase(Locale.ROOT))
+                        + (s.profile.isEmpty() ? "" : "  " + s.profile)
+                        + "  " + s.channels + " ch" + (s.layout.isEmpty() ? "" : " (" + s.layout + ")")});
+                out.add(new String[]{"Format", (r.optInt("samplingRate", 0) > 0 ? r.optInt("samplingRate") + " Hz" : "? Hz")
+                        + (s.bitDepth > 0 ? "  " + s.bitDepth + "-bit" : "")
+                        + (s.bitrate > 0 ? "  " + kbps(s.bitrate) : "")
+                        + (r.optString("bitrateMode", "").isEmpty() ? "" : "  " + r.optString("bitrateMode").toUpperCase(Locale.ROOT))});
+                out.add(new String[]{"Track", (s.lang.isEmpty() ? "?" : s.lang) + (s.isDefault ? "  default" : "")
+                        + (s.title.isEmpty() ? "" : "  “" + s.title + "”")});
+            } else if (s.type == 3) {
+                if (++subCount > 6) {
+                    if (subCount == 7) out.add(new String[]{"More subtitles", item.streamsOf(3).size() - 6 + " more tracks in the file"});
+                    continue;
+                }
+                out.add(new String[]{"SUBTITLE #" + r.optInt("index", n - 1) + (s.isExternal() ? "  (separate file)" : "  (in file)"), ""});
+                out.add(new String[]{"Format", (s.format.isEmpty() ? s.codec : s.format).toUpperCase(Locale.ROOT) + "  "
+                        + (s.lang.isEmpty() ? "?" : s.lang) + (s.forced ? "  forced" : "") + (s.isDefault ? "  default" : "")});
+            }
+        }
+        out.add(new String[]{"STORAGE AND BUFFER", ""});
+        try {
+            out.add(new String[]{"Disk store", BigBuffer.describeStore(this)});
+            android.os.StatFs sf = new android.os.StatFs(getCacheDir().getAbsolutePath());
+            out.add(new String[]{"Free space", mb(sf.getAvailableBytes()) + " of " + mb(sf.getTotalBytes())});
+        } catch (RuntimeException ignored) {
+        }
+        if (bigBuffer != null && BigBuffer.enabled(this) && !transcoding) {
+            out.add(new String[]{"Disk filler", bigBuffer.status() + "  (" + mb(bigBuffer.ahead()) + " fetched ahead of "
+                    + mb(bigBuffer.fileLength()) + ")"});
+            out.add(new String[]{"File data rate", mb(bigBuffer.bytesPerSecond()) + "/s average"});
+        }
+        if (player != null) {
+            String[] states = {"idle", "buffering", "ready", "ended"};
+            out.add(new String[]{"Player buffer", "position " + hms(player.getCurrentPosition()) + "  buffered to "
+                    + hms(player.getBufferedPosition()) + "  (+" + (player.getTotalBufferedDuration() / 1000.0) + " s)"});
+            out.add(new String[]{"Player state", states[Math.max(0, Math.min(3, player.getPlaybackState() - 1))]
+                    + (player.getPlayWhenReady() ? ", playing" : ", paused")
+                    + "  speed " + player.getPlaybackParameters().speed + "×"});
+        }
         return out;
     }
 
@@ -3456,6 +3567,10 @@ public class PlayerActivity extends Activity {
             mbps = est / 1_000_000.0;
         }
         sb.append("Download     ").append(mbps > 0 ? String.format(Locale.US, "%.1f Mbit/s", mbps) : "measuring...").append('\n');
+        for (String[] r : nerdRows()) {
+            if (r[1].isEmpty()) sb.append('\n').append(r[0]).append('\n');
+            else sb.append(String.format(Locale.US, "%-18s", r[0])).append(r[1]).append('\n');
+        }
         try {
             Runtime rt = Runtime.getRuntime();
             long heapUsed = rt.totalMemory() - rt.freeMemory();

@@ -106,6 +106,38 @@ final class BigBuffer {
         return cache == null ? 0 : cache.getCacheSpace();
     }
 
+    /** Where the store lives, how many files are in it and its size limit: for the nerdy Info page. */
+    static synchronized String describeStore(Context c) {
+        try {
+            File dir = new File(c.getApplicationContext().getCacheDir(), "bigbuffer");
+            int files = 0;
+            long bytes = 0;
+            File[] fs = dir.listFiles();
+            if (fs != null) {
+                for (File f : fs) {
+                    if (f.isDirectory()) {
+                        File[] in = f.listFiles();
+                        if (in != null) for (File g : in) {
+                            files++;
+                            bytes += g.length();
+                        }
+                    } else {
+                        files++;
+                        bytes += f.length();
+                    }
+                }
+            }
+            return dir.getAbsolutePath() + "  " + files + " files, " + (bytes >> 20) + " MB on disk, limit "
+                    + (MAX_BYTES >> 20) + " MB";
+        } catch (Throwable t) {
+            return "unknown";
+        }
+    }
+
+    long fileLength() {
+        return fileLen;
+    }
+
     /** Roughly how far past the playhead the background task has fetched. */
     long ahead() {
         return Math.max(0, aheadBytes);

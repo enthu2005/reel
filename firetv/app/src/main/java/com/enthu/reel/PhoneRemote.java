@@ -57,17 +57,30 @@ final class PhoneRemote {
         host = h;
         MAIN.removeCallbacks(STOP);
         if (server != null) return;
+        android.content.SharedPreferences sp = app.getSharedPreferences("reel_ui", Context.MODE_PRIVATE);
         if (token == null) {
-            byte[] b = new byte[4];
-            new SecureRandom().nextBytes(b);
-            StringBuilder sb = new StringBuilder();
-            for (byte x : b) sb.append(String.format("%02x", x));
-            token = sb.toString();
+            // Made once and kept for good, so a phone's bookmark or home-screen shortcut keeps working
+            token = sp.getString("remoteToken", null);
+            if (token == null || token.isEmpty()) {
+                byte[] b = new byte[4];
+                new SecureRandom().nextBytes(b);
+                StringBuilder sb = new StringBuilder();
+                for (byte x : b) sb.append(String.format("%02x", x));
+                token = sb.toString();
+                sp.edit().putString("remoteToken", token).apply();
+            }
         }
-        for (int p : PORTS) {
+        // The port used last time goes first, so the address stays the same too
+        int last = sp.getInt("remotePort", 0);
+        int[] order = new int[PORTS.length + 1];
+        order[0] = last;
+        System.arraycopy(PORTS, 0, order, 1, PORTS.length);
+        for (int p : order) {
+            if (p <= 0) continue;
             try {
                 server = new ServerSocket(p);
                 port = p;
+                sp.edit().putInt("remotePort", p).apply();
                 break;
             } catch (Exception ignored) {
             }
