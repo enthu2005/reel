@@ -673,6 +673,16 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         rowsView.animate().translationY(down ? H * 0.5f : 0f).setDuration(down ? Motion.LONG_MS : Motion.SLOW_MS)
                 .setInterpolator(Motion.EASE).start();
         if (dots != null) dots.animate().alpha(down ? 0f : 1f).setDuration(Motion.MEDIUM_MS).start();
+        // The top bar's dark tint thins out so the picture shows through it
+        if (navTint != null) {
+            android.animation.ValueAnimator va = android.animation.ValueAnimator.ofInt(navTint.getAlpha(), down ? 50 : 255);
+            va.setDuration(Motion.SLOW_MS);
+            va.addUpdateListener(a -> {
+                navTint.setAlpha((Integer) a.getAnimatedValue());
+                if (navGlass != null) navGlass.invalidate();
+            });
+            va.start();
+        }
         // The title, details and button drop too, so the picture above them is easy to see
         if (heroOuter != null) {
             heroOuter.animate().cancel();
@@ -680,7 +690,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                     .setInterpolator(Motion.EASE).start();
         }
     }
-    private static final long HERO_PREVIEW_MS = 2000;
+    private static final long HERO_PREVIEW_MS = 4000;
     private final Runnable heroDue = () -> {
         heroPrevDue = true;
         if (heroPrevReady && heroPlayer != null) heroPlayer.play();
