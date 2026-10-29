@@ -325,43 +325,50 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
         }
         final String q = searchQuery;
         Plex.async(() -> {
-            List<Object[]> out = new ArrayList<>();
-            if (!q.isEmpty()) out.add(new Object[]{"Results for \u201C" + q + "\u201D", Seerr.search(q)});
+            // Every row is fetched at the same time (it used to be one after the other), kept in this order
+            java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(8);
             try {
-                out.add(new Object[]{"Your requests", Seerr.myRequests()});
-            } catch (Exception ignored) {
-            }
-            // Because you watched: your latest movie and show in Plex, matched to TMDB
-            for (Plex.Section sec : Plex.sections()) {
-                boolean movie = sec.type.equals("movie");
-                if (!movie && !sec.type.equals("show")) continue;
-                try {
-                    List<Plex.Item> last = Plex.items(Plex.paged(
-                            "/library/sections/" + sec.key + "/all?sort=lastViewedAt:desc", 8));
-                    for (Plex.Item w : last) {
-                        if (w.viewCount <= 0 && w.viewOffset <= 0) continue;
-                        String tmdb = Plex.tmdbId(w.key);
-                        if (tmdb == null) continue;
-                        List<Seerr.Media> recs = Seerr.recommendations(movie ? "movie" : "tv", tmdb);
-                        if (recs.size() >= 3) out.add(new Object[]{"Because you watched " + w.title, recs});
-                        break;
-                    }
-                } catch (Exception ignored) {
+                List<java.util.concurrent.Future<Object[]>> jobs = new ArrayList<>();
+                if (!q.isEmpty()) {
+                    jobs.add(pool.submit(() -> new Object[]{"Results for \u201C" + q + "\u201D", Seerr.search(q)}));
                 }
+                jobs.add(pool.submit(() -> new Object[]{"Your requests", Seerr.myRequests()}));
+                // Because you watched: your latest movie and show in Plex, matched to TMDB
+                for (Plex.Section sec : Plex.sections()) {
+                    final boolean movie = sec.type.equals("movie");
+                    if (!movie && !sec.type.equals("show")) continue;
+                    jobs.add(pool.submit(() -> {
+                        List<Plex.Item> last = Plex.items(Plex.paged(
+                                "/library/sections/" + sec.key + "/all?sort=lastViewedAt:desc", 8));
+                        for (Plex.Item w : last) {
+                            if (w.viewCount <= 0 && w.viewOffset <= 0) continue;
+                            String tmdb = Plex.tmdbId(w.key);
+                            if (tmdb == null) continue;
+                            List<Seerr.Media> recs = Seerr.recommendations(movie ? "movie" : "tv", tmdb);
+                            return recs.size() >= 3 ? new Object[]{"Because you watched " + w.title, recs} : null;
+                        }
+                        return null;
+                    }));
+                }
+                jobs.add(pool.submit(() -> new Object[]{"Trending", Seerr.trending()}));
+                jobs.add(pool.submit(() -> new Object[]{"Movie categories", Seerr.genres("movie"), "movie"}));
+                jobs.add(pool.submit(() -> new Object[]{"Popular movies", Seerr.popularMovies()}));
+                jobs.add(pool.submit(() -> new Object[]{"TV categories", Seerr.genres("tv"), "tv"}));
+                jobs.add(pool.submit(() -> new Object[]{"Popular shows", Seerr.popularShows()}));
+                jobs.add(pool.submit(() -> new Object[]{"Coming soon", Seerr.upcomingMovies()}));
+                List<Object[]> out = new ArrayList<>();
+                for (java.util.concurrent.Future<Object[]> f : jobs) {
+                    try {
+                        Object[] r = f.get();
+                        if (r != null) out.add(r);
+                    } catch (Exception ignored) {
+                        // a row that can't load is left out
+                    }
+                }
+                return out;
+            } finally {
+                pool.shutdown();
             }
-            out.add(new Object[]{"Trending", Seerr.trending()});
-            try {
-                out.add(new Object[]{"Movie categories", Seerr.genres("movie"), "movie"});
-            } catch (Exception ignored) {
-            }
-            out.add(new Object[]{"Popular movies", Seerr.popularMovies()});
-            try {
-                out.add(new Object[]{"TV categories", Seerr.genres("tv"), "tv"});
-            } catch (Exception ignored) {
-            }
-            out.add(new Object[]{"Popular shows", Seerr.popularShows()});
-            out.add(new Object[]{"Coming soon", Seerr.upcomingMovies()});
-            return out;
         }, new Plex.Callback<List<Object[]>>() {
             @Override
             @SuppressWarnings("unchecked")

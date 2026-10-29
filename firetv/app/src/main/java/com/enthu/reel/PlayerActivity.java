@@ -720,8 +720,9 @@ public class PlayerActivity extends Activity {
             if (o.id == cur.id || o.codec == null || needsAc3(o)) continue;
             if (cur.langCode != null && !cur.langCode.equals(o.langCode)) continue;
             String c = o.codec.toLowerCase(Locale.ROOT);
-            int sc = c.contains("ac3") && !c.contains("eac3") ? 40 : isDts(c) ? 30
-                    : (c.contains("eac3") ? 25 : 10);
+            // Only a Dolby / DTS track is worth switching to; a stereo AAC track is not (Plex converts to AC3 instead)
+            if (!c.contains("ac3") && !isDts(c)) continue;
+            int sc = c.contains("ac3") && !c.contains("eac3") ? 40 : isDts(c) ? 30 : 25;
             sc += Math.min(o.channels, 8);
             if (sc > bestScore) { bestScore = sc; best = o; }
         }

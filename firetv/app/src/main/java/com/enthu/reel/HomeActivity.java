@@ -672,6 +672,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         rowsView.animate().cancel();
         rowsView.animate().translationY(down ? H * 0.5f : 0f).setDuration(down ? Motion.LONG_MS : Motion.SLOW_MS)
                 .setInterpolator(Motion.EASE).start();
+        if (dots != null) dots.animate().alpha(down ? 0f : 1f).setDuration(Motion.MEDIUM_MS).start();
         // The title, details and button drop too, so the picture above them is easy to see
         if (heroOuter != null) {
             heroOuter.animate().cancel();
@@ -1610,6 +1611,13 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     }
 
     private void load() {
+        // Build the Live TV guide quietly in the background so the Live tab opens at once
+        new Thread(() -> {
+            try {
+                Live.load();
+            } catch (Exception ignored) {
+            }
+        }).start();
         final int mine = ++loadToken;
         final int whichTab = tab;
         if (rows.isEmpty()) {

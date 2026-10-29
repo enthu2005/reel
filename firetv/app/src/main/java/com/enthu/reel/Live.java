@@ -112,7 +112,7 @@ final class Live {
     private static List<Channel> everything; // every channel built, hidden or not, in the usual order
     private static List<Channel> built;      // what the guide shows: unhidden, in your order, numbered
     private static long builtAt;
-    private static final java.util.Map<String, List<Prog>> EP_CACHE = new java.util.HashMap<>();
+    private static final java.util.Map<String, List<Prog>> EP_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
 
     static List<Channel> cached() {
         return built;
@@ -447,15 +447,26 @@ final class Live {
 
     /** A few shows, their episodes in order, mixed together so it feels like an evening of different shows. */
     private static void buildShows(Channel c, List<JSONObject> pool, Random rnd, int maxShows) {
+        // The shows' episode lists are fetched together, not one after the other
+        java.util.concurrent.ExecutorService ex = java.util.concurrent.Executors.newFixedThreadPool(6);
         List<List<Prog>> lists = new ArrayList<>();
-        for (int i = 0; i < pool.size() && lists.size() < maxShows; i++) {
-            JSONObject show = pool.get(i);
-            try {
-                List<Prog> eps = episodesOf(show.optString("ratingKey"), show.optString("title"), 120);
-                if (!eps.isEmpty()) lists.add(eps);
-            } catch (Exception ignored) {
-                // skip this show
+        try {
+            List<java.util.concurrent.Future<List<Prog>>> jobs = new ArrayList<>();
+            for (int i = 0; i < pool.size() && i < maxShows + 4; i++) {
+                final JSONObject show = pool.get(i);
+                jobs.add(ex.submit(() -> episodesOf(show.optString("ratingKey"), show.optString("title"), 120)));
             }
+            for (java.util.concurrent.Future<List<Prog>> f : jobs) {
+                if (lists.size() >= maxShows) break;
+                try {
+                    List<Prog> eps = f.get();
+                    if (!eps.isEmpty()) lists.add(eps);
+                } catch (Exception ignored) {
+                    // skip this show
+                }
+            }
+        } finally {
+            ex.shutdown();
         }
         mix(c, lists, rnd);
     }
