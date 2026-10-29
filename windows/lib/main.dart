@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show PlatformDispatcher;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
@@ -46,6 +47,16 @@ class _PageWatcher extends NavigatorObserver {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   Log.start();
+  // anything that goes wrong is written to the log (%LOCALAPPDATA%\\Reel\\reel.log) instead of vanishing
+  FlutterError.onError = (d) {
+    Log.w('FLUTTER ERROR ${d.exceptionAsString()}\n${d.stack}');
+    FlutterError.presentError(d);
+  };
+  PlatformDispatcher.instance.onError = (e, st) {
+    Log.w('UNCAUGHT $e\n$st');
+    Log.flush();
+    return true;
+  };
   // room for a whole library of posters, so scrolling back never shows blanks
   PaintingBinding.instance.imageCache.maximumSizeBytes = 160 << 20;
   PaintingBinding.instance.imageCache.maximumSize = 1200;

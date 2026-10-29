@@ -797,6 +797,7 @@ class _HomeScreenState extends State<HomeScreen> {
   static bool _elsewhereChecked = false;
   PlexItem? _elsewhere;
   String _elsewhereDevice = '';
+  bool _elsewhereShown = false;
 
   Future<void> _checkElsewhere(List<PlexItem> deck) async {
     if (_elsewhereChecked) return;
@@ -808,21 +809,24 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     final it = best;
     if (it == null) return;
-    final week = DateTime.now().millisecondsSinceEpoch ~/ 1000 - 7 * 86400;
-    if (it.lastViewedAt < week || it.lastViewedAt <= Prefs.lastPlayedAt + 90) return;
+    // only if it was played in the last 5 minutes, otherwise it is just noise
+    final recent = DateTime.now().millisecondsSinceEpoch ~/ 1000 - 5 * 60;
+    if (it.lastViewedAt < recent || it.lastViewedAt <= Prefs.lastPlayedAt + 90) return;
     if (Prefs.dismissedBanner == '${it.key}@${it.viewOffset}') return;
     final d = await Plex.lastDevice(it.key);
     if (d.$2 || !mounted) return; // that was this device
     setState(() {
       _elsewhere = it;
       _elsewhereDevice = d.$1;
+      _elsewhereShown = true;
     });
   }
 
   void _dismissElsewhere() {
     final it = _elsewhere;
     if (it != null) Prefs.dismissedBanner = '${it.key}@${it.viewOffset}';
-    setState(() => _elsewhere = null);
+    // fade it out and keep it mounted: pulling a button out from under a click is what we avoid
+    setState(() => _elsewhereShown = false);
   }
 
   Future<void> _resumeElsewhere() async {
@@ -836,7 +840,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _elsewhereBanner(double h) {
     final it = _elsewhere;
-    if (it == null) return const SizedBox.shrink();
+    if (it == null) {
+      return const Positioned(left: 0, top: 0, child: SizedBox.shrink());
+    }
     String t(int ms) {
       final s = ms ~/ 1000;
       final hh = s ~/ 3600;
@@ -853,7 +859,14 @@ class _HomeScreenState extends State<HomeScreen> {
       top: h * 0.115,
       left: 0,
       right: 0,
-      child: Center(
+      child: IgnorePointer(
+        ignoring: !_elsewhereShown,
+        child: ExcludeFocus(
+          excluding: !_elsewhereShown,
+          child: AnimatedOpacity(
+            opacity: _elsewhereShown ? 1 : 0,
+            duration: const Duration(milliseconds: 200),
+            child: Center(
         child: Container(
           padding: EdgeInsets.symmetric(horizontal: h * 0.024, vertical: h * 0.012),
           decoration: BoxDecoration(
@@ -878,6 +891,9 @@ class _HomeScreenState extends State<HomeScreen> {
             SizedBox(width: h * 0.01),
             PillButton('Not now', onPressed: _dismissElsewhere),
           ]),
+        ),
+            ),
+          ),
         ),
       ),
     );

@@ -1,7 +1,7 @@
 name: reel
 description: Reel for Windows - a Plex client with an Apple TV style look.
 publish_to: 'none'
-version: 1.0.11+12
+version: 1.0.12+13
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
