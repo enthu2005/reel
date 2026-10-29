@@ -534,6 +534,7 @@ public class PlayerActivity extends Activity {
     private long lastGood = 0;
     private int earlyEnds = 0;
     private int ioRetries = 0;
+    private androidx.media3.exoplayer.DefaultLoadControl loadCtl;
     private int bufferCapMb = 0;
     private String plan = "";
     private boolean tunnelOff = false;  // tunnelled playback was refused (or can't work with this sound)
@@ -1491,11 +1492,12 @@ public class PlayerActivity extends Activity {
         // Normally the player fills to 60 s, stops, and only starts again when it has dropped to 30 s (so the
         // buffer saws between 60 and 30). With the extra large buffer the data is already on the device, so keep
         // topping the memory buffer up all the time instead: it stays full.
-        pb.setLoadControl(new androidx.media3.exoplayer.DefaultLoadControl.Builder()
+        loadCtl = new androidx.media3.exoplayer.DefaultLoadControl.Builder()
                 .setBufferDurationsMs(keepFull ? 300_000 : 30_000, keepFull ? 300_000 : 60_000, 2_500, 5_000)
                 .setTargetBufferBytes((int) cap)
                 .setPrioritizeTimeOverSizeThresholds(false)
-                .build());
+                .build();
+        pb.setLoadControl(loadCtl);
         if (transcode) {
             // Plex reads its client profile from a header; send it on every request to the transcoder.
             java.util.Map<String, String> hdr = new java.util.HashMap<>();
@@ -1752,6 +1754,25 @@ public class PlayerActivity extends Activity {
         });
 
         player.addAnalyticsListener(new AnalyticsListener() {
+            @Override
+            public void onLoadStarted(EventTime t, androidx.media3.exoplayer.source.LoadEventInfo li,
+                                      androidx.media3.exoplayer.source.MediaLoadData md) {
+                if (md.dataType == C.DATA_TYPE_MEDIA) android.util.Log.d("ReelLoad", "start " + li.uri.getLastPathSegment());
+            }
+
+            @Override
+            public void onLoadCompleted(EventTime t, androidx.media3.exoplayer.source.LoadEventInfo li,
+                                        androidx.media3.exoplayer.source.MediaLoadData md) {
+                if (md.dataType == C.DATA_TYPE_MEDIA) android.util.Log.d("ReelLoad", "done " + li.uri.getLastPathSegment()
+                        + " " + (li.bytesLoaded >> 10) + " KB in " + li.loadDurationMs + " ms");
+            }
+
+            @Override
+            public void onLoadError(EventTime t, androidx.media3.exoplayer.source.LoadEventInfo li,
+                                    androidx.media3.exoplayer.source.MediaLoadData md, java.io.IOException e, boolean cancelled) {
+                android.util.Log.w("ReelLoad", "error " + li.uri.getLastPathSegment() + " " + e);
+            }
+
             @Override
             public void onAudioDecoderInitialized(EventTime eventTime, String decoderName,
                                                   long initializedTimestampMs,
@@ -3407,6 +3428,10 @@ public class PlayerActivity extends Activity {
             out.add(new String[]{"Player state", states[Math.max(0, Math.min(3, player.getPlaybackState() - 1))]
                     + (player.getPlayWhenReady() ? ", playing" : ", paused")
                     + "  speed " + player.getPlaybackParameters().speed + "×"});
+            if (loadCtl != null) {
+                out.add(new String[]{"Player memory", mb(loadCtl.getAllocator().getTotalBytesAllocated()) + " in use of "
+                        + bufferCapMb + " MB cap  (" + (player.isLoading() ? "loading from network/disk" : "not loading") + ")"});
+            }
         }
         return out;
     }

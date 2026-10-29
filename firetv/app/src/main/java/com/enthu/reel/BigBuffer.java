@@ -145,6 +145,7 @@ final class BigBuffer {
     private volatile double hlsAheadSec;
     private volatile long hlsBytes;
     private volatile int hlsSegments;
+    private boolean loggedPlaylist;
     private volatile long playerAheadMs; // what the player itself already holds ahead (it loads that part itself)
 
     void playerAhead(long ms) {
@@ -210,6 +211,7 @@ final class BigBuffer {
         stop = false;
         go = true; // the disk fill already waits for the memory to be full, so it needs no other wait
         hlsMode = true;
+        loggedPlaylist = false;
         servedFromDisk = 0;
         hlsAheadSec = 0;
         hlsBytes = 0;
@@ -257,6 +259,7 @@ final class BigBuffer {
         String variant = null;
         java.util.Map<String, Double> starts = new java.util.HashMap<>(); // segment address -> where it starts, seconds
         java.util.Set<String> done = new java.util.HashSet<>();
+        java.util.Map<String, Integer> failures = new java.util.HashMap<>();
         while (!stop) {
             try {
                 if (variant == null) {
@@ -289,6 +292,13 @@ final class BigBuffer {
                         durs.add(dur);
                     }
                 }
+                if (!loggedPlaylist) {
+                    loggedPlaylist = true;
+                    StringBuilder tags = new StringBuilder();
+                    for (String line : pl.split("\n")) if (line.startsWith("#EXT") && !line.startsWith("#EXTINF")) tags.append(line.trim()).append(" | ");
+                    android.util.Log.d("ReelBuf", "playlist: " + uris.size() + " pieces; tags: " + tags
+                            + " first: " + (uris.isEmpty() ? "-" : uris.get(0).replaceAll("X-Plex-Token=[^&]*", "T")));
+                }
                 double t = 0;
                 double endMax = 0;
                 double playhead = Math.max(0, posMs) / 1000.0;
@@ -312,6 +322,11 @@ final class BigBuffer {
                     for (int w = 0; w < 400 && playerLoading && !stop; w++) Thread.sleep(250);
                     if (stop) return;
                     if (!done.contains(u) && segStart < playhead + playerAheadMs / 1000.0) continue;
+                    if (!done.contains(u) && usedBytes() > HLS_STORE_BYTES) { // the store is full: wait for the playhead to free some
+                        status = "disk store full (" + (usedBytes() >> 20) + " MB)";
+                        Thread.sleep(2000);
+                        break;
+                    }
                     if (done.contains(u)) {
                         endMax = Math.max(endMax, segStart + durs.get(i));
                         hlsAheadSec = Math.max(Math.max(0, endMax - playhead), playerAheadMs / 1000.0);
@@ -319,8 +334,18 @@ final class BigBuffer {
                     }
                     long t0 = System.nanoTime();
                     final long[] got = {0};
-                    new CacheWriter(ds, new DataSpec.Builder().setUri(Uri.parse(u)).build(), null,
-                            (len, bytes, newBytes) -> got[0] += newBytes).cache();
+                    try {
+                        new CacheWriter(ds, new DataSpec.Builder().setUri(Uri.parse(u)).build(), null,
+                                (len, bytes, newBytes) -> got[0] += newBytes).cache();
+                    } catch (androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException e) {
+                        // 416: the piece is already stored in full (the player fetched it) and only its length wasn't known
+                        if (e.responseCode != 416) {
+                            if (failures.merge(u, 1, Integer::sum) < 3) throw e;
+                            // a piece that keeps failing is left to the player, so one bad piece can't stop the fill
+                        }
+                    } catch (java.io.IOException e) {
+                        if (failures.merge(u, 1, Integer::sum) < 3) throw e;
+                    }
                     done.add(u);
                     hlsSegments++;
                     hlsBytes += got[0];
@@ -355,7 +380,8 @@ final class BigBuffer {
         }
     }
 
-    private static final double HLS_AHEAD_SEC = 900; // fifteen minutes of the converted stream
+    private static final double HLS_AHEAD_SEC = 4 * 3600; // as far as the disk store allows (see HLS_STORE_BYTES)
+    private static final long HLS_STORE_BYTES = 2_700L * 1024 * 1024; // stop here so the store never has to throw away what is next
 
     /** Roughly how far past the playhead the background task has fetched. */
     long ahead() {
