@@ -95,8 +95,22 @@ public class LiveActivity extends ReelActivity {
         head.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = text("Live", H * 0.06f, Color.WHITE, true);
         head.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        TextView hint = text("Menu: edit channels   ", H * 0.022f, 0x80FFFFFF, false);
-        head.addView(hint);
+        final TextView edit = text("Edit channels", H * 0.026f, Color.WHITE, true);
+        edit.setPadding((int) (W * 0.014f), (int) (H * 0.012f), (int) (W * 0.014f), (int) (H * 0.012f));
+        edit.setBackground(UiUtil.rounded(UiUtil.FILL, H));
+        edit.setFocusable(true);
+        edit.setOnFocusChangeListener((v, has) -> {
+            edit.setBackground(UiUtil.rounded(has ? 0xFFE8833A : UiUtil.FILL, H));
+            edit.setTextColor(has ? Color.BLACK : Color.WHITE);
+            if (has) SoundFx.move();
+        });
+        edit.setOnClickListener(v -> {
+            SoundFx.click();
+            openEditor();
+        });
+        LinearLayout.LayoutParams el = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        el.rightMargin = (int) (W * 0.02f);
+        head.addView(edit, el);
         clock = text(fmt.format(new Date()), H * 0.034f, UiUtil.TEXT2, false);
         head.addView(clock);
         col.addView(head);
@@ -118,7 +132,7 @@ public class LiveActivity extends ReelActivity {
         det.addView(dSub);
         det.addView(dTime);
         LinearLayout.LayoutParams dl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (int) (H * 0.2f));
-        dl.rightMargin = (int) (H * 0.21f * 16f / 9f + W * 0.02f); // room for the little picture
+        dl.rightMargin = (int) (H * 0.2f * 16f / 9f + W * 0.02f); // room for the little picture
         col.addView(det, dl);
 
         rulerBox = new FrameLayout(this);
@@ -136,9 +150,9 @@ public class LiveActivity extends ReelActivity {
         root.addView(col);
         pipTex = new android.view.TextureView(this);
         pipTex.setAlpha(0f);
-        int pw = (int) (H * 0.21f * 16f / 9f);
-        FrameLayout.LayoutParams pl = new FrameLayout.LayoutParams(pw, (int) (H * 0.21f), Gravity.TOP | Gravity.END);
-        pl.topMargin = (int) (H * 0.127f);
+        int pw = (int) (H * 0.2f * 16f / 9f);
+        FrameLayout.LayoutParams pl = new FrameLayout.LayoutParams(pw, (int) (H * 0.2f), Gravity.TOP | Gravity.END);
+        pl.topMargin = (int) (H * 0.148f);
         pl.rightMargin = (int) (W * 0.045f);
         root.addView(pipTex, pl);
 
