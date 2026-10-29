@@ -470,14 +470,22 @@ public class LiveActivity extends ReelActivity {
             line.setClipChildren(false);
 
             LinearLayout name = new LinearLayout(this);
-            name.setOrientation(LinearLayout.VERTICAL);
+            name.setOrientation(LinearLayout.HORIZONTAL);
             name.setGravity(Gravity.CENTER_VERTICAL);
             name.setPadding((int) (W * 0.006f), 0, (int) (W * 0.01f), 0);
-            name.addView(text(String.valueOf(c.num), H * 0.032f, 0xFFE8833A, true));
-            TextView nm = text(c.name, H * 0.022f, Color.WHITE, false);
+            int logoSize = (int) (rowH * 0.72f);
+            View logo = ChannelLogo.tile(this, c.name, logoSize);
+            ((LinearLayout.LayoutParams) logo.getLayoutParams()).rightMargin = (int) (W * 0.008f);
+            name.addView(logo);
+            LinearLayout label = new LinearLayout(this);
+            label.setOrientation(LinearLayout.VERTICAL);
+            label.setGravity(Gravity.CENTER_VERTICAL);
+            label.addView(text(String.valueOf(c.num), H * 0.028f, 0xFFE8833A, true));
+            TextView nm = text(c.name, H * 0.02f, Color.WHITE, false);
             nm.setSingleLine();
             nm.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            name.addView(nm);
+            label.addView(nm);
+            name.addView(label, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
             line.addView(name, new LinearLayout.LayoutParams(nameW, rowH));
 
             FrameLayout area = new FrameLayout(this);

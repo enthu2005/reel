@@ -266,6 +266,9 @@ public class PlayerActivity extends Activity {
         int pad = (int) (H * 0.025f);
         b.setPadding(pad * 2, pad, pad * 2, pad);
         b.setBackground(UiUtil.rounded(0xE61C1C1E, H * 0.025f));
+        View logo = ChannelLogo.tile(this, ch.name, (int) (H * 0.1f));
+        ((LinearLayout.LayoutParams) logo.getLayoutParams()).rightMargin = pad;
+        b.addView(logo);
         TextView num = new TextView(this);
         num.setText(String.valueOf(ch.num));
         num.setTextColor(0xFFE8833A);
