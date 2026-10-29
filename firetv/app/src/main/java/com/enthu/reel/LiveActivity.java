@@ -152,7 +152,7 @@ public class LiveActivity extends ReelActivity {
         det.addView(dSub);
         det.addView(dTime);
         LinearLayout.LayoutParams dl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (int) (H * 0.23f));
-        dl.rightMargin = (int) (H * 0.245f * 16f / 9f + W * 0.02f); // room for the little picture
+        dl.rightMargin = (int) (H * 0.21f * 16f / 9f + W * 0.02f); // room for the little picture
         col.addView(det, dl);
 
         rulerBox = new FrameLayout(this);
@@ -170,9 +170,9 @@ public class LiveActivity extends ReelActivity {
         root.addView(col);
         pipTex = new android.view.TextureView(this);
         pipTex.setAlpha(0f);
-        int pw = (int) (H * 0.245f * 16f / 9f);
-        FrameLayout.LayoutParams pl = new FrameLayout.LayoutParams(pw, (int) (H * 0.245f), Gravity.TOP | Gravity.END);
-        pl.topMargin = (int) (H * 0.105f);
+        int pw = (int) (H * 0.21f * 16f / 9f);
+        FrameLayout.LayoutParams pl = new FrameLayout.LayoutParams(pw, (int) (H * 0.21f), Gravity.TOP | Gravity.END);
+        pl.topMargin = (int) (H * 0.14f);
         pl.rightMargin = (int) (W * 0.045f);
         root.addView(pipTex, pl);
         pipBoxW = pw;

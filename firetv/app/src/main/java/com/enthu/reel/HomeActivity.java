@@ -2067,11 +2067,22 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 } catch (Exception ignored) {
                 }
             }
+            // A row for the time of year (Halloween, Christmas ...), from collections, titles and genres
+            String[] now = seasonNow();
+            if (now != null) {
+                try {
+                    Row r = seasonalRow(now, sections, whichTab, rnd);
+                    if (r != null) out.add(0, r);
+                } catch (Exception ignored) {
+                }
+            }
             return out;
         }, new Plex.Callback<List<Row>>() {
             @Override
             public void ok(List<Row> all) {
                 if (mine != loadToken || isDestroyed() || all.isEmpty()) return;
+                final String[] seasonNow = seasonNow();
+                final String seasonTitle = seasonNow == null ? null : seasonNow[0];
                 // Drop a row when most of its titles are already on the screen in a row above it
                 Set<String> onScreen = new HashSet<>();
                 for (Row r : rows) {
@@ -2080,6 +2091,13 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 }
                 List<Row> extra = new ArrayList<>();
                 for (Row r : all) {
+                    if (r.title.equals(seasonTitle)) { // always shown, once
+                        boolean there = false;
+                        for (Row x : rows) if (x.title.equals(seasonTitle)) there = true;
+                        for (Row x : extra) if (x.title.equals(seasonTitle)) there = true;
+                        if (!there) extra.add(r);
+                        continue;
+                    }
                     int dup = 0;
                     for (Plex.Item it : r.items) if (onScreen.contains(it.key)) dup++;
                     if (dup * 2 > r.items.size()) continue;
@@ -2092,7 +2110,8 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 List<Row> top = new ArrayList<>();
                 List<Row> rest = new ArrayList<>();
                 for (Row r : extra) {
-                    if (r.title.startsWith("Because you watched")
+                    if (r.title.equals(seasonTitle)) top.add(0, r);
+                    else if (r.title.startsWith("Because you watched")
                             || r.title.startsWith("More with ") || r.title.startsWith("Directed by ")) top.add(r);
                     else rest.add(r);
                 }
@@ -2147,6 +2166,71 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
             public void fail(Exception e) {
             }
         });
+    }
+
+    /**
+     * What the date calls for: {row title, genre or "", keyword, keyword ...}, or null in an ordinary week.
+     * Halloween 1 Oct - 2 Nov, Christmas 20 Nov - 1 Jan, Valentine's 1 - 14 Feb.
+     */
+    private static String[] seasonNow() {
+        java.util.Calendar c = java.util.Calendar.getInstance();
+        int m = c.get(java.util.Calendar.MONTH) + 1;
+        int d = c.get(java.util.Calendar.DAY_OF_MONTH);
+        if (m == 10 || (m == 11 && d <= 2))
+            return new String[]{"Halloween Horror", "Horror", "halloween", "horror"};
+        if ((m == 11 && d >= 20) || m == 12 || (m == 1 && d == 1))
+            return new String[]{"Christmas", "", "christmas", "xmas"};
+        if (m == 2 && d <= 14)
+            return new String[]{"Valentine's Day", "Romance", "valentine", "romance"};
+        return null;
+    }
+
+    /** The season's row: matching collections, titles and the genre, across the libraries, unwatched first; null if under 4. */
+    private static Row seasonalRow(String[] season, List<Plex.Section> sections, int whichTab, java.util.Random rnd)
+            throws Exception {
+        java.util.LinkedHashMap<String, Plex.Item> found = new java.util.LinkedHashMap<>();
+        for (Plex.Section s : sections) {
+            boolean movie = whichTab == TAB_MOVIES || s.type.equals("movie");
+            boolean show = whichTab != TAB_MOVIES && s.type.equals("show");
+            if (!movie && !show) continue;
+            if (whichTab == TAB_SHOWS && !show) continue;
+            try {
+                for (String[] c : Plex.collections(s.key)) {
+                    String name = c[0].toLowerCase(java.util.Locale.ROOT);
+                    for (int k = 2; k < season.length; k++) {
+                        if (!name.contains(season[k])) continue;
+                        for (Plex.Item x : Plex.items(Plex.paged("/library/collections/" + c[1] + "/children", 60))) found.put(x.key, x);
+                        break;
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+            for (int k = 2; k < season.length; k++) {
+                try {
+                    for (Plex.Item x : Plex.items(Plex.paged("/library/sections/" + s.key + "/all?title="
+                            + java.net.URLEncoder.encode(season[k], "UTF-8"), 40))) found.put(x.key, x);
+                } catch (Exception ignored) {
+                }
+            }
+            if (!season[1].isEmpty()) {
+                try {
+                    for (String[] g : Plex.genres(s.key)) {
+                        if (!g[0].equalsIgnoreCase(season[1])) continue;
+                        for (Plex.Item x : Plex.items(Plex.paged(g[1] + (g[1].contains("?") ? "&" : "?") + "sort=random", 40))) found.put(x.key, x);
+                        break;
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        List<Plex.Item> all = new ArrayList<>(found.values());
+        java.util.Collections.shuffle(all, rnd);
+        List<Plex.Item> sorted = new ArrayList<>();
+        for (Plex.Item x : all) if (!x.isWatched()) sorted.add(x);
+        for (Plex.Item x : all) if (x.isWatched()) sorted.add(x);
+        if (sorted.size() < 4) return null;
+        if (sorted.size() > 40) sorted = new ArrayList<>(sorted.subList(0, 40));
+        return new Row(season[0], sorted, false);
     }
 
     /** The newest titles across all of these libraries together, newest first. */

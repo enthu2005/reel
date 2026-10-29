@@ -88,6 +88,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
     private LinearLayout.LayoutParams requestLp;
     private android.widget.ScrollView lowerScroll;
     private FrameLayout lowerClip;
+    private View lowerSpacer;
     private TextView shuffleBtn;
 
     @Override
@@ -401,6 +402,10 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         requestLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lowerBox.addView(requestBox, requestLp);
+        // Room under the last row, so any row can be scrolled up to the top of the window
+        lowerSpacer = new View(this);
+        lowerSpacer.setVisibility(View.GONE);
+        lowerBox.addView(lowerSpacer, new LinearLayout.LayoutParams(1, (int) (H * 0.4f)));
         FrameLayout.LayoutParams lowerLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP);
         // The rows start just below the screen; pressing Down slides the page up to them (see pageShift)
@@ -433,6 +438,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         root.getViewTreeObserver().addOnGlobalFocusChangeListener((oldF, newF) -> {
             if (newF == null || infoCol == null || lowerClip == null) return;
             boolean low = isInside(newF, lowerClip);
+            if (low) snapLowerRow(newF);
             if (!low && !isInside(newF, infoCol)) return;
             float to = low ? -H * 0.53f : 0f;
             if (infoCol.getTranslationY() == to) return;
@@ -440,6 +446,16 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             lowerClip.animate().translationY(to).alpha(low ? 1f : 0f).setDuration(Motion.MEDIUM_MS)
                     .setInterpolator(Motion.EASE).start();
         });
+    }
+
+    /** Brings the row that has focus to the top of the bottom window, so no half-cut row is left above it. */
+    private void snapLowerRow(View focused) {
+        final ViewGroup box = (ViewGroup) lowerScroll.getChildAt(0);
+        View row = focused;
+        while (row != null && row.getParent() != box) row = row.getParent() instanceof View ? (View) row.getParent() : null;
+        if (row == null) return;
+        final int to = row.getTop();
+        lowerScroll.post(() -> lowerScroll.smoothScrollTo(0, to));
     }
 
     private static boolean isInside(View v, View parent) {
@@ -1072,7 +1088,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
                 } catch (Exception ignored) {
                 }
             }
-            if (it0.type.equals("movie") || it0.type.equals("episode")) {
+            if (it0.type.equals("movie") || it0.type.equals("episode") || it0.type.equals("show")) {
                 try {
                     l.related.addAll(Plex.related(it0.key));
                 } catch (Exception ignored) {
@@ -1355,12 +1371,14 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             }
         } else {
             castBox.setVisibility(View.GONE);
-            if (!sameLibrary.isEmpty()) {
-                moreLabel.setText("More in this library");
-                String sigsameLibrary = item.key + ":" + sameLibrary.size();
+            // A show lists what is like it in your libraries, ahead of the titles you could request
+            final List<Plex.Item> libItems = item.type.equals("show") && !related.isEmpty() ? related : sameLibrary;
+            if (!libItems.isEmpty()) {
+                moreLabel.setText(libItems == related ? "Similar in your libraries" : "More in this library");
+                String sigsameLibrary = item.key + ":" + libItems.size() + (libItems == related ? "r" : "");
                 if (moreRow.getAdapter() == null || !sigsameLibrary.equals(moreRow.getTag()))
                 { moreRow.setTag(sigsameLibrary);
-                moreRow.setAdapter(new PosterAdapter(sameLibrary, (int) (H * 0.13f * 16f / 9f), (int) (H * 0.13f), true,
+                moreRow.setAdapter(new PosterAdapter(libItems, (int) (H * 0.13f * 16f / 9f), (int) (H * 0.13f), true,
                         new PosterAdapter.Listener() {
                             @Override public void onFocused(Plex.Item it) {}
                             @Override public void onClicked(Plex.Item it) {
@@ -1431,7 +1449,8 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             }
             int pad = lowerScroll.getPaddingTop() + lowerScroll.getPaddingBottom();
             int epGap = eps ? ((LinearLayout.LayoutParams) ep.getLayoutParams()).bottomMargin : 0;
-            int shown = pad + (eps ? ep.getHeight() + epGap : 0) + (cast ? castBox.getHeight() : 0)
+            // no bottom padding when more rows wait below: the next row's label must not peek in
+            int shown = (request && (eps || cast || more) ? lowerScroll.getPaddingTop() : pad) + (eps ? ep.getHeight() + epGap : 0) + (cast ? castBox.getHeight() : 0)
                     + (more ? moreBox.getHeight() + moreLp.topMargin : 0);
             int all = shown + (request ? requestBox.getHeight() + requestLp.topMargin : 0);
             // Episodes, Cast and Similar are what rests on screen; the request row waits below
@@ -1440,6 +1459,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             int room = (int) (H * 0.54f); // what shows once the page has slid up
             want = Math.max((int) (H * 0.2f), Math.min(want, room));
             if (want >= all) want = ViewGroup.LayoutParams.WRAP_CONTENT;
+            lowerSpacer.setVisibility(want == ViewGroup.LayoutParams.WRAP_CONTENT ? View.GONE : View.VISIBLE);
             ViewGroup.LayoutParams lp = lowerScroll.getLayoutParams();
             if (lp.height != want) {
                 lp.height = want;
