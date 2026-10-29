@@ -165,7 +165,7 @@ final class BigBuffer {
     }
 
     /** A data source for a converted stream: reads through the on-device store, sending Plex's request headers. */
-    static CacheDataSource.Factory factory(Context c, java.util.Map<String, String> headers) {
+    static CacheDataSource.Factory cacheFactory(Context c, java.util.Map<String, String> headers) {
         DataSource.Factory upstream = new DefaultDataSource.Factory(c,
                 new DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
                         .setConnectTimeoutMs(30000)
@@ -185,6 +185,28 @@ final class BigBuffer {
                     }
                 })
                 .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR);
+    }
+
+    /**
+     * The converted stream's pieces are made on the fly, so a piece that was only partly stored must never be finished
+     * from a second download (the two can differ, which breaks the video: the player threw IllegalArgumentException).
+     * If the store holds less of a piece than its full length, throw it away so it is fetched again in one go.
+     */
+    static void dropIfIncomplete(Cache cache, String key) {
+        try {
+            long len = androidx.media3.datasource.cache.ContentMetadata.getContentLength(cache.getContentMetadata(key));
+            if (len > 0 && cache.getCachedLength(key, 0, len) < len && !cache.getCachedSpans(key).isEmpty()) {
+                cache.removeResource(key);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** What the player reads a converted stream through: the store, but only ever whole pieces. */
+    static DataSource.Factory factory(Context c, java.util.Map<String, String> headers) {
+        final CacheDataSource.Factory f = cacheFactory(c, headers);
+        final Cache cache = cache(c);
+        return () -> new TsFix(f.createDataSource(), cache);
     }
 
     /** How many bytes the player has been given from the disk store (instead of the network) since this stream began. */
@@ -219,7 +241,7 @@ final class BigBuffer {
         fileLen = 0;
         fileDurMs = 0;
         aheadBytes = 0;
-        final CacheDataSource.Factory f = factory(c, headers);
+        final CacheDataSource.Factory f = cacheFactory(c, headers);
         thread = new Thread(() -> runHls(c, f, masterUrl, headers), "ReelBigBufferHls");
         thread.setDaemon(true);
         thread.start();
@@ -334,16 +356,16 @@ final class BigBuffer {
                     }
                     long t0 = System.nanoTime();
                     final long[] got = {0};
+                    dropIfIncomplete(cache(c), u);
                     try {
                         new CacheWriter(ds, new DataSpec.Builder().setUri(Uri.parse(u)).build(), null,
                                 (len, bytes, newBytes) -> got[0] += newBytes).cache();
                     } catch (androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException e) {
-                        // 416: the piece is already stored in full (the player fetched it) and only its length wasn't known
-                        if (e.responseCode != 416) {
-                            if (failures.merge(u, 1, Integer::sum) < 3) throw e;
-                            // a piece that keeps failing is left to the player, so one bad piece can't stop the fill
-                        }
+                        // whatever was stored of this piece is incomplete: throw it away, never keep half a piece
+                        try { cache(c).removeResource(u); } catch (Throwable ignored) { }
+                        if (e.responseCode != 416 && failures.merge(u, 1, Integer::sum) < 3) throw e;
                     } catch (java.io.IOException e) {
+                        try { cache(c).removeResource(u); } catch (Throwable ignored) { }
                         if (failures.merge(u, 1, Integer::sum) < 3) throw e;
                     }
                     done.add(u);

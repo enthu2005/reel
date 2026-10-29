@@ -434,7 +434,7 @@ public class LiveActivity extends ReelActivity {
         focusedStart = s.start;
         dChannel.setText("CH " + c.num + "  ·  " + c.name + (live ? "   ·   ON NOW" : ""));
         dTitle.setText(s.prog.title);
-        dSub.setText(s.prog.sub);
+        dSub.setText(s.prog.season > 0 ? s.prog.longCode() + "   ·   " + s.prog.sub.replaceFirst("^S\\d+ E\\d+\\s+", "") : s.prog.sub);
         long mins = s.prog.durMs / 60_000;
         String dur = mins >= 60 ? (mins / 60) + " h " + (mins % 60) + " min" : mins + " min";
         dTime.setText(fmt.format(new Date(s.start)) + " – " + fmt.format(new Date(s.end)) + "   ·   " + dur
@@ -488,7 +488,9 @@ public class LiveActivity extends ReelActivity {
                 int w = Math.max(1, (int) ((b - a) * ppm - gap * 2));
                 final TextView blk = new TextView(this);
                 blk.setTag(ci);
-                blk.setText(s.prog.title + (s.prog.sub.isEmpty() ? "" : "\n" + s.prog.sub));
+                // a short block keeps at least the season and episode, which is what tells episodes apart
+                String second = w < W * 0.1f && !s.prog.code().isEmpty() ? s.prog.code() : s.prog.sub;
+                blk.setText(s.prog.title + (second.isEmpty() ? "" : "\n" + second));
                 blk.setMaxLines(2);
                 blk.setEllipsize(android.text.TextUtils.TruncateAt.END);
                 blk.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.022f);

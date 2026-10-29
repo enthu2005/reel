@@ -276,7 +276,8 @@ public class PlayerActivity extends Activity {
         for (final Live.Channel c : all) {
             Live.Slot s = Live.nowOn(c);
             final TextView r = new TextView(this);
-            r.setText(c.num + "   " + c.name + (s != null ? "\n" + s.prog.title : ""));
+            r.setText(c.num + "   " + c.name + (s != null ? "\n" + s.prog.title
+                    + (s.prog.code().isEmpty() ? "" : "  ·  " + s.prog.code()) : ""));
             r.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.026f);
             r.setTypeface(UiUtil.font(UiUtil.MEDIUM));
             r.setTextColor(0xFFFFFFFF);
@@ -992,8 +993,11 @@ public class PlayerActivity extends Activity {
                 }
                 if (channelNum > 0) {
                     Live.Channel ch = Live.byNum(channelNum);
+                    String ep = "episode".equals(it.type) && it.parentIndex > 0 && it.index > 0
+                            ? "Season " + it.parentIndex + " · Episode " + it.index + "  ·  " + it.title : "";
                     subText.setText("CH " + channelNum + (ch != null ? "  ·  " + ch.name : "")
-                            + (subText.getVisibility() == View.VISIBLE ? "  ·  " + subText.getText() : ""));
+                            + (!ep.isEmpty() ? "  ·  " + ep
+                            : subText.getVisibility() == View.VISIBLE ? "  ·  " + subText.getText() : ""));
                     subText.setVisibility(View.VISIBLE);
                 }
                 if (it.logo != null) {
@@ -1101,6 +1105,11 @@ public class PlayerActivity extends Activity {
     }
 
     // --------------------------------------------------------- Playback
+
+    /** The converted stream through the Dolby Vision fix (see TsFix). */
+    private static androidx.media3.datasource.DataSource.Factory tsFixed(final androidx.media3.datasource.DataSource.Factory f) {
+        return () -> new TsFix(f.createDataSource(), null);
+    }
 
     private String lastHlsUrl; // the converted stream's address, for the buffer on disk
 
@@ -1511,11 +1520,11 @@ public class PlayerActivity extends Activity {
             // With the extra large buffer on, what the converted stream sends also goes through the on-device store
             androidx.media3.datasource.DataSource.Factory hlsSource = BigBuffer.enabled(this)
                     ? BigBuffer.factory(this, hdr)
-                    : new androidx.media3.datasource.DefaultDataSource.Factory(this,
+                    : tsFixed(new androidx.media3.datasource.DefaultDataSource.Factory(this,
                             new androidx.media3.datasource.DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
                                     .setConnectTimeoutMs(30000)
                                     .setReadTimeoutMs(60000)
-                                    .setDefaultRequestProperties(hdr));
+                                    .setDefaultRequestProperties(hdr)));
             pb.setMediaSourceFactory(new androidx.media3.exoplayer.source.DefaultMediaSourceFactory(hlsSource)
                     .setLoadErrorHandlingPolicy(
                             new androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(8)));
@@ -3584,18 +3593,6 @@ public class PlayerActivity extends Activity {
 
         if (bufferCapMb > 0) sb.append("Buffer cap ").append(bufferCapMb).append(" MB\n");
         sb.append("Mode      ").append(transcoding ? "Transcode (Plex converts)" : "Direct play").append('\n');
-        if (item != null && item.fileSize > 0) {
-            double gb = item.fileSize / 1073741824.0;
-            sb.append("File size ").append(gb >= 1 ? String.format(Locale.US, "%.2f GB", gb)
-                    : String.format(Locale.US, "%.0f MB", item.fileSize / 1048576.0));
-            if (item.duration > 0) {
-                // average data rate of the whole file
-                sb.append("  (avg ").append(String.format(Locale.US, "%.1f Mbit/s",
-                        item.fileSize * 8.0 / (item.duration / 1000.0) / 1_000_000.0)).append(')');
-            }
-            sb.append('\n');
-        }
-
         Format v = player.getVideoFormat();
         if (v != null) {
             sb.append("Video     ").append(v.sampleMimeType).append("  ").append(v.width).append('x')
@@ -3662,10 +3659,6 @@ public class PlayerActivity extends Activity {
             mbps = est / 1_000_000.0;
         }
         sb.append("Download     ").append(mbps > 0 ? String.format(Locale.US, "%.1f Mbit/s", mbps) : "measuring...").append('\n');
-        for (String[] r : nerdRows()) {
-            if (r[1].isEmpty()) sb.append('\n').append(r[0]).append('\n');
-            else sb.append(String.format(Locale.US, "%-18s", r[0])).append(r[1]).append('\n');
-        }
         try {
             Runtime rt = Runtime.getRuntime();
             long heapUsed = rt.totalMemory() - rt.freeMemory();
@@ -3678,33 +3671,6 @@ public class PlayerActivity extends Activity {
             sb.append("          device free ").append(mi.availMem >> 20).append(" of ").append(mi.totalMem >> 20)
                     .append(" MB\n");
         } catch (RuntimeException ignored) {
-        }
-
-        sb.append("\nSound output can take (from your TV/receiver):\n");
-        try {
-            AudioCapabilities caps = AudioCapabilities.getCapabilities(this);
-            sb.append("  Dolby Digital       ").append(yesNo(caps.supportsEncoding(C.ENCODING_AC3))).append('\n');
-            sb.append("  Dolby Digital Plus  ").append(yesNo(caps.supportsEncoding(C.ENCODING_E_AC3))).append('\n');
-            sb.append("  Atmos (DD+ JOC)     ").append(yesNo(caps.supportsEncoding(C.ENCODING_E_AC3_JOC))).append('\n');
-            sb.append("  Dolby TrueHD        ").append(yesNo(caps.supportsEncoding(C.ENCODING_DOLBY_TRUEHD))).append('\n');
-            sb.append("  DTS                 ").append(yesNo(caps.supportsEncoding(C.ENCODING_DTS))).append('\n');
-            sb.append("  DTS-HD              ").append(yesNo(caps.supportsEncoding(C.ENCODING_DTS_HD))).append('\n');
-            sb.append("\nHDMI outputs (what the TV or receiver offers):\n").append(IecDtsHdSink.hdmiInfo(this));
-            sb.append("  Max channels        ").append(caps.getMaxChannelCount()).append('\n');
-        } catch (RuntimeException e) {
-            sb.append("  (couldn't read)\n");
-        }
-
-        sb.append("\nAudio tracks in this file:\n");
-        List<Tracks.Group> groups = audioGroups();
-        if (groups.isEmpty()) sb.append("  (none reported)\n");
-        for (int i = 0; i < groups.size(); i++) {
-            Tracks.Group g = groups.get(i);
-            Format f = g.getTrackFormat(0);
-            sb.append("  ").append(g.isSelected() ? "> " : "  ").append(i + 1).append(". ")
-                    .append(f.sampleMimeType).append(' ').append(f.channelCount).append("ch ")
-                    .append(f.language == null ? "" : f.language)
-                    .append(g.isTrackSupported(0) ? "  ok" : "  NOT SUPPORTED").append('\n');
         }
         return sb.toString();
     }

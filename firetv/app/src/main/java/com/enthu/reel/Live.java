@@ -24,6 +24,18 @@ final class Live {
         String title;
         String sub = "";
         long durMs;
+        int season;  // episodes only
+        int episode;
+
+        /** "S2 E5", or "" for a film. */
+        String code() {
+            return season > 0 && episode > 0 ? "S" + season + " E" + episode : "";
+        }
+
+        /** "Season 2 · Episode 5", or "" for a film. */
+        String longCode() {
+            return season > 0 && episode > 0 ? "Season " + season + " · Episode " + episode : "";
+        }
     }
 
     static class Slot {
@@ -474,7 +486,9 @@ final class Live {
             Prog p = new Prog();
             p.key = e.key;
             p.title = showTitle;
-            p.sub = "S" + e.parentIndex + " · E" + e.index + "  " + e.title;
+            p.season = e.parentIndex;
+            p.episode = e.index;
+            p.sub = "S" + e.parentIndex + " E" + e.index + "  " + e.title;
             p.durMs = e.duration;
             eps.add(p);
             if (eps.size() >= cap) break;
