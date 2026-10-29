@@ -174,7 +174,6 @@ class _StatsScreenState extends State<StatsScreen> {
             _chip(h, 'All time', 0),
             if (s != null && !s.isEmpty && _year != 0)
               PillButton('Your $_year Wrapped',
-                  icon: Icons.auto_awesome_rounded,
                   primary: true,
                   onPressed: () => Navigator.of(context).push(MaterialPageRoute(
                       builder: (_) => WrappedScreen(stats: s)))),

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
@@ -57,6 +58,56 @@ class _LiveScreenState extends State<LiveScreen> {
 
   LiveChannel? _dCh;
   LiveSlot? _dSlot;
+
+  // Up / Down move to what is on air NOW in the next channel, not to whichever later programme happens to
+  // sit nearest: one focus node per channel's "on now" block, and the key is steered to it.
+  final Map<String, FocusNode> _slotNodes = {}; // by "row_start" of the programme
+  final Map<int, String> _nowId = {}; // row -> the programme on air now
+  final ScrollController _scroll = ScrollController();
+  int _focusRow = 0;
+  bool _inGrid = false;
+  double _rowH = 80;
+
+  FocusNode _slotNode(String id) => _slotNodes.putIfAbsent(id, () => FocusNode());
+
+  FocusNode? _nowNodeOf(int row) {
+    final id = _nowId[row];
+    return id == null ? null : _slotNodes[id];
+  }
+
+  void _focusNow(int row) {
+    _focusRow = row;
+    final n = _nowNodeOf(row);
+    if (n != null && n.context != null) {
+      n.requestFocus();
+      return;
+    }
+    // that row is not built yet: bring it into view, then focus it
+    if (_scroll.hasClients) {
+      final max = _scroll.position.maxScrollExtent;
+      _scroll.jumpTo((row * _rowH - _rowH * 3).clamp(0.0, max));
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _nowNodeOf(row)?.requestFocus();
+    });
+  }
+
+  KeyEventResult _guideKey(FocusNode node, KeyEvent e) {
+    if (e is KeyUpEvent || !_inGrid || _channels.isEmpty) {
+      return KeyEventResult.ignored;
+    }
+    final k = e.logicalKey;
+    if (k == LogicalKeyboardKey.arrowDown) {
+      if (_focusRow < _channels.length - 1) _focusNow(_focusRow + 1);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowUp) {
+      if (_focusRow == 0) return KeyEventResult.ignored; // on to the header buttons
+      _focusNow(_focusRow - 1);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
 
   // The little picture-in-picture: what is on the highlighted channel right now, muted, like Sky's mini TV
   Player? _pipPlayer;
@@ -159,6 +210,10 @@ class _LiveScreenState extends State<LiveScreen> {
 
   @override
   void dispose() {
+    for (final n in _slotNodes.values) {
+      n.dispose();
+    }
+    _scroll.dispose();
     _pipDelay?.cancel();
     _pipPlayer?.dispose();
     _tick?.cancel();
@@ -198,12 +253,16 @@ class _LiveScreenState extends State<LiveScreen> {
     final w = Reel.w(context);
     final nameW = w * 0.12;
     final rowH = h * 0.088;
+    _rowH = rowH;
     final gap = h * 0.004;
     final t0 = DateTime.fromMillisecondsSinceEpoch(_t0);
     final t1 = DateTime.fromMillisecondsSinceEpoch(_t0 + _windowMs);
     final nowMs = _now.millisecondsSinceEpoch;
     return Scaffold(
-      body: Padding(
+      body: Focus(
+        onKeyEvent: _guideKey,
+        skipTraversal: true,
+        child: Padding(
         padding: EdgeInsets.fromLTRB(w * 0.05, h * 0.07, w * 0.05, h * 0.03),
         child: LayoutBuilder(builder: (context, box) {
           final gridW = box.maxWidth - nameW;
@@ -213,7 +272,10 @@ class _LiveScreenState extends State<LiveScreen> {
               Expanded(
                   child: Text('Live',
                       style: reelText(h * 0.05, weight: FontWeight.w700))),
-              PillButton('Edit channels', icon: Icons.tune_rounded,
+              PillButton('Edit channels',
+                  onFocusChange: (f) {
+                    if (f) _inGrid = false;
+                  },
                   onPressed: () async {
                 _pipToken++;
                 _pipDelay?.cancel();
@@ -299,6 +361,7 @@ class _LiveScreenState extends State<LiveScreen> {
                       style: reelText(h * 0.032, color: Reel.text2))),
             Expanded(
               child: ListView.builder(
+                controller: _scroll,
                 clipBehavior: Clip.hardEdge,
                 itemCount: _channels.length,
                 itemExtent: rowH,
@@ -338,6 +401,8 @@ class _LiveScreenState extends State<LiveScreen> {
                                 : s.end.millisecondsSinceEpoch;
                             final live = s.start.millisecondsSinceEpoch <= nowMs &&
                                 nowMs < s.end.millisecondsSinceEpoch;
+                            final sid = '${ci}_${s.start.millisecondsSinceEpoch}';
+                            if (live) _nowId[ci] = sid;
                             final bw = ((b - a) * ppm - gap * 2).clamp(1.0, gridW);
                             return Positioned(
                               left: (a - _t0) * ppm + gap,
@@ -345,10 +410,14 @@ class _LiveScreenState extends State<LiveScreen> {
                               width: bw,
                               height: rowH - gap * 2,
                               child: Pressable(
+                                key: ValueKey(sid),
+                                focusNode: _slotNode(sid),
                                 autofocus: ci == 0 && live,
                                 scrollAlignment: 0.5,
                                 onFocusChange: (f) {
                                   if (f) {
+                                    _inGrid = true;
+                                    _focusRow = ci;
                                     setState(() {
                                       _dCh = ch;
                                       _dSlot = s;
@@ -395,6 +464,7 @@ class _LiveScreenState extends State<LiveScreen> {
             ),
           ]);
         }),
+        ),
       ),
     );
   }

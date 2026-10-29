@@ -42,9 +42,16 @@ class CustomChannel {
   final String refTitle; // for showing in the editor
   final String type; // genres: 'movie' or 'show'
   final List<String> genres;
+  final List<String> refs; // 'shows': the keys and titles of the shows mixed
+  final List<String> refTitles;
 
   CustomChannel(this.id, this.name, this.kind,
-      {this.ref = '', this.refTitle = '', this.type = 'movie', this.genres = const []});
+      {this.ref = '',
+      this.refTitle = '',
+      this.type = 'movie',
+      this.genres = const [],
+      this.refs = const [],
+      this.refTitles = const []});
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -54,6 +61,8 @@ class CustomChannel {
         'refTitle': refTitle,
         'type': type,
         'genres': genres,
+        'refs': refs,
+        'refTitles': refTitles,
       };
 
   static CustomChannel fromJson(Map m) => CustomChannel(
@@ -64,11 +73,14 @@ class CustomChannel {
         refTitle: '${m['refTitle'] ?? ''}',
         type: '${m['type'] ?? 'movie'}',
         genres: [for (final g in (m['genres'] as List? ?? const [])) '$g'],
+        refs: [for (final g in (m['refs'] as List? ?? const [])) '$g'],
+        refTitles: [for (final g in (m['refTitles'] as List? ?? const [])) '$g'],
       );
 
   String get describe => switch (kind) {
         'collection' => 'Collection: $refTitle',
         'show' => 'Show: $refTitle',
+        'shows' => 'Mix of shows: ${refTitles.join(', ')}',
         _ => '${type == 'movie' ? 'Movies' : 'TV'}: ${genres.join(', ')}',
       };
 }
@@ -228,6 +240,18 @@ class Live {
             await _fromCollection(c, cc.ref);
           case 'show':
             await _fromShow(c, cc.ref, cc.refTitle);
+          case 'shows':
+            await _buildShows(
+                c,
+                [
+                  for (var i = 0; i < cc.refs.length; i++)
+                    {
+                      'ratingKey': cc.refs[i],
+                      'title': i < cc.refTitles.length ? cc.refTitles[i] : ''
+                    }
+                ],
+                Random(_hash(cc.name)),
+                maxShows: 12);
           default:
             await _fromGenres(c, cc.genres.map((g) => g.toLowerCase()).toList(),
                 cc.type == 'movie', movies, shows);
@@ -332,9 +356,10 @@ class Live {
 
   /// A few shows, their episodes in order, mixed together so it feels like an evening of different shows.
   static Future<void> _buildShows(
-      LiveChannel c, List<Map<String, dynamic>> pool, Random rnd) async {
+      LiveChannel c, List<Map<String, dynamic>> pool, Random rnd,
+      {int maxShows = 8}) async {
     final lists = <List<LiveProg>>[];
-    for (var i = 0; i < pool.length && lists.length < 8; i++) {
+    for (var i = 0; i < pool.length && lists.length < maxShows; i++) {
       final show = pool[i];
       try {
         final eps =

@@ -36,6 +36,7 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
   List<_Source> _sources = [];
   bool _sourcesLoading = false;
   _Source? _chosen;
+  final List<_Source> _picked = []; // 'A mix of shows'
   final Set<String> _genres = {};
   String _type = 'movie';
   final _name = TextEditingController();
@@ -126,6 +127,7 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
     _query = '';
     _search.clear();
     _chosen = null;
+    _picked.clear();
     _genres.clear();
     _type = 'movie';
     _name.clear();
@@ -142,6 +144,11 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
       if (_genres.isEmpty) return;
       final g = _genres.toList();
       _name.text = '${g.take(2).join(' & ')} ${_type == 'movie' ? 'Movies' : 'TV'}';
+    } else if (_kind == 'shows') {
+      if (_picked.isEmpty) return;
+      _name.text = _picked.length == 1
+          ? '${_picked.first.title} 24/7'
+          : '${_picked.take(2).map((p) => p.title).join(' + ')}${_picked.length > 2 ? ' & more' : ''}';
     } else if (_chosen != null) {
       _name.text = _kind == 'show' ? '${_chosen!.title} 24/7' : _chosen!.title;
     } else {
@@ -157,6 +164,8 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
     Live.addCustom(CustomChannel(id, name, _kind,
         ref: _chosen?.key ?? '',
         refTitle: _chosen?.title ?? '',
+        refs: [for (final p in _picked) p.key],
+        refTitles: [for (final p in _picked) p.title],
         type: _type,
         genres: _genres.toList()));
     _changed = true;
@@ -176,24 +185,23 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
 
   // ------------------------------------------------------------ pieces
 
-  Widget _icon(double h, IconData icon, String tip, VoidCallback? onTap) {
+  /// A small button with a word on it (always readable, unlike a tiny icon).
+  Widget _btn(double h, String label, VoidCallback? onTap) {
     return Pressable(
       onPressed: onTap,
       scrollAlignment: 0.5,
-      builder: (c, f) => Tooltip(
-        message: tip,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
-          padding: EdgeInsets.all(h * 0.01),
-          decoration: BoxDecoration(
-              color: f ? Colors.white : const Color(0x26FFFFFF),
-              shape: BoxShape.circle),
-          child: Icon(icon,
-              size: h * 0.03,
-              color: onTap == null
-                  ? Reel.text3
-                  : (f ? Colors.black : Colors.white)),
-        ),
+      builder: (c, f) => AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        padding: EdgeInsets.symmetric(horizontal: h * 0.018, vertical: h * 0.008),
+        decoration: BoxDecoration(
+            color: f ? Colors.white : const Color(0x26FFFFFF),
+            borderRadius: BorderRadius.circular(h)),
+        child: Text(label,
+            style: reelText(h * 0.021,
+                weight: FontWeight.w600,
+                color: onTap == null
+                    ? Reel.text3
+                    : (f ? Colors.black : Colors.white))),
       ),
     );
   }
@@ -254,31 +262,26 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
                 style: reelText(h * 0.02, color: Reel.text2)),
           ]),
         ),
-        _icon(h, Icons.keyboard_arrow_up_rounded, 'Move up',
-            i == 0 ? null : () {
-              Live.moveChannel(c.id, -1);
-              _changed = true;
-              _refresh();
-            }),
+        _btn(h, 'Up', i == 0 ? null : () {
+          Live.moveChannel(c.id, -1);
+          _changed = true;
+          _refresh();
+        }),
         SizedBox(width: h * 0.01),
-        _icon(h, Icons.keyboard_arrow_down_rounded, 'Move down',
-            i == _channels.length - 1 ? null : () {
-              Live.moveChannel(c.id, 1);
-              _changed = true;
-              _refresh();
-            }),
+        _btn(h, 'Down', i == _channels.length - 1 ? null : () {
+          Live.moveChannel(c.id, 1);
+          _changed = true;
+          _refresh();
+        }),
         SizedBox(width: h * 0.01),
-        _icon(
-            h,
-            hidden ? Icons.visibility_off_rounded : Icons.visibility_rounded,
-            hidden ? 'Show in the guide' : 'Hide from the guide', () {
+        _btn(h, hidden ? 'Show' : 'Hide', () {
           Live.setHidden(c.id, !hidden);
           _changed = true;
           _refresh();
         }),
         SizedBox(width: h * 0.01),
         if (c.custom)
-          _icon(h, Icons.delete_outline_rounded, 'Delete this channel', () {
+          _btn(h, 'Delete', () {
             Live.removeCustom(c.id);
             _changed = true;
             Live.load().then((_) {
@@ -286,7 +289,7 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
             });
           })
         else
-          SizedBox(width: h * 0.05),
+          SizedBox(width: h * 0.075),
       ]),
     );
   }
@@ -297,7 +300,6 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
           style: reelText(h * 0.026, color: Reel.text2)),
       SizedBox(height: h * 0.02),
       PillButton('Add a channel',
-          icon: Icons.add_rounded,
           autofocus: true,
           onPressed: () => setState(() => _step = _Step.kind)),
       SizedBox(height: h * 0.02),
@@ -346,6 +348,7 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
           'collection',
           first: true),
       card('One show', 'Every episode of one show, in order, round and round. "Friends 24/7".', 'show'),
+      card('A mix of shows', 'Pick several TV shows; their episodes are mixed together, like an evening of different shows.', 'shows'),
       card('A mix of genres', 'Films or shows that match the genres you pick, shuffled.', 'genres'),
     ]);
   }
@@ -386,7 +389,7 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
         if (q.isEmpty || s.title.toLowerCase().contains(q)) s
     ].take(60).toList();
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(_kind == 'collection' ? 'Choose a collection' : 'Choose a show',
+      Text(_kind == 'collection' ? 'Choose a collection' : (_kind == 'shows' ? 'Choose the shows to mix' : 'Choose a show'),
           style: reelText(h * 0.03, weight: FontWeight.w600)),
       SizedBox(height: h * 0.015),
       SizedBox(
@@ -427,6 +430,13 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
                       Pressable(
                         scrollAlignment: 0.5,
                         onPressed: () {
+                          if (_kind == 'shows') {
+                            setState(() {
+                              final i = _picked.indexWhere((p) => p.key == s.key);
+                              i >= 0 ? _picked.removeAt(i) : _picked.add(s);
+                            });
+                            return;
+                          }
                           _chosen = s;
                           _toName();
                         },
@@ -447,6 +457,14 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
                                     style: reelText(h * 0.026,
                                         weight: FontWeight.w600,
                                         color: f ? Colors.black : Colors.white))),
+                            if (_kind == 'shows' && _picked.any((p) => p.key == s.key))
+                              Padding(
+                                padding: EdgeInsets.only(right: h * 0.015),
+                                child: Text('Added',
+                                    style: reelText(h * 0.021,
+                                        weight: FontWeight.w700,
+                                        color: f ? Colors.black : Reel.accent)),
+                              ),
                             Text(s.note,
                                 style: reelText(h * 0.021,
                                     color: f
@@ -457,6 +475,13 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
                       ),
                   ]),
       ),
+      if (_kind == 'shows') ...[
+        SizedBox(height: h * 0.012),
+        PillButton(
+            _picked.isEmpty ? 'Pick at least one show' : 'Next (${_picked.length} chosen)',
+            primary: true,
+            onPressed: _toName),
+      ],
     ]);
   }
 
