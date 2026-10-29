@@ -173,7 +173,31 @@ final class BigBuffer {
         return new CacheDataSource.Factory()
                 .setCache(cache(c))
                 .setUpstreamDataSourceFactory(upstream)
+                .setEventListener(new CacheDataSource.EventListener() {
+                    @Override
+                    public void onCachedBytesRead(long cacheSizeBytes, long cachedBytesRead) {
+                        servedFromDisk += cachedBytesRead; // the player got this from the disk store, not the network
+                    }
+
+                    @Override
+                    public void onCacheIgnored(int reason) {
+                    }
+                })
                 .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR);
+    }
+
+    /** How many bytes the player has been given from the disk store (instead of the network) since this stream began. */
+    static volatile long servedFromDisk;
+
+    private volatile boolean playerLoading = true;
+
+    /** True while the player is still pulling data from the network into memory. The disk fill waits for it. */
+    void playerLoading(boolean loading) {
+        playerLoading = loading;
+    }
+
+    boolean playerLoadingNow() {
+        return playerLoading;
     }
 
     /**
@@ -184,8 +208,9 @@ final class BigBuffer {
     void startHls(final Context c, final String masterUrl, final java.util.Map<String, String> headers) {
         stop();
         stop = false;
-        go = false;
+        go = true; // the disk fill already waits for the memory to be full, so it needs no other wait
         hlsMode = true;
+        servedFromDisk = 0;
         hlsAheadSec = 0;
         hlsBytes = 0;
         hlsSegments = 0;
@@ -281,7 +306,12 @@ final class BigBuffer {
                         continue;
                     }
                     if (segStart > playhead + HLS_AHEAD_SEC) break;
-                    if (!done.contains(u) && segStart < playhead + playerAheadMs / 1000.0) continue; // the player is loading this one
+                    if (!done.contains(u) && segStart < playhead + playerAheadMs / 1000.0) continue; // already in memory
+                    // Memory first: while the player is still filling its memory from the network, the disk fill waits.
+                    // Only when memory is full does the rest go to the disk, and the player later reads it from there.
+                    for (int w = 0; w < 400 && playerLoading && !stop; w++) Thread.sleep(250);
+                    if (stop) return;
+                    if (!done.contains(u) && segStart < playhead + playerAheadMs / 1000.0) continue;
                     if (done.contains(u)) {
                         endMax = Math.max(endMax, segStart + durs.get(i));
                         hlsAheadSec = Math.max(Math.max(0, endMax - playhead), playerAheadMs / 1000.0);

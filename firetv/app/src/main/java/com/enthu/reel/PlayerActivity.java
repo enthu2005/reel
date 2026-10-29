@@ -1950,7 +1950,8 @@ public class PlayerActivity extends Activity {
             if (bigBuffer == null || player == null) return;
             bigBuffer.position(bigBuffer.isHls() ? player.getCurrentPosition() : currentMs());
             bigBuffer.playerAhead(player.getTotalBufferedDuration());
-            handler.postDelayed(this, 1500);
+            bigBuffer.playerLoading(player.isLoading());
+            handler.postDelayed(this, 500);
         }
     };
 
@@ -3389,6 +3390,9 @@ public class PlayerActivity extends Activity {
                 out.add(new String[]{"Disk filler", bigBuffer.status() + "  (converted stream: "
                         + bigBuffer.hlsSegmentsStored() + " pieces, " + mb(bigBuffer.hlsStoredBytes()) + " fetched so far, "
                         + bigBuffer.aheadSeconds() + " s ahead of the playhead)"});
+                out.add(new String[]{"Read from disk", mb(BigBuffer.servedFromDisk) + " given to the player from the disk store"
+                        + (bigBuffer.playerLoadingNow() ? "  (memory still filling from the network)"
+                        : "  (memory full: the disk is filling)")});
             } else {
                 out.add(new String[]{"Disk filler", bigBuffer.status() + "  (" + mb(bigBuffer.ahead()) + " fetched ahead of "
                         + mb(bigBuffer.fileLength()) + ")"});
