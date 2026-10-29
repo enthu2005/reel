@@ -142,6 +142,28 @@ public class BrowseActivity extends ReelActivity implements PosterAdapter.Listen
                 load();
             });
             head.addView(sortBtn);
+
+            // Narrow the library by picture or sound format
+            formatBtn = new TextView(this);
+            formatBtn.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.028f);
+            formatBtn.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+            formatBtn.setPadding((int) (W * 0.018f), (int) (H * 0.012f), (int) (W * 0.018f), (int) (H * 0.012f));
+            formatBtn.setFocusable(true);
+            formatBtn.setClickable(true);
+            styleFormat(false);
+            formatBtn.setOnFocusChangeListener((v, f) -> {
+                styleFormat(f);
+                if (f) SoundFx.move();
+            });
+            formatBtn.setOnClickListener(v -> {
+                SoundFx.click();
+                format = (format + 1) % formats().length;
+                load();
+            });
+            LinearLayout.LayoutParams flp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            flp.leftMargin = (int) (W * 0.012f);
+            head.addView(formatBtn, flp);
         }
         col.addView(head);
 
@@ -225,6 +247,36 @@ public class BrowseActivity extends ReelActivity implements PosterAdapter.Listen
         PlayerActivity.startQueue(this, queue, 0);
     }
 
+    private TextView formatBtn;
+    private int format = 0;
+    private static final java.util.concurrent.ConcurrentHashMap<String, Boolean> DOVI_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Movie libraries can be narrowed by sound too (the listing carries each file's audio format); shows only by picture. */
+    private String[] formats() {
+        return type.equals("movie")
+                ? new String[]{"Any", "4K", "HDR", "Dolby Vision", "DTS", "Dolby Digital+", "TrueHD"}
+                : new String[]{"Any", "4K", "HDR", "Dolby Vision"};
+    }
+
+    private void styleFormat(boolean focused) {
+        String[] f = formats();
+        formatBtn.setText("Format: " + f[Math.min(format, f.length - 1)]);
+        formatBtn.setBackground(UiUtil.rounded(focused ? 0xFFFFFFFF : (format > 0 ? 0x55E8833A : 0x33FFFFFF), H * 0.04f));
+        formatBtn.setTextColor(focused ? 0xFF000000 : Color.WHITE);
+    }
+
+    /** True if the file's first audio track is in the format the filter asks for (from the listing's own Media info). */
+    private static boolean audioMatches(Plex.Item it, String want) {
+        if (it.media == null) return false;
+        String codec = it.media.optString("audioCodec", "").toLowerCase(java.util.Locale.ROOT);
+        switch (want) {
+            case "DTS": return codec.equals("dca") || codec.startsWith("dts");
+            case "Dolby Digital+": return codec.equals("eac3");
+            case "TrueHD": return codec.equals("truehd");
+            default: return true;
+        }
+    }
+
     private void styleSort(boolean focused) {
         sortBtn.setText("Sort: " + SORTS[sort][0]);
         sortBtn.setBackground(UiUtil.rounded(focused ? 0xFFFFFFFF : 0x33FFFFFF, H * 0.04f));
@@ -236,11 +288,44 @@ public class BrowseActivity extends ReelActivity implements PosterAdapter.Listen
         message.setText("Loading…");
         message.setVisibility(View.VISIBLE);
         if (sortBtn != null) styleSort(sortBtn.hasFocus());
+        if (formatBtn != null) styleFormat(formatBtn.hasFocus());
+        final String[] fmts = formats();
+        final String wantFormat = formatBtn == null ? "Any" : fmts[Math.min(format, fmts.length - 1)];
+        String extra = wantFormat.equals("4K") ? "&resolution=4k"
+                : wantFormat.equals("HDR") || wantFormat.equals("Dolby Vision") ? "&hdr=1" : "";
         final String url = path != null ? Plex.paged(path, 3000) : section != null
-                ? Plex.paged("/library/sections/" + section + "/all?sort=" + SORTS[sort][1], 5000)
+                ? Plex.paged("/library/sections/" + section + "/all?sort=" + SORTS[sort][1] + extra, 5000)
                 : Plex.paged("/library/metadata/" + parent + "/children", 5000);
         final String[] multi = getIntent().getStringArrayExtra("paths");
-        java.util.concurrent.Callable<List<Plex.Item>> job = () -> Plex.items(url);
+        java.util.concurrent.Callable<List<Plex.Item>> job = () -> {
+            List<Plex.Item> list = Plex.items(url);
+            if (section == null || path != null) return list;
+            if (wantFormat.equals("DTS") || wantFormat.equals("Dolby Digital+") || wantFormat.equals("TrueHD")) {
+                list.removeIf(it -> !audioMatches(it, wantFormat));
+            } else if (wantFormat.equals("Dolby Vision")) {
+                // The listing doesn't say which files are Dolby Vision: look at each HDR file's details, a few at a time
+                java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(8);
+                List<java.util.concurrent.Future<Boolean>> checks = new ArrayList<>();
+                for (final Plex.Item it : list) {
+                    checks.add(pool.submit(() -> {
+                        Boolean known = DOVI_CACHE.get(it.key);
+                        if (known != null) return known;
+                        boolean dv = false;
+                        try {
+                            for (Plex.Stream s : Plex.metadata(it.key).streamsOf(1)) if (s.dovi) dv = true;
+                            DOVI_CACHE.put(it.key, dv);
+                        } catch (Exception ignored) {
+                        }
+                        return dv;
+                    }));
+                }
+                List<Plex.Item> keep = new ArrayList<>();
+                for (int i = 0; i < list.size(); i++) if (checks.get(i).get()) keep.add(list.get(i));
+                pool.shutdown();
+                list = keep;
+            }
+            return list;
+        };
         if (multi != null) {
             // One genre across several libraries: merge them, A to Z
             job = () -> {
