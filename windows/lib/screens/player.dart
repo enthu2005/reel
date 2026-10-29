@@ -315,6 +315,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (mounted) setState(() => _status = 'Nothing to play');
       return;
     }
+<<<<<<< HEAD
+    // Open straight at the start position (a channel joins part-way through): seeking after the file is
+    // open could stall on "buffering" for a big file from a slow server. The server-converted sound stream
+    // has no usable start option, so that one still seeks afterwards.
+    final openAt = !_stereo && widget.startMs > 0
+        ? Duration(milliseconds: widget.startMs)
+        : null;
+    await _openWhenVideoReady(url, start: openAt);
+    if (!mounted) return;
+    if (widget.startMs > 0 && openAt == null) {
+      // Seek once the file is open and its length is known.
+      _player.stream.duration.firstWhere((d) => d > Duration.zero).then((_) {
+        if (mounted) _player.seek(Duration(milliseconds: widget.startMs));
+      });
+    }
+=======
     // Starting at the right place (resume, or part-way into a Live programme) is part of opening the file,
     // so nothing is fetched from the beginning first.
     await _openWhenVideoReady(url,
@@ -323,6 +339,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             : null);
     if (!mounted) return;
     if (widget.channel > 0) _watchChannelStart();
+>>>>>>> a4f9497dd5b9e45b91b565f1c56f32fb792ce36d
 
     if (_item != null && widget.channel == 0) {
       _report =
@@ -331,6 +348,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _showOsd();
   }
 
+<<<<<<< HEAD
+=======
   /// A channel that is still stuck buffering at the start after a while is tuned again.
   void _watchChannelStart() {
     Future.delayed(const Duration(seconds: 25), () {
@@ -345,6 +364,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     });
   }
 
+>>>>>>> a4f9497dd5b9e45b91b565f1c56f32fb792ce36d
   Future<void> _openWhenVideoReady(String url, {Duration? start}) async {
     await _player.open(Media(url, start: start), play: false);
     if (!mounted) return;
