@@ -52,14 +52,34 @@ public class LiveActivity extends ReelActivity {
         @Override
         public void run() {
             clock.setText(fmt.format(new Date()));
-            if (!channels.isEmpty() && windowStart() != t0) render(focusedRow());
-            handler.postDelayed(this, 20_000);
+            if (!channels.isEmpty() && rolledOver()) {
+                keepStart = focusedStart;
+                int fr = focusedRow();
+                Live.Slot cur = fr < channels.size() && fr < shownNow.length ? Live.nowOn(channels.get(fr)) : null;
+                if (cur != null && cur.start != shownNow[fr]) pipChannel = 0; // its programme changed: the little picture follows
+                render(focusedRow());
+            }
+            handler.postDelayed(this, 5_000);
         }
     };
 
+    /** The guide starts at this very minute: what has already been on is not shown, the current programme sits at the left. */
     private static long windowStart() {
-        long n = System.currentTimeMillis();
-        return n - Math.floorMod(n, HALF_H);
+        return System.currentTimeMillis();
+    }
+
+    private long[] shownNow = new long[0]; // for each channel, when the programme drawn as "on now" began
+    private long focusedStart;            // the programme the highlight is on
+    private long keepStart;               // refocus this one after a redraw, if it is still there
+
+    /** True once some channel has moved on to its next programme since the guide was drawn. */
+    private boolean rolledOver() {
+        if (shownNow.length != channels.size()) return true;
+        for (int i = 0; i < shownNow.length; i++) {
+            Live.Slot s = Live.nowOn(channels.get(i));
+            if (s != null && s.start != shownNow[i]) return true;
+        }
+        return false;
     }
 
     private TextView text(String s, float size, int color, boolean bold) {
@@ -411,6 +431,7 @@ public class LiveActivity extends ReelActivity {
         pipTo(c);
         long now = System.currentTimeMillis();
         boolean live = s.start <= now && now < s.end;
+        focusedStart = s.start;
         dChannel.setText("CH " + c.num + "  ·  " + c.name + (live ? "   ·   ON NOW" : ""));
         dTitle.setText(s.prog.title);
         dSub.setText(s.prog.sub);
@@ -427,7 +448,7 @@ public class LiveActivity extends ReelActivity {
         long now = System.currentTimeMillis();
 
         rulerBox.removeAllViews();
-        for (long t = t0; t < t1; t += HALF_H) {
+        for (long t = t0 - Math.floorMod(t0, HALF_H) + HALF_H; t < t1; t += HALF_H) {
             TextView r = text(fmt.format(new Date(t)), H * 0.022f, UiUtil.TEXT2, false);
             FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER_VERTICAL);
@@ -437,10 +458,13 @@ public class LiveActivity extends ReelActivity {
 
         rows.removeAllViews();
         nowBlocks = new View[channels.size()];
+        shownNow = new long[channels.size()];
         View toFocus = null;
         float gap = H * 0.004f;
         for (int ci = 0; ci < channels.size(); ci++) {
             final Live.Channel c = channels.get(ci);
+            Live.Slot onNow = Live.nowOn(c);
+            shownNow[ci] = onNow == null ? 0 : onNow.start;
             LinearLayout line = new LinearLayout(this);
             line.setOrientation(LinearLayout.HORIZONTAL);
             line.setClipChildren(false);
@@ -490,19 +514,15 @@ public class LiveActivity extends ReelActivity {
                 lp.topMargin = (int) gap;
                 area.addView(blk, lp);
                 if (live) nowBlocks[ci] = blk;
+                if (ci == focusRow && keepStart > 0 && s.start == keepStart && s.end > now) toFocus = blk;
                 if (ci == focusRow && toFocus == null && s.start <= now && now < s.end) toFocus = blk;
             }
             line.addView(area, new LinearLayout.LayoutParams(gridW, rowH));
             rows.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowH));
         }
 
-        // A thin orange line marks "now"
-        View nowLine = new View(this);
-        nowLine.setBackgroundColor(0xFFE8833A);
-        FrameLayout.LayoutParams nl = new FrameLayout.LayoutParams(Math.max(2, (int) (H * 0.003f)), (int) (H * 0.045f));
-        nl.leftMargin = nameW + (int) ((now - t0) * ppm);
-        rulerBox.addView(nowLine, nl);
 
+        keepStart = 0;
         if (toFocus != null) toFocus.requestFocus();
     }
 }
