@@ -398,8 +398,7 @@ class PosterCard extends StatelessWidget {
     if (item.type == 'genre') return '';
     if (item.isSeerr) {
       if (item.year > 0) parts.add('${item.year}');
-      if (item.note != null) parts.add(item.note!);
-      return parts.join(' · ');
+      return parts.join(' · '); // the request status is the badge in the corner
     }
     if (item.type == 'episode') {
       parts.add(
@@ -416,8 +415,30 @@ class PosterCard extends StatelessWidget {
     return parts.join(' · ');
   }
 
+  static Color _statusColor(String status) {
+    if (status.startsWith('Available')) return const Color(0xFF30D158);
+    if (status.startsWith('Partly')) return const Color(0xFFFF9F0A);
+    if (status.startsWith('Declined')) return const Color(0xFFFF453A);
+    if (status.startsWith('Downloading')) return const Color(0xFFBF5AF2);
+    return const Color(0xFF0A84FF); // Requested, Waiting for approval
+  }
+
   /// A white tick on what you've finished, or a NEW pill on what arrived this week.
+  /// Seerr titles show their request status (Available, Requested, ...) as a coloured badge instead.
   Widget _mark(double h) {
+    if (item.isSeerr) {
+      final note = item.note;
+      if (note == null || note.isEmpty) return const SizedBox.shrink();
+      return Container(
+        padding: EdgeInsets.symmetric(horizontal: h * 0.011, vertical: h * 0.004),
+        decoration: BoxDecoration(
+            color: _statusColor(note), borderRadius: BorderRadius.circular(h * 0.012)),
+        child: Text(note,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: reelText(h * 0.015, weight: FontWeight.w700, color: Colors.white)),
+      );
+    }
     if (item.isWatched) {
       final d = h * 0.03;
       return Container(
@@ -555,7 +576,7 @@ class PosterCard extends StatelessWidget {
                                       ),
                                     ),
                                   ),
-                                if (!item.isSeerr && item.type != 'genre')
+                                if (item.type != 'genre')
                                   Positioned(
                                     top: cardHeight * 0.07,
                                     right: width * 0.05,
