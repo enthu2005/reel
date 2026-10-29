@@ -3235,6 +3235,10 @@ public class PlayerActivity extends Activity {
                     + (v.frameRate > 0 ? "  " + Math.round(v.frameRate * 1000) / 1000f + " fps" : "") + "  " + range);
         }
         add.accept("Video decoder", videoDecoder);
+        if (v != null) {
+            Object[] pic = pictureStatus(v);
+            add.accept("Picture", ((Boolean) pic[0] ? "✓ " : "✗ ") + pic[1]);
+        }
         Format a = player.getAudioFormat();
         if (a != null) {
             add.accept("Audio", String.valueOf(a.sampleMimeType).replace("audio/", "") + "  " + a.channelCount + " ch  "
@@ -3411,6 +3415,46 @@ public class PlayerActivity extends Activity {
         }
     }
 
+    /**
+     * What picture is really being played, judged from the stream the player decodes (not just what the TV
+     * could do): {ok, text}. The file's Dolby Vision layer only counts when the decoder is running it as Dolby Vision.
+     */
+    private Object[] pictureStatus(Format v) {
+        boolean srcDv = false;
+        int dvProfile = 0;
+        boolean srcPq = false;
+        boolean srcHlg = false;
+        if (item != null) {
+            for (Plex.Stream s : item.streamsOf(1)) {
+                if (s.dovi) {
+                    srcDv = true;
+                    dvProfile = s.doviProfile;
+                }
+                if (s.colorTrc.equals("smpte2084")) srcPq = true;
+                if (s.colorTrc.equals("arib-std-b67")) srcHlg = true;
+            }
+        }
+        String mime = v.sampleMimeType == null ? "" : v.sampleMimeType;
+        int trc = v.colorInfo == null ? C.COLOR_TRANSFER_SDR : v.colorInfo.colorTransfer;
+        boolean outDv = mime.contains("dolby-vision");
+        boolean outPq = trc == C.COLOR_TRANSFER_ST2084;
+        boolean outHlg = trc == C.COLOR_TRANSFER_HLG;
+        boolean dvTv = displaySupportsDolbyVision(this);
+        boolean hdrTv = tvHdr10(this);
+        String how = transcoding ? " (via the Plex converter)" : "";
+        if (outDv) {
+            return new Object[]{dvTv, dvTv ? "Playing in Dolby Vision" + (dvProfile > 0 ? " (profile " + dvProfile + ")" : "") + how
+                    : "Dolby Vision stream, but this TV can't show it" + how};
+        }
+        if (outPq) {
+            String t = srcDv ? "Playing as HDR10 (the Dolby Vision layer is not in use)" : "Playing in HDR10";
+            return new Object[]{hdrTv, hdrTv ? t + how : "HDR10 stream, but this TV can't show it" + how};
+        }
+        if (outHlg) return new Object[]{hdrTv, hdrTv ? "Playing in HLG HDR" + how : "HLG stream, but this TV can't show it" + how};
+        if (srcDv || srcPq || srcHlg) return new Object[]{false, "Playing in SDR: the file's HDR is not being used" + how};
+        return new Object[]{true, "Playing in SDR (the file is not HDR)"};
+    }
+
     private static String tick(boolean ok, String text) {
         return (ok ? "✓ " : "✗ ") + text + '\n';
     }
@@ -3428,12 +3472,8 @@ public class PlayerActivity extends Activity {
             String dec = videoDecoder == null ? "" : videoDecoder.toLowerCase(Locale.ROOT);
             boolean software = dec.startsWith("c2.android.") || dec.startsWith("omx.google.") || dec.contains(".sw.");
             sb.append(tick(!software, codec + (software ? " software decode" : " hardware decode")));
-            boolean dv = false;
-            if (item != null) for (Plex.Stream s : item.streamsOf(1)) if (s.dovi) dv = true;
-            boolean pq = v.colorInfo != null && v.colorInfo.colorTransfer == C.COLOR_TRANSFER_ST2084;
-            if (dv) sb.append(tick(displaySupportsDolbyVision(this), displaySupportsDolbyVision(this)
-                    ? "Dolby Vision supported" : "Dolby Vision (this TV can't show it)"));
-            else if (pq) sb.append(tick(tvHdr10(this), tvHdr10(this) ? "HDR10 supported" : "HDR10 (this TV can't show it)"));
+            Object[] pic = pictureStatus(v);
+            sb.append(tick((Boolean) pic[0], (String) pic[1]));
         }
         Format a = player.getAudioFormat();
         if (a != null && a.sampleMimeType != null) {
