@@ -13,6 +13,7 @@ import 'screens/login.dart';
 import 'screens/profiles.dart';
 import 'warmup.dart';
 import 'ui/preview.dart';
+import 'ui/seasonal.dart';
 import 'ui/theme.dart';
 import 'ui/widgets.dart';
 
@@ -157,6 +158,8 @@ class ReelApp extends StatelessWidget {
         data: MediaQuery.of(c).copyWith(textScaler: TextScaler.noScaling),
         child: Stack(fit: StackFit.expand, children: [
           child!,
+          // Christmas / Halloween (Settings -> Theme); quiet while a film plays
+          Positioned.fill(child: SeasonalOverlay(paused: watching)),
           // Back, for the mouse. Esc does the same thing from the keyboard.
           // No tooltip here: this sits above the pages, where there is nowhere to hang one.
           Positioned(

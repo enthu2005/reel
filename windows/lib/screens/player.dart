@@ -812,8 +812,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           horizontal: h * 0.02, vertical: h * 0.01),
                       decoration: BoxDecoration(
                         color: f
-                            ? const Color(0xFFE8833A)
-                            : (cur ? const Color(0x33E8833A) : null),
+                            ? Reel.accent
+                            : (cur ? Reel.accent.withAlpha(0x33) : null),
                         borderRadius: BorderRadius.circular(h * 0.015),
                       ),
                       child: Text(
@@ -860,7 +860,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 padding: EdgeInsets.symmetric(
                     horizontal: h * 0.04, vertical: h * 0.016),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE8833A),
+                  color: Reel.accent,
                   borderRadius: BorderRadius.circular(h),
                   border: Border.all(
                       color: f ? Colors.white : Colors.transparent, width: 3),

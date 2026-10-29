@@ -7,6 +7,7 @@ import '../seerr.dart';
 import '../ui/net_image.dart';
 import 'discover.dart';
 import '../ui/preview.dart';
+import '../ui/seasonal.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 import 'login.dart';
@@ -160,6 +161,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               setState(() => Prefs.stillHours = hrs[(at + 1) % hrs.length]);
             }),
           ],
+          _row(h, 'Theme', seasonName(Prefs.theme),
+              'A seasonal look for special occasions: snow and red and green for Christmas, rising embers and orange and purple for Halloween. It pauses while a film plays.',
+              () {
+            final t = (Prefs.theme + 1) % 3;
+            Prefs.theme = t;
+            seasonTheme.value = t;
+            setState(() {});
+          }),
           _row(h, 'Stay signed in', Prefs.staySignedIn ? 'On' : 'Off',
               'Keep this Plex profile signed in on this Windows account.', () {
             setState(() => Prefs.staySignedIn = !Prefs.staySignedIn);

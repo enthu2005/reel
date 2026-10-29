@@ -147,4 +147,8 @@ class Prefs {
   static set stillNight(bool v) => _p.setBool('stillNight', v);
   static int get stillHours => _p.getInt('stillHours') ?? 3;
   static set stillHours(int v) => _p.setInt('stillHours', v);
+
+  /// Seasonal look: 0 none, 1 Christmas, 2 Halloween.
+  static int get theme => _p.getInt('theme') ?? 0;
+  static set theme(int v) => _p.setInt('theme', v);
 }

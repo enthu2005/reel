@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../prefs.dart';
+
 /// Apple TV-like palette and type.
 class Reel {
   static const bg = Color(0xFF000000);
@@ -8,6 +10,14 @@ class Reel {
   static const text2 = Color(0x99EBEBF5);
   static const text3 = Color(0x66EBEBF5);
   static const fill = Color(0x33FFFFFF);
+
+  /// The highlight colour for Live, the Still watching button and similar: orange normally, red for
+  /// Christmas, pumpkin for Halloween (Settings -> Theme).
+  static Color get accent => switch (Prefs.theme) {
+        1 => const Color(0xFFD42426),
+        2 => const Color(0xFFFF7518),
+        _ => const Color(0xFFE8833A),
+      };
 
   /// Sizes scale with the window height so it looks the same on a laptop and a TV.
   static double h(BuildContext c) => MediaQuery.sizeOf(c).height;

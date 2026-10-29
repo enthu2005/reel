@@ -11,7 +11,6 @@ import '../ui/theme.dart';
 import '../ui/widgets.dart';
 import 'player.dart';
 
-const _liveAccent = Color(0xFFE8833A);
 
 String _clock(DateTime t) {
   final h = t.hour % 12 == 0 ? 12 : t.hour % 12;
@@ -176,7 +175,7 @@ class _LiveScreenState extends State<LiveScreen> {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text('CH ${c.num}  ·  ${c.name}${live ? '   ·   ON NOW' : ''}',
           style: reelText(h * 0.022,
-              weight: FontWeight.w600, color: _liveAccent)),
+              weight: FontWeight.w600, color: Reel.accent)),
       Text(s.prog.title,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
@@ -244,7 +243,7 @@ class _LiveScreenState extends State<LiveScreen> {
                                         horizontal: h * 0.008,
                                         vertical: h * 0.002),
                                     decoration: BoxDecoration(
-                                        color: _liveAccent,
+                                        color: Reel.accent,
                                         borderRadius:
                                             BorderRadius.circular(h * 0.006)),
                                     child: Text('CH $_pipChannel',
@@ -276,7 +275,7 @@ class _LiveScreenState extends State<LiveScreen> {
                   top: 0,
                   bottom: 0,
                   width: 2,
-                  child: const ColoredBox(color: _liveAccent),
+                  child: ColoredBox(color: Reel.accent),
                 ),
               ]),
             ),
@@ -305,7 +304,7 @@ class _LiveScreenState extends State<LiveScreen> {
                               Text('${ch.num}',
                                   style: reelText(h * 0.032,
                                       weight: FontWeight.w600,
-                                      color: _liveAccent)),
+                                      color: Reel.accent)),
                               Text(ch.name,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -353,7 +352,7 @@ class _LiveScreenState extends State<LiveScreen> {
                                       horizontal: w * 0.007),
                                   decoration: BoxDecoration(
                                     color: f
-                                        ? _liveAccent
+                                        ? Reel.accent
                                         : (live
                                             ? const Color(0xFF2B2B30)
                                             : Reel.card),

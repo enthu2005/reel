@@ -174,7 +174,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: reelText(h * 0.024,
-                    weight: FontWeight.w500, color: const Color(0xCCE8833A))),
+                    weight: FontWeight.w500, color: Reel.accent.withAlpha(0xCC))),
           Expanded(
             child: GridView.builder(
               clipBehavior: Clip.hardEdge,
