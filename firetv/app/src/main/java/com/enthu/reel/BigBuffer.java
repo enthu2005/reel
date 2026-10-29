@@ -421,6 +421,25 @@ final class BigBuffer {
         go = true;
     }
 
+    /**
+     * Stores the first stretch of the next episode on the device while the current one finishes, so it starts at
+     * once (the player reads it from the store). The key is the file's address, as the player uses it.
+     */
+    static void prefetchStart(final Context c, final String url, final long bytes) {
+        final Context app = c.getApplicationContext();
+        Thread t = new Thread(() -> {
+            try {
+                CacheDataSource ds = factory(app, url).createDataSource();
+                new CacheWriter(ds, new DataSpec.Builder().setUri(Uri.parse(url)).setPosition(0).setLength(bytes).build(),
+                        null, null).cache();
+            } catch (Throwable ignored) {
+                // a courtesy: the episode simply loads the usual way
+            }
+        }, "ReelNextEpisode");
+        t.setDaemon(true);
+        t.start();
+    }
+
     /** Removes everything stored for any other film. The film's cache key is its address. */
     private static void purgeOthers(Context c, String url) {
         try {
@@ -492,7 +511,7 @@ final class BigBuffer {
                 frontier += n;
                 long fetchedMs = Math.max(1, (System.nanoTime() - t0) / 1_000_000L);
                 lastMbps = n * 8.0 / 1000.0 / fetchedMs; // before any throttling pause
-                trimBehind(c, here, length);
+                trimBehind(c, here, length, url);
                 int mbit = c.getSharedPreferences("reel_ui", Context.MODE_PRIVATE).getInt("bigBufferMbit", 25);
                 if (mbit > 0) {
                     long minMs = n * 8000L / ((long) mbit * 1_000_000L);
@@ -518,16 +537,15 @@ final class BigBuffer {
      * Like swap space in reverse: once the player has moved on, what it already played is deleted from the
      * disk, so the store only ever holds what is still to come (plus a little behind for a short rewind).
      */
-    private static void trimBehind(Context c, long here, long length) {
+    private static void trimBehind(Context c, long here, long length, String url) {
         try {
             long keep = Math.max(128L * 1024 * 1024, length / 50); // the playhead is only an estimate: stay well clear
             long cutoff = here - keep;
             if (cutoff <= 0) return;
             SimpleCache sc = cache(c);
-            for (String k : new java.util.ArrayList<>(sc.getKeys())) {
-                for (androidx.media3.datasource.cache.CacheSpan span : new java.util.ArrayList<>(sc.getCachedSpans(k))) {
-                    if (span.isCached && span.position + span.length < cutoff) sc.removeSpan(span);
-                }
+            // Only this film's own pieces: the start of the next episode may be waiting in the store too
+            for (androidx.media3.datasource.cache.CacheSpan span : new java.util.ArrayList<>(sc.getCachedSpans(url))) {
+                if (span.isCached && span.position + span.length < cutoff) sc.removeSpan(span);
             }
         } catch (Throwable ignored) {
             // trimming is a courtesy; the least-recently-used rule still keeps the store under its limit

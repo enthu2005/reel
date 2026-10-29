@@ -445,13 +445,16 @@ public class PlayerActivity extends Activity {
         long start = creditsStart();
         if (start < 0) return;
 
-        // A minute ahead: fetch the next episode's details and warm up its file on the server.
-        if (!upNextPrefetched && pos >= start - 60_000) {
+        // Ahead of the credits: fetch the next episode's details and get its start ready (on the device or the server's cache).
+        if (!upNextPrefetched && pos >= start - 120_000) {
             upNextPrefetched = true;
             Plex.async(() -> {
                 Plex.Item m = Plex.metadata(next.key);
                 preloaded = m;
-                if (m.partKey != null) {
+                if (m.partKey != null && BigBuffer.enabled(PlayerActivity.this)) {
+                    // Extra large buffer on: keep the first minutes of it on the device, so the next episode starts at once
+                    BigBuffer.prefetchStart(PlayerActivity.this, Plex.directUrl(m), 96L * 1024 * 1024);
+                } else if (m.partKey != null) {
                     java.net.HttpURLConnection c = (java.net.HttpURLConnection)
                             new java.net.URL(Plex.directUrl(m)).openConnection();
                     c.setRequestProperty("Range", "bytes=0-4194303");
