@@ -42,6 +42,7 @@ public class ReelActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        PhoneRemote.ensure(this); // the phone page can search and send titles here
         lastInput = SystemClock.uptimeMillis();
         idle.removeCallbacks(check);
         long t = screensaverMs();

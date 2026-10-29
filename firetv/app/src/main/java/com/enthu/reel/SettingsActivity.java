@@ -261,6 +261,14 @@ public class SettingsActivity extends ReelActivity {
                     render(false);
                 });
 
+        PhoneRemote.ensure(this);
+        String remote = PhoneRemote.url();
+        row("Phone remote", remote == null ? "No network" : remote.replace("http://", "").replaceFirst("\\?t=.*", ""),
+                "Open this on a phone on the same Wi-Fi to search your library and send a title to the TV, and to "
+                        + "control what is playing. The full link, with its code, is in the player's Info tab as a "
+                        + "QR code to scan. Once opened it can be bookmarked: the code stays the same.",
+                v -> { });
+
         row("Stats and Wrapped", "Open",
                 "Hours watched, your top genres and actors, when you watch, and a year-end Wrapped slideshow.",
                 v -> startActivity(new android.content.Intent(this, StatsActivity.class)));

@@ -50,12 +50,27 @@
   .kv { display:grid; grid-template-columns:auto 1fr; gap:8px 14px; font-size:14px; }
   .kv div:nth-child(odd) { color:var(--dim); }
   .kv div:nth-child(even) { text-align:right; word-break:break-word; font-variant-numeric:tabular-nums; }
-  #idle { text-align:center; color:var(--dim); margin-top:30vh; }
+  #idle { text-align:center; color:var(--dim); margin:28px 0; }
+  #q { width:100%; padding:14px 16px; font:inherit; color:var(--text); background:var(--card);
+    border:1px solid var(--line); border-radius:14px; outline:none; }
+  #q:focus { border-color:var(--accent); }
+  .res { display:flex; gap:12px; align-items:center; padding:10px 0; border-bottom:1px solid var(--line); }
+  .res img { width:56px; height:84px; object-fit:cover; border-radius:8px; background:var(--card); flex:none; }
+  .res .txt { flex:1; min-width:0; }
+  .res .txt b { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .res .txt span { color:var(--dim); font-size:13px; }
+  .res button { padding:10px 14px; font-size:14px; flex:none; }
+  .res button.go { background:var(--accent); border-color:var(--accent); color:#fff; }
+  #msg { color:var(--dim); font-size:14px; padding:12px 2px; }
   .hide { display:none; }
 </style>
 </head>
 <body>
 <main>
+  <div id="finder">
+    <input id="q" type="search" placeholder="Search your library, e.g. unwatched sci-fi" autocomplete="off">
+    <div id="results"></div>
+  </div>
   <div id="idle" class="hide">Nothing is playing.<br>Start something on the TV and this page will follow it.</div>
   <div id="ui" class="hide">
     <h1 id="title"></h1>
@@ -169,6 +184,33 @@ $('bar').addEventListener('change', () => {
   dragging = false;
   cmd('chapter', '&ms=' + ms);
 });
+
+let searchTimer = null, searchSeq = 0;
+$('q').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(runSearch, 350);
+});
+async function runSearch() {
+  const text = $('q').value.trim();
+  const mine = ++searchSeq;
+  if (text.length < 2) { $('results').innerHTML = ''; return; }
+  $('results').innerHTML = '<div id="msg">Searching&hellip;</div>';
+  const r = await call('/search?q=' + encodeURIComponent(text));
+  if (mine !== searchSeq) return;
+  const rows = (r && r.results) || [];
+  if (!rows.length) { $('results').innerHTML = '<div id="msg">Nothing found.</div>'; return; }
+  $('results').innerHTML = rows.map((x, i) =>
+    '<div class="res"><img loading="lazy" alt="" src="' + (x.thumb ? '/img?t=' + encodeURIComponent(T) + '&p=' + encodeURIComponent(x.thumb) : '') + '">' +
+    '<div class="txt"><b>' + esc(x.title) + '</b><span>' + esc(x.sub) + '</span></div>' +
+    '<button data-i="' + i + '" data-a="open">Open</button><button class="go" data-i="' + i + '" data-a="play">&#9654;</button></div>').join('');
+  $('results').querySelectorAll('button').forEach(b => b.onclick = async () => {
+    const x = rows[+b.dataset.i];
+    const old = b.innerHTML;
+    b.innerHTML = '&#10003; Sent';
+    await call('/cast?key=' + encodeURIComponent(x.key) + '&play=' + (b.dataset.a === 'play' ? 1 : 0));
+    setTimeout(() => { b.innerHTML = old; }, 2500);
+  });
+}
 
 async function tick() { if (!dragging) render(await call('/state')); }
 tick(); setInterval(tick, 1000);

@@ -1,6 +1,7 @@
 package com.enthu.reel;
 
 import android.content.Context;
+import android.content.Intent;
 import android.os.Handler;
 import android.os.Looper;
 
@@ -53,8 +54,13 @@ final class PhoneRemote {
 
     /** The player is open: start serving (if not already) and send requests to [h]. */
     static synchronized void attach(Context c, Host h) {
-        app = c.getApplicationContext();
         host = h;
+        ensure(c);
+    }
+
+    /** Starts serving (if not already), so the phone page can search and send things to the TV even with nothing playing. */
+    static synchronized void ensure(Context c) {
+        app = c.getApplicationContext();
         MAIN.removeCallbacks(STOP);
         if (server != null) return;
         android.content.SharedPreferences sp = app.getSharedPreferences("reel_ui", Context.MODE_PRIVATE);
@@ -102,8 +108,7 @@ final class PhoneRemote {
     /** The player closed. Keep the address alive a little in case the next episode opens straight away. */
     static synchronized void detach(Host h) {
         if (host != h) return;
-        host = null;
-        MAIN.postDelayed(STOP, 20_000);
+        host = null; // the server stays up: the page still searches and casts
     }
 
     private static synchronized void stopServer() {
@@ -175,6 +180,12 @@ final class PhoneRemote {
                 reply(out, 200, "text/html; charset=utf-8", asset("remote.html"));
             } else if (path.equals("/state")) {
                 reply(out, 200, "application/json; charset=utf-8", onMain(null, null));
+            } else if (path.equals("/search")) {
+                reply(out, 200, "application/json; charset=utf-8", search(q.get("q")));
+            } else if (path.equals("/img")) {
+                image(out, q.get("p"));
+            } else if (path.equals("/cast")) {
+                reply(out, 200, "application/json; charset=utf-8", cast(q.get("key"), "1".equals(q.get("play"))));
             } else if (path.equals("/cmd")) {
                 String c = q.get("c");
                 reply(out, 200, "application/json; charset=utf-8", onMain(c == null ? "" : c, q));
@@ -183,6 +194,72 @@ final class PhoneRemote {
             }
         } catch (Exception ignored) {
         }
+    }
+
+    /** Titles in the library matching the phone's search, as JSON. Pictures come through /img, never with the Plex token. */
+    private static String search(String text) {
+        try {
+            final String q = text == null ? "" : text.trim();
+            org.json.JSONArray arr = new org.json.JSONArray();
+            if (q.length() >= 2) {
+                final SmartSearch.Query sq = SmartSearch.parse(q);
+                java.util.List<Plex.Item> found = sq.smart() ? SmartSearch.run(sq) : Plex.search(q);
+                for (Plex.Item it : found) {
+                    if (arr.length() >= 30) break;
+                    boolean ep = it.type.equals("episode");
+                    String sub = it.type.equals("movie") ? "Movie" : it.type.equals("show") ? "TV show"
+                            : ep ? "S" + it.parentIndex + " E" + it.index + " · " + it.title : it.type;
+                    if (it.year > 0) sub += " · " + it.year;
+                    arr.put(new org.json.JSONObject().put("key", it.key).put("title", it.displayTitle()).put("sub", sub)
+                            .put("thumb", it.poster() == null ? "" : it.poster()).put("type", it.type));
+                }
+            }
+            return new org.json.JSONObject().put("results", arr).toString();
+        } catch (Exception e) {
+            return "{\"results\":[],\"error\":true}";
+        }
+    }
+
+    /** A poster for the phone page, fetched by the TV so the page never sees the server address or token. */
+    private static void image(OutputStream out, String path) throws Exception {
+        if (path == null || !path.startsWith("/")) {
+            reply(out, 404, "text/plain", "Not found");
+            return;
+        }
+        String url = Plex.img(path, 240, 360);
+        if (url == null) {
+            reply(out, 404, "text/plain", "Not found");
+            return;
+        }
+        java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+        c.setConnectTimeout(8000);
+        c.setReadTimeout(15000);
+        try (InputStream in = c.getInputStream()) {
+            ByteArrayOutputStream bo = new ByteArrayOutputStream();
+            byte[] b = new byte[8192];
+            int n;
+            while ((n = in.read(b)) > 0) bo.write(b, 0, n);
+            byte[] body = bo.toByteArray();
+            String head = "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: " + body.length
+                    + "\r\nCache-Control: max-age=3600\r\nConnection: close\r\n\r\n";
+            out.write(head.getBytes("UTF-8"));
+            out.write(body);
+            out.flush();
+        } finally {
+            c.disconnect();
+        }
+    }
+
+    /** Opens a title's page on the TV, or starts it playing. */
+    private static String cast(final String key, final boolean play) {
+        if (key == null || !key.matches("\\d+") || app == null) return "{\"ok\":false}";
+        MAIN.post(() -> {
+            Intent i = play ? new Intent(app, PlayerActivity.class).putExtra("key", key).putExtra("start", 0L)
+                    : new Intent(app, DetailActivity.class).putExtra("key", key);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            app.startActivity(i);
+        });
+        return "{\"ok\":true}";
     }
 
     /** Runs on the main thread (the player isn't safe to touch from here) and waits for the answer. */
