@@ -111,6 +111,8 @@ class PlexItem {
   double aspect =
       0; // the film's shape, e.g. 2.39 for a wide film (0 = unknown)
   String? partKey;
+  int mediaBitrate = 0; // kbit/s, the whole file on average
+  int partSize = 0; // bytes
   String? librarySectionKey;
   String videoRes = '';
   String?
@@ -382,6 +384,8 @@ class PlexItem {
       if (parts != null && parts.isNotEmpty) {
         final p0 = parts.first as Map;
         i.partKey = p0['key']?.toString();
+        i.partSize = _int(p0['size']);
+        i.mediaBitrate = _int(m0['bitrate']);
         for (final s in (p0['Stream'] as List? ?? const [])) {
           i.streams
               .add(PlexStream.fromJson(Map<String, dynamic>.from(s as Map)));

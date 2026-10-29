@@ -370,6 +370,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       -1; // index of the same-language track to switch to once the file is open
   String _why = '';
   bool _info = false;
+  final _infoScroll = ScrollController();
   Map<String, String> _stats = {};
 
   Timer? _infoTimer;
@@ -470,6 +471,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _stillNode.dispose();
     _chanNode.dispose();
     _panelScope.dispose();
+    _infoScroll.dispose();
     _trickTimer?.cancel();
     _infoTimer?.cancel();
     if (_session != null) Plex.stopTranscode(_session!);
@@ -1234,6 +1236,23 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _infoTimer?.cancel();
         setState(() => _info = false);
         _showOsd();
+      } else if (e is! KeyUpEvent && _infoScroll.hasClients) {
+        final step = k == LogicalKeyboardKey.arrowDown
+            ? 80.0
+            : k == LogicalKeyboardKey.arrowUp
+                ? -80.0
+                : k == LogicalKeyboardKey.pageDown
+                    ? 400.0
+                    : k == LogicalKeyboardKey.pageUp
+                        ? -400.0
+                        : 0.0;
+        if (step != 0) {
+          _infoScroll.animateTo(
+              (_infoScroll.offset + step)
+                  .clamp(0.0, _infoScroll.position.maxScrollExtent),
+              duration: const Duration(milliseconds: 120),
+              curve: Curves.easeOut);
+        }
       }
       return KeyEventResult.handled;
     }
@@ -1528,6 +1547,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                     color: const Color(0xE6FFFFFF))),
                         ]),
                   ),
+                  if (!_panel && !_info)
                   Positioned(
                     right: w * 0.04,
                     top: h * 0.055,
@@ -2086,7 +2106,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               Expanded(
-                child: Row(children: [
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Row(children: [
                   for (var i = 0; i < 3; i++)
                     Padding(
                       padding: EdgeInsets.only(right: h * 0.01),
@@ -2116,7 +2139,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       ),
                     ),
                 ]),
+                ),
               ),
+              SizedBox(width: h * 0.015),
               _closeButton(h, () {
                 setState(() => _panel = false);
                 _focus.requestFocus();
@@ -2265,8 +2290,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
               ? '${(speed * 8 / 1000000).toStringAsFixed(1)} Mbit/s'
               : 'idle (cache full)'
         ],
+      if (it != null && it.mediaBitrate > 0)
+        ['File bandwidth', '${(it.mediaBitrate / 1000).toStringAsFixed(1)} Mbit/s on average (video and sound together)'],
       if (rate(vbit).isNotEmpty || rate(abit).isNotEmpty)
-        ['Bitrate', 'video ${rate(vbit)}   audio ${rate(abit)}'],
+        ['Playing now', 'video ${rate(vbit)}   audio ${rate(abit)}'],
       if (v != null && v.isNotEmpty)
         [
           'Video',
@@ -2306,10 +2333,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
             : 'Direct play of the file'
       ],
       ['Connection', Prefs.serverKind.isEmpty ? 'unknown' : Prefs.serverKind],
-      if (size != null && size > 0)
+      if ((it != null && it.partSize > 0) || (size != null && size > 0))
         [
-          'File',
-          '${(size / 1073741824).toStringAsFixed(1)} GB ${num('file-format')}'
+          'File size',
+          '${(((it != null && it.partSize > 0) ? it.partSize : size!) / 1073741824).toStringAsFixed(2)} GB  ${num('file-format')}'
+              .trim()
         ],
       if (it != null) ['Plex id', it.key],
     ];
@@ -2320,9 +2348,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
           alignment: Alignment.center,
           child: SizedBox(
             width: w * 0.55,
-            child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
+            child: ListView(
+                controller: _infoScroll,
+                padding: EdgeInsets.symmetric(vertical: h * 0.08),
                 children: [
                   Text('Info',
                       style: reelText(h * 0.045, weight: FontWeight.w700)),
@@ -2343,7 +2371,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           ]),
                     ),
                   SizedBox(height: h * 0.02),
-                  Text('Esc or Enter to close',
+                  Text('Scroll with the mouse wheel or Up / Down.  Esc or Enter to close',
                       style: reelText(h * 0.02, color: Reel.text3)),
                 ]),
           ),
