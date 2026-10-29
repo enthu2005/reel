@@ -184,7 +184,7 @@ class _HomeScreenState extends State<HomeScreen> {
           // One Recently Added row across every library on this tab, newest first
           _recentAcross(tabSecs).then((r) => r.isEmpty
               ? <_Row>[]
-              : [_Row('Recently Added', r, landscape: false, titles: true)]),
+              : [_Row('Recently Added', r, landscape: true, titles: true)]),
           // The whole library is a tile that opens its page, not a row of thousands
           if (_tab != 0) _libraryTiles(tabSecs),
         ]);
@@ -443,7 +443,7 @@ class _HomeScreenState extends State<HomeScreen> {
               .toList();
           if (like.length < 4) continue; // try the next thing you watched
           out.add(_Row('Because you watched ${w.displayTitle}', like,
-              landscape: false, titles: true));
+              landscape: true, titles: true));
           break;
         }
         // ... and the lead actor and the director of something you watched lately
@@ -471,7 +471,7 @@ class _HomeScreenState extends State<HomeScreen> {
         if (un.length > 30) un = un.sublist(0, 30);
         if (un.length >= 3) {
           out.add(_Row(movie ? 'Unwatched Movies' : 'Unwatched Shows', un,
-              landscape: false, titles: true));
+              landscape: true, titles: true));
         }
       } catch (_) {}
     }
@@ -489,7 +489,7 @@ class _HomeScreenState extends State<HomeScreen> {
           final kids = await Plex.items(
               Plex.paged('/library/collections/${c[1]}/children', 60));
           if (kids.length < 3) continue;
-          out.add(_Row(c[0], kids, landscape: false, titles: true));
+          out.add(_Row(c[0], kids, landscape: true, titles: true));
           added++;
         }
       } catch (_) {}
@@ -526,7 +526,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ];
       if (sorted.length >= 4) {
         out.add(_Row('$prefix${who.name}', sorted,
-            landscape: false, titles: true));
+            landscape: true, titles: true));
       }
     } catch (_) {}
   }
@@ -1592,7 +1592,7 @@ class _SkeletonState extends State<_Skeleton>
   Widget build(BuildContext context) {
     final h = widget.h, w = widget.w;
     final left = w * 0.05;
-    final cw = w * 0.097;
+    final cw = w * 0.14;
     final gap = h * 0.022;
     return FadeTransition(
       opacity: Tween(begin: 0.35, end: 1.0).animate(_c),
@@ -1602,7 +1602,7 @@ class _SkeletonState extends State<_Skeleton>
         _bar(w * 0.40, h * 0.022, h * 0.008, left, h * 0.18),
         _bar(w * 0.16, h * 0.032, h * 0.01, left, h * 0.37),
         for (var i = 0; i * (cw + gap) < w; i++)
-          _bar(cw, cw * 1.5, h * 0.014, left + i * (cw + gap), h * 0.43),
+          _bar(cw, cw * 9 / 16, h * 0.014, left + i * (cw + gap), h * 0.43),
       ]),
     );
   }
