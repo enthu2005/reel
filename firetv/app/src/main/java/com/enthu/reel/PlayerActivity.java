@@ -651,6 +651,7 @@ public class PlayerActivity extends Activity {
     }
 
     private boolean ac3 = false; // ask Plex to convert only the sound to Dolby Digital
+    private boolean stereoFallback = false; // the sound system refused Dolby Digital too: stereo AAC from Plex
 
     private boolean compatMode() {
         return getSharedPreferences("reel_ui", MODE_PRIVATE).getInt("audioMode", 0) == 1;
@@ -1179,11 +1180,13 @@ public class PlayerActivity extends Activity {
     private String lastHlsUrl; // the converted stream's address, for the buffer on disk
 
     private MediaItem buildItem(boolean transcode) {
-        String url = transcode
-                ? Plex.transcodeUrl(key, offsetMs, session,
-                curAudio != null ? curAudio.id : 0, burnId(), ac3,
+        String url = !transcode ? Plex.directUrl(item)
+                : stereoFallback
+                ? Plex.stereoUrl(key, offsetMs, session, curAudio != null ? curAudio.id : 0, burnId(),
                 (Integer) QUALITIES[quality][1], (String) QUALITIES[quality][2])
-                : Plex.directUrl(item);
+                : Plex.transcodeUrl(key, offsetMs, session,
+                curAudio != null ? curAudio.id : 0, burnId(), ac3,
+                (Integer) QUALITIES[quality][1], (String) QUALITIES[quality][2]);
         lastHlsUrl = transcode ? url : null;
         MediaItem.Builder mi = new MediaItem.Builder().setUri(url);
         if (transcode) {
@@ -1736,6 +1739,15 @@ public class PlayerActivity extends Activity {
                             + (audioProblem ? " the sound only" : ""), Toast.LENGTH_LONG).show();
                     begin(currentMs(), true);
                 } else {
+                    if ((error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED
+                            || error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED) && !stereoFallback) {
+                        // Not even Dolby Digital would open (the receiver or ARC isn't taking it right now): stereo works anywhere
+                        stereoFallback = true;
+                        Toast.makeText(PlayerActivity.this, "Your sound system refused Dolby Digital, playing in stereo",
+                                Toast.LENGTH_LONG).show();
+                        begin(currentMs(), true);
+                        return;
+                    }
                     String why = "";
                     for (Throwable t = error.getCause(); t != null; t = t.getCause()) {
                         if (t instanceof androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) {

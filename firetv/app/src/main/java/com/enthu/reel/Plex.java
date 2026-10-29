@@ -1373,6 +1373,15 @@ public final class Plex {
                 + "&directStreamAudio=0&audioChannelCount=2";
     }
 
+    /** A converted stream with stereo AAC sound, for when the sound system refuses Dolby Digital too. */
+    public static String stereoUrl(String ratingKey, long offsetMs, String session,
+                                   int audioId, int subId, int maxKbps, String res) {
+        return transcodeUrl(ratingKey, offsetMs, session, audioId, subId, false, maxKbps, res)
+                .replace("X-Plex-Client-Profile-Extra=" + enc(profileExtra(false)),
+                        "X-Plex-Client-Profile-Extra=" + enc(previewProfile()))
+                + "&directStreamAudio=0&audioChannelCount=2";
+    }
+
     public static String profileExtra(boolean ac3) {
         return "add-transcode-target(type=videoProfile&context=streaming&protocol=hls"
                 + "&container=mpegts&videoCodec=h264,hevc&audioCodec=" + (ac3 ? "ac3" : "ac3,eac3,aac") + ")"
