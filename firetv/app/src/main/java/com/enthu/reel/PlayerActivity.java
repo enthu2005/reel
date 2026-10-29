@@ -1101,12 +1101,15 @@ public class PlayerActivity extends Activity {
 
     // --------------------------------------------------------- Playback
 
+    private String lastHlsUrl; // the converted stream's address, for the buffer on disk
+
     private MediaItem buildItem(boolean transcode) {
         String url = transcode
                 ? Plex.transcodeUrl(key, offsetMs, session,
                 curAudio != null ? curAudio.id : 0, burnId(), ac3,
                 (Integer) QUALITIES[quality][1], (String) QUALITIES[quality][2])
                 : Plex.directUrl(item);
+        lastHlsUrl = transcode ? url : null;
         MediaItem.Builder mi = new MediaItem.Builder().setUri(url);
         if (transcode) {
             mi.setMimeType(MimeTypes.APPLICATION_M3U8);
@@ -1479,7 +1482,7 @@ public class PlayerActivity extends Activity {
         // Holding a huge buffer starves the decoder (green lines, stutter, "low memory" in the system log),
         // so keep it modest: about 20 to 30 seconds of a big 4K film, a little more of anything smaller.
         long heap = Runtime.getRuntime().maxMemory();
-        final boolean keepFull = BigBuffer.enabled(this) && !transcode && item != null && item.partKey != null;
+        final boolean keepFull = BigBuffer.enabled(this) && (transcode || (item != null && item.partKey != null));
         // With the extra large buffer the memory part may be bigger (it is topped up from the on-device store).
         long cap = keepFull
                 ? Math.max(96L * 1024 * 1024, Math.min(heap / 3, 224L * 1024 * 1024))
@@ -1503,12 +1506,15 @@ public class PlayerActivity extends Activity {
             // Copying a big 4K stream takes Plex a while to start and sends fast bursts over the internet:
             // wait longer and retry more before giving up (the defaults are 8 seconds and 3 retries).
             // DefaultDataSource also opens local files (re-timed subtitles), the rest goes over http.
-            pb.setMediaSourceFactory(new androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
-                    new androidx.media3.datasource.DefaultDataSource.Factory(this,
+            // With the extra large buffer on, what the converted stream sends also goes through the on-device store
+            androidx.media3.datasource.DataSource.Factory hlsSource = BigBuffer.enabled(this)
+                    ? BigBuffer.factory(this, hdr)
+                    : new androidx.media3.datasource.DefaultDataSource.Factory(this,
                             new androidx.media3.datasource.DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
                                     .setConnectTimeoutMs(30000)
                                     .setReadTimeoutMs(60000)
-                                    .setDefaultRequestProperties(hdr)))
+                                    .setDefaultRequestProperties(hdr));
+            pb.setMediaSourceFactory(new androidx.media3.exoplayer.source.DefaultMediaSourceFactory(hlsSource)
                     .setLoadErrorHandlingPolicy(
                             new androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(8)));
         }
@@ -1579,6 +1585,18 @@ public class PlayerActivity extends Activity {
         handler.postDelayed(frameWatch, 4000);
         view.setPlayer(player);
         player.setMediaItem(buildItem(transcode));
+        if (transcode && BigBuffer.enabled(this) && lastHlsUrl != null) {
+            // Plex is converting: keep the buffer on the disk too, by fetching the converted stream ahead of the playhead
+            java.util.Map<String, String> bh = new java.util.HashMap<>();
+            bh.put("X-Plex-Client-Profile-Extra", Plex.profileExtra(ac3));
+            bh.put("X-Plex-Client-Identifier", Plex.clientId());
+            bh.put("X-Plex-Product", "Reel");
+            bh.put("X-Plex-Client-Profile-Name", "Konvergo");
+            if (bigBuffer == null) bigBuffer = new BigBuffer();
+            bigBuffer.startHls(this, lastHlsUrl, bh);
+            handler.removeCallbacks(bigTick);
+            handler.post(bigTick);
+        }
         if (!transcode && positionMs > 0) player.seekTo(positionMs);
         // Exactly one subtitle source at a time: a track the player draws, or one Plex burns in, never both.
         // Without this the player also shows whatever track the file flags as default (an Off choice still
@@ -1930,7 +1948,8 @@ public class PlayerActivity extends Activity {
         @Override
         public void run() {
             if (bigBuffer == null || player == null) return;
-            bigBuffer.position(currentMs());
+            bigBuffer.position(bigBuffer.isHls() ? player.getCurrentPosition() : currentMs());
+            bigBuffer.playerAhead(player.getTotalBufferedDuration());
             handler.postDelayed(this, 1500);
         }
     };
@@ -3197,7 +3216,7 @@ public class PlayerActivity extends Activity {
         b.put("ramSec", ramSec);
         b.put("ramMb", rate > 0 ? Math.min(ramSec * rate >> 20, 99999) : 0);
         b.put("capMb", bufferCapMb);
-        boolean disk = BigBuffer.enabled(this) && !transcoding;
+        boolean disk = BigBuffer.enabled(this) && bigBuffer != null;
         b.put("disk", disk);
         b.put("diskSec", disk && bigBuffer != null ? Math.max(0, bigBuffer.aheadSeconds() - ramSec) : 0);
         b.put("diskGb", disk ? Math.round(BigBuffer.usedBytes() / 1073741824.0 * 100) / 100.0 : 0);
@@ -3365,10 +3384,17 @@ public class PlayerActivity extends Activity {
             out.add(new String[]{"Free space", mb(sf.getAvailableBytes()) + " of " + mb(sf.getTotalBytes())});
         } catch (RuntimeException ignored) {
         }
-        if (bigBuffer != null && BigBuffer.enabled(this) && !transcoding) {
-            out.add(new String[]{"Disk filler", bigBuffer.status() + "  (" + mb(bigBuffer.ahead()) + " fetched ahead of "
-                    + mb(bigBuffer.fileLength()) + ")"});
-            out.add(new String[]{"File data rate", mb(bigBuffer.bytesPerSecond()) + "/s average"});
+        if (bigBuffer != null && BigBuffer.enabled(this)) {
+            if (bigBuffer.isHls()) {
+                out.add(new String[]{"Disk filler", bigBuffer.status() + "  (converted stream: "
+                        + bigBuffer.hlsSegmentsStored() + " pieces, " + mb(bigBuffer.hlsStoredBytes()) + " fetched so far, "
+                        + bigBuffer.aheadSeconds() + " s ahead of the playhead)"});
+            } else {
+                out.add(new String[]{"Disk filler", bigBuffer.status() + "  (" + mb(bigBuffer.ahead()) + " fetched ahead of "
+                        + mb(bigBuffer.fileLength()) + ")"});
+                out.add(new String[]{"File data rate", mb(bigBuffer.bytesPerSecond()) + "/s average"});
+            }
+            out.add(new String[]{"Memory buffer cap", bufferCapMb + " MB  (" + (bufferCapMb > 100 ? "extra large" : "normal") + ")"});
         }
         if (player != null) {
             String[] states = {"idle", "buffering", "ready", "ended"};
@@ -3585,7 +3611,7 @@ public class PlayerActivity extends Activity {
                     .append(bufferCapMb).append(" MB)");
         }
         sb.append('\n');
-        if (BigBuffer.enabled(this) && !transcoding) {
+        if (BigBuffer.enabled(this) && bigBuffer != null) {
             // The store counts everything fetched ahead; what's already loaded into memory isn't "on disk" any more
             long diskSec = bigBuffer == null ? 0 : Math.max(0, bigBuffer.aheadSeconds() - ramSec);
             sb.append("Buffer disk  ").append(aheadText(diskSec)).append(" ahead  (")
@@ -3601,7 +3627,7 @@ public class PlayerActivity extends Activity {
             sb.append("Buffer disk  off (Settings > Extra large buffer)\n");
         }
         // Download speed: the disk filler's own pace when it's running, otherwise the player's estimate
-        double mbps = bigBuffer != null && !transcoding && BigBuffer.enabled(this) ? bigBuffer.downloadMbps() : 0;
+        double mbps = bigBuffer != null && BigBuffer.enabled(this) ? bigBuffer.downloadMbps() : 0;
         if (mbps <= 0) {
             long est = androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.getSingletonInstance(this).getBitrateEstimate();
             mbps = est / 1_000_000.0;

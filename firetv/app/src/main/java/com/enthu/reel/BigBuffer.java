@@ -43,6 +43,7 @@ final class BigBuffer {
 
     /** About how many seconds of video the stored-ahead bytes cover. */
     long aheadSeconds() {
+        if (hlsMode) return (long) hlsAheadSec;
         if (fileLen <= 0 || fileDurMs <= 0) return 0;
         return (long) ((double) ahead() / fileLen * fileDurMs / 1000.0);
     }
@@ -138,6 +139,194 @@ final class BigBuffer {
         return fileLen;
     }
 
+    // ------------------------------------------------------------------ converted (HLS) streams
+
+    private volatile boolean hlsMode;
+    private volatile double hlsAheadSec;
+    private volatile long hlsBytes;
+    private volatile int hlsSegments;
+    private volatile long playerAheadMs; // what the player itself already holds ahead (it loads that part itself)
+
+    void playerAhead(long ms) {
+        playerAheadMs = ms;
+    }
+
+    boolean isHls() {
+        return hlsMode;
+    }
+
+    long hlsStoredBytes() {
+        return hlsBytes;
+    }
+
+    int hlsSegmentsStored() {
+        return hlsSegments;
+    }
+
+    /** A data source for a converted stream: reads through the on-device store, sending Plex's request headers. */
+    static CacheDataSource.Factory factory(Context c, java.util.Map<String, String> headers) {
+        DataSource.Factory upstream = new DefaultDataSource.Factory(c,
+                new DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
+                        .setConnectTimeoutMs(30000)
+                        .setReadTimeoutMs(60000)
+                        .setDefaultRequestProperties(headers));
+        return new CacheDataSource.Factory()
+                .setCache(cache(c))
+                .setUpstreamDataSourceFactory(upstream)
+                .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR);
+    }
+
+    /**
+     * Plex is converting the film (so there is no file to read ahead in). Instead this follows the converted stream's
+     * playlist and downloads its pieces ahead of the playhead into the same on-device store, so the buffer on disk
+     * works here too. [posMs] must then be the player's position inside this converted stream.
+     */
+    void startHls(final Context c, final String masterUrl, final java.util.Map<String, String> headers) {
+        stop();
+        stop = false;
+        go = false;
+        hlsMode = true;
+        hlsAheadSec = 0;
+        hlsBytes = 0;
+        hlsSegments = 0;
+        fileLen = 0;
+        fileDurMs = 0;
+        aheadBytes = 0;
+        final CacheDataSource.Factory f = factory(c, headers);
+        thread = new Thread(() -> runHls(c, f, masterUrl, headers), "ReelBigBufferHls");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    private static String fetchText(String url, java.util.Map<String, String> headers) throws Exception {
+        HttpURLConnection h = (HttpURLConnection) new URL(url).openConnection();
+        try {
+            for (java.util.Map.Entry<String, String> e : headers.entrySet()) h.setRequestProperty(e.getKey(), e.getValue());
+            h.setConnectTimeout(15000);
+            h.setReadTimeout(30000);
+            try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(h.getInputStream()))) {
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = r.readLine()) != null) sb.append(line).append('\n');
+                return sb.toString();
+            }
+        } finally {
+            h.disconnect();
+        }
+    }
+
+    private void runHls(Context c, CacheDataSource.Factory f, String masterUrl, java.util.Map<String, String> headers) {
+        try {
+            // a new converted stream: whatever was stored for another film or session is of no use now
+            java.util.regex.Matcher sm = java.util.regex.Pattern.compile("session=([^&]+)").matcher(masterUrl);
+            String sid = sm.find() ? sm.group(1) : "";
+            SimpleCache sc = cache(c);
+            for (String k : new java.util.ArrayList<>(sc.getKeys())) if (sid.isEmpty() || !k.contains(sid)) sc.removeResource(k);
+        } catch (Throwable ignored) {
+        }
+        status = "waiting for the picture";
+        for (int i = 0; i < 150 && !stop && !go; i++) {
+            try { Thread.sleep(100); } catch (InterruptedException ie) { return; }
+        }
+        CacheDataSource ds = f.createDataSource();
+        String variant = null;
+        java.util.Map<String, Double> starts = new java.util.HashMap<>(); // segment address -> where it starts, seconds
+        java.util.Set<String> done = new java.util.HashSet<>();
+        while (!stop) {
+            try {
+                if (variant == null) {
+                    String master = fetchText(masterUrl, headers);
+                    for (String line : master.split("\n")) {
+                        line = line.trim();
+                        if (!line.isEmpty() && !line.startsWith("#")) {
+                            variant = java.net.URI.create(masterUrl).resolve(line).toString();
+                            break;
+                        }
+                    }
+                    if (variant == null) {
+                        status = "no playlist yet";
+                        Thread.sleep(2000);
+                        continue;
+                    }
+                }
+                String pl = fetchText(variant, headers);
+                java.util.List<String> uris = new java.util.ArrayList<>();
+                java.util.List<Double> durs = new java.util.ArrayList<>();
+                double dur = 0;
+                for (String line : pl.split("\n")) {
+                    line = line.trim();
+                    if (line.startsWith("#EXTINF:")) {
+                        String d = line.substring(8);
+                        int comma = d.indexOf(',');
+                        dur = Double.parseDouble(comma >= 0 ? d.substring(0, comma) : d);
+                    } else if (!line.isEmpty() && !line.startsWith("#")) {
+                        uris.add(java.net.URI.create(variant).resolve(line).toString());
+                        durs.add(dur);
+                    }
+                }
+                double t = 0;
+                double endMax = 0;
+                double playhead = Math.max(0, posMs) / 1000.0;
+                boolean fetchedOne = false;
+                for (int i = 0; i < uris.size() && !stop; i++) {
+                    String u = uris.get(i);
+                    double segStart = t;
+                    t += durs.get(i);
+                    starts.put(u, segStart);
+                    if (segStart + durs.get(i) < playhead - 5) {
+                        if (done.remove(u)) { // played: free its space on the disk
+                            try { cache(c).removeResource(u); } catch (Throwable ignored) { }
+                            hlsSegments = Math.max(0, hlsSegments - 1);
+                        }
+                        continue;
+                    }
+                    if (segStart > playhead + HLS_AHEAD_SEC) break;
+                    if (!done.contains(u) && segStart < playhead + playerAheadMs / 1000.0) continue; // the player is loading this one
+                    if (done.contains(u)) {
+                        endMax = Math.max(endMax, segStart + durs.get(i));
+                        hlsAheadSec = Math.max(Math.max(0, endMax - playhead), playerAheadMs / 1000.0);
+                        continue;
+                    }
+                    long t0 = System.nanoTime();
+                    final long[] got = {0};
+                    new CacheWriter(ds, new DataSpec.Builder().setUri(Uri.parse(u)).build(), null,
+                            (len, bytes, newBytes) -> got[0] += newBytes).cache();
+                    done.add(u);
+                    hlsSegments++;
+                    hlsBytes += got[0];
+                    endMax = Math.max(endMax, segStart + durs.get(i));
+                    hlsAheadSec = Math.max(Math.max(0, endMax - playhead), playerAheadMs / 1000.0);
+                    fetchedOne = true;
+                    long ms = Math.max(1, (System.nanoTime() - t0) / 1_000_000L);
+                    if (got[0] > 0) lastMbps = got[0] * 8.0 / 1000.0 / ms;
+                    int mbit = c.getSharedPreferences("reel_ui", Context.MODE_PRIVATE).getInt("bigBufferMbit", 25);
+                    if (mbit > 0 && got[0] > 0) {
+                        long minMs = got[0] * 8000L / ((long) mbit * 1_000_000L);
+                        if (ms < minMs) Thread.sleep(minMs - ms);
+                    }
+                    status = "ok";
+                    playhead = Math.max(0, posMs) / 1000.0;
+                }
+                hlsAheadSec = Math.max(Math.max(0, endMax - playhead), playerAheadMs / 1000.0);
+                if (!fetchedOne) {
+                    status = "ok (up to date)";
+                    Thread.sleep(2000);
+                }
+            } catch (InterruptedException e) {
+                return;
+            } catch (Throwable e) {
+                status = "err " + e.getClass().getSimpleName() + ": " + String.valueOf(e.getMessage());
+                try {
+                    Thread.sleep(3000);
+                } catch (InterruptedException ie) {
+                    return;
+                }
+            }
+        }
+    }
+
+    private static final double HLS_AHEAD_SEC = 900; // fifteen minutes of the converted stream
+
     /** Roughly how far past the playhead the background task has fetched. */
     long ahead() {
         return Math.max(0, aheadBytes);
@@ -165,6 +354,7 @@ final class BigBuffer {
 
     void start(final Context c, final String filmKey, final String url, final long durationMs) {
         stop();
+        hlsMode = false;
         stop = false;
         go = false;
         final CacheDataSource.Factory f = factory(c, filmKey);
