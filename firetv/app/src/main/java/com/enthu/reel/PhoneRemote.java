@@ -257,7 +257,15 @@ final class PhoneRemote {
             Intent i = play ? new Intent(app, PlayerActivity.class).putExtra("key", key).putExtra("start", 0L)
                     : new Intent(app, DetailActivity.class).putExtra("key", key);
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            app.startActivity(i);
+            final Intent go = i;
+            final Host h = host;
+            if (play && h != null) {
+                // A film is already playing and holds the sound output (a second one can't open it): close it first
+                h.command("close", null);
+                MAIN.postDelayed(() -> app.startActivity(go), 700);
+            } else {
+                app.startActivity(go);
+            }
         });
         return "{\"ok\":true}";
     }

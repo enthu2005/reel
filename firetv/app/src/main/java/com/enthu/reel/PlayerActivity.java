@@ -3278,6 +3278,9 @@ public class PlayerActivity extends Activity {
                     case "toggle":
                         player.setPlayWhenReady(!player.getPlayWhenReady());
                         break;
+                    case "close": // something else is being sent to the TV: let go of the sound output first
+                        finish();
+                        break;
                     case "seek": {
                         long dur = item.duration > 0 ? item.duration : Long.MAX_VALUE;
                         seekAbs(Math.min(dur - 2000, currentMs() + Long.parseLong(a.get("d"))));
