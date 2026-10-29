@@ -155,6 +155,10 @@ public class LiveActivity extends ReelActivity {
         pl.topMargin = (int) (H * 0.148f);
         pl.rightMargin = (int) (W * 0.045f);
         root.addView(pipTex, pl);
+        pipBoxW = pw;
+        pipBoxH = pl.height;
+        pipBoxTop = pl.topMargin;
+        pipBoxRight = pl.rightMargin;
 
         message = text("Setting up your channels…", H * 0.032f, 0x99FFFFFF, false);
         root.addView(message, new FrameLayout.LayoutParams(
@@ -287,8 +291,12 @@ public class LiveActivity extends ReelActivity {
         hdr.put("X-Plex-Product", "Reel");
         hdr.put("X-Plex-Client-Profile-Name", "Konvergo");
         pipPlayer = PreviewHandoff.newPlayer(this, hdr);
-        pipPlayer.setVolume(0f);
         pipPlayer.addListener(new androidx.media3.common.Player.Listener() {
+            @Override
+            public void onVideoSizeChanged(androidx.media3.common.VideoSize v) {
+                if (mine == pipToken) pipFit(v);
+            }
+
             @Override
             public void onRenderedFirstFrame() {
                 if (mine == pipToken && pipTex != null) pipTex.animate().alpha(1f).setDuration(Motion.SLOW_MS).start();
@@ -307,6 +315,24 @@ public class LiveActivity extends ReelActivity {
         pipPlayer.setPlayWhenReady(true);
         pipPlayer.prepare();
     }
+
+    /** Fits the picture inside the 16:9 box at its own shape, centred, so wide films are not stretched. */
+    private void pipFit(androidx.media3.common.VideoSize v) {
+        if (pipTex == null || v.width <= 0 || v.height <= 0) return;
+        float ar = v.width * v.pixelWidthHeightRatio / v.height;
+        int bw = pipBoxW, bh = pipBoxH;
+        int w = bw, h = bh;
+        if (ar > (float) bw / bh) h = Math.round(bw / ar);
+        else w = Math.round(bh * ar);
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) pipTex.getLayoutParams();
+        lp.width = w;
+        lp.height = h;
+        lp.topMargin = pipBoxTop + (bh - h) / 2;
+        lp.rightMargin = pipBoxRight + (bw - w) / 2;
+        pipTex.setLayoutParams(lp);
+    }
+
+    private int pipBoxW, pipBoxH, pipBoxTop, pipBoxRight;
 
     private void pipStop() {
         handler.removeCallbacks(pipGo);
