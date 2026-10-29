@@ -111,11 +111,21 @@ class _LiveScreenState extends State<LiveScreen> {
   Future<void> _tune(LiveChannel c) async {
     _pipToken++;
     _pipDelay?.cancel();
+<<<<<<< HEAD
     // Stop the preview picture for good, not just pause it: a paused player keeps its connection to the
     // server and keeps filling its buffer, which starves the real player when the same file is opened.
     await _pipPlayer?.stop();
     _pipShowing = false;
     _pipChannel = 0;
+=======
+    // let go of the little picture completely: two streams from the server at once can stall the real one
+    final p = _pipPlayer;
+    _pipPlayer = null;
+    _pipVideo = null;
+    _pipShowing = false;
+    _pipChannel = 0;
+    await p?.dispose();
+>>>>>>> a4f9497dd5b9e45b91b565f1c56f32fb792ce36d
     if (!mounted) return;
     setState(() {});
     await tuneChannel(context, c);
