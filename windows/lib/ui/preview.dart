@@ -81,7 +81,24 @@ class Preview {
         configuration: const PlayerConfiguration(
             title: 'Reel preview', bufferSize: 48 * 1024 * 1024));
     _player = p;
-    _video = VideoController(p);
+    _video = VideoController(p,
+        configuration: const VideoControllerConfiguration(hwdec: 'auto-copy'));
+    // A failure is written to the log (it used to vanish), and a hardware-decoding problem switches that off
+    // for the preview player instead of leaving a black card that never plays.
+    p.stream.error.listen((e) {
+      Log.w('PREVIEW error  $e');
+      if (RegExp(r'avhw|hwdec|hw device|hardware|d3d11|dxva|cuda|vaapi',
+              caseSensitive: false)
+          .hasMatch(e)) {
+        final np = p.platform;
+        if (np is NativePlayer) np.setProperty('hwdec', 'no');
+      }
+    });
+    p.stream.log.listen((l) {
+      if (l.level == 'error' || l.level == 'fatal') {
+        Log.w('PREVIEW mpv  ${l.prefix}: ${l.text.trim()}');
+      }
+    });
     p.stream.width.listen((_) => sizeTick.value++);
     p.stream.height.listen((_) => sizeTick.value++);
     p.setPlaylistMode(PlaylistMode.single); // loop a short trailer
@@ -177,6 +194,7 @@ class Preview {
       Log.w('PREVIEW opening  ${it.displayTitle}');
       await p.setVolume(Prefs.quiet ? 0 : _level);
       await p.open(Media(src), play: true);
+      Log.w('PREVIEW opened  ${it.displayTitle}');
       // Only show it once frames are actually moving, so the card never goes black.
       await p.stream.position
           .firstWhere((d) => d > const Duration(milliseconds: 300))
@@ -187,8 +205,9 @@ class Preview {
       if (_session != null)
         unawaited(
             _probe(gen)); // a film scene (not a trailer): look for black bars
-    } catch (_) {
+    } catch (e) {
       // no preview for this one; the poster stays
+      if (gen == _gen) Log.w('PREVIEW failed  ${it.displayTitle}  $e');
     }
   }
 

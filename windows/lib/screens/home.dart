@@ -135,7 +135,11 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _load() async {
     final mine = ++_loadToken;
     // build the Live guide quietly now, so the Live tab opens at once
-    if (Live.cached == null) unawaited(Live.load().then((_) {}, onError: (_) {}));
+    // (after a pause, so it does not compete with the first preview for the server)
+    if (Live.cached == null) {
+      Future.delayed(const Duration(seconds: 12),
+          () => Live.load().then((_) {}, onError: (_) {}));
+    }
     setState(() {
       _loading = _rows.isEmpty;
       _error = null;
