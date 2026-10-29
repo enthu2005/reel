@@ -117,7 +117,9 @@ public class LiveActivity extends ReelActivity {
         det.addView(dTitle);
         det.addView(dSub);
         det.addView(dTime);
-        col.addView(det, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (int) (H * 0.2f)));
+        LinearLayout.LayoutParams dl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (int) (H * 0.2f));
+        dl.rightMargin = (int) (H * 0.21f * 16f / 9f + W * 0.02f); // room for the little picture
+        col.addView(det, dl);
 
         rulerBox = new FrameLayout(this);
         col.addView(rulerBox, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (int) (H * 0.045f)));
@@ -132,6 +134,13 @@ public class LiveActivity extends ReelActivity {
         scroll.addView(rows);
         col.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         root.addView(col);
+        pipTex = new android.view.TextureView(this);
+        pipTex.setAlpha(0f);
+        int pw = (int) (H * 0.21f * 16f / 9f);
+        FrameLayout.LayoutParams pl = new FrameLayout.LayoutParams(pw, (int) (H * 0.21f), Gravity.TOP | Gravity.END);
+        pl.topMargin = (int) (H * 0.127f);
+        pl.rightMargin = (int) (W * 0.045f);
+        root.addView(pipTex, pl);
 
         message = text("Setting up your channels…", H * 0.032f, 0x99FFFFFF, false);
         root.addView(message, new FrameLayout.LayoutParams(
@@ -164,6 +173,7 @@ public class LiveActivity extends ReelActivity {
         handler.removeCallbacks(tick);
         handler.postDelayed(tick, 20_000);
         // back from the channel editor: the list may have changed
+        if (pipWant != null) pipTo(pipWant); // back from watching: the picture starts again
         if (editing) {
             editing = false;
             Plex.async(Live::load, new Plex.Callback<List<Live.Channel>>() {
@@ -220,6 +230,83 @@ public class LiveActivity extends ReelActivity {
     protected void onPause() {
         super.onPause();
         handler.removeCallbacks(tick);
+        pipStop(); // let go of the little picture: two streams at once can stall the real one
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        pipStop();
+    }
+
+    // ------------------------------------------------------------------ picture-in-picture
+
+    private android.view.TextureView pipTex;
+    private androidx.media3.exoplayer.ExoPlayer pipPlayer;
+    private String pipSession;
+    private int pipChannel;       // the channel the little picture shows
+    private Live.Channel pipWant; // the channel it should show once you rest on it
+    private int pipToken;
+    private final Runnable pipGo = () -> pipStart(pipWant);
+
+    private boolean pipAllowed() {
+        return getSharedPreferences("reel_ui", MODE_PRIVATE).getBoolean("previews", true) && !HomeActivity.quiet(this);
+    }
+
+    private void pipTo(Live.Channel c) {
+        pipWant = c;
+        if (!pipAllowed() || c.num == pipChannel) return;
+        handler.removeCallbacks(pipGo);
+        handler.postDelayed(pipGo, 700);
+    }
+
+    private void pipStart(final Live.Channel c) {
+        final Live.Slot s = c == null ? null : Live.nowOn(c);
+        if (s == null || isDestroyed()) return;
+        pipStop();
+        final int mine = ++pipToken;
+        pipChannel = c.num;
+        long off = Math.max(0, System.currentTimeMillis() - s.start);
+        java.util.Map<String, String> hdr = new java.util.HashMap<>();
+        hdr.put("X-Plex-Client-Profile-Extra", Plex.previewProfile());
+        hdr.put("X-Plex-Client-Identifier", Plex.clientId());
+        hdr.put("X-Plex-Product", "Reel");
+        hdr.put("X-Plex-Client-Profile-Name", "Konvergo");
+        pipPlayer = PreviewHandoff.newPlayer(this, hdr);
+        pipPlayer.setVolume(0f);
+        pipPlayer.addListener(new androidx.media3.common.Player.Listener() {
+            @Override
+            public void onRenderedFirstFrame() {
+                if (mine == pipToken && pipTex != null) pipTex.animate().alpha(1f).setDuration(Motion.SLOW_MS).start();
+            }
+
+            @Override
+            public void onPlayerError(androidx.media3.common.PlaybackException error) {
+                if (mine == pipToken) pipStop();
+            }
+        });
+        pipPlayer.setVideoTextureView(pipTex);
+        pipSession = java.util.UUID.randomUUID().toString();
+        pipPlayer.setMediaItem(new androidx.media3.common.MediaItem.Builder()
+                .setUri(Plex.previewUrl(s.prog.key, off, pipSession))
+                .setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8).build());
+        pipPlayer.setPlayWhenReady(true);
+        pipPlayer.prepare();
+    }
+
+    private void pipStop() {
+        handler.removeCallbacks(pipGo);
+        pipToken++;
+        pipChannel = 0;
+        if (pipTex != null) pipTex.setAlpha(0f);
+        if (pipPlayer != null) {
+            pipPlayer.release();
+            pipPlayer = null;
+        }
+        if (pipSession != null) {
+            Plex.stopTranscode(pipSession);
+            pipSession = null;
+        }
     }
 
     private int focusedRow() {
@@ -229,6 +316,7 @@ public class LiveActivity extends ReelActivity {
     }
 
     private void showDetail(Live.Channel c, Live.Slot s) {
+        pipTo(c);
         long now = System.currentTimeMillis();
         boolean live = s.start <= now && now < s.end;
         dChannel.setText("CH " + c.num + "  ·  " + c.name + (live ? "   ·   ON NOW" : ""));
