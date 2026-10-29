@@ -157,7 +157,160 @@ public class PlayerActivity extends Activity {
         return getSharedPreferences("reel_ui", MODE_PRIVATE).getBoolean("autoPlay", true);
     }
 
+    // ---- "Still watching?": asks before autoplay carries on once nobody seems to be there
+    private static int sChain = 0;          // episodes that started on their own since the last button press
+    private static long sChainStart = 0;    // wall clock of that last press (or first start)
+    private static long sLastSeen = 0;      // when a player screen last closed
+    private LinearLayout stillCard;
+
+    private void touched() {
+        sChain = 0;
+        sChainStart = System.currentTimeMillis();
+    }
+
+    private boolean shouldAskStillWatching() {
+        android.content.SharedPreferences p = getSharedPreferences("reel_ui", MODE_PRIVATE);
+        if (!p.getBoolean("stillOn", true)) return false;
+        if (sChain + 1 < p.getInt("stillEpisodes", 3)) return false;
+        boolean night = false;
+        if (p.getBoolean("stillNight", true)) {
+            int hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY);
+            night = hour < 6; // 12am to 6am
+        }
+        int hours = p.getInt("stillHours", 3);
+        boolean long_ = hours > 0 && System.currentTimeMillis() - sChainStart >= hours * 3_600_000L;
+        return night || long_;
+    }
+
+    /** Autoplay's way to the next episode: asks first if nobody seems to be watching. */
+    private void advanceAuto() {
+        if (nextEpisode() == null) return;
+        if (stillCard != null) return;
+        if (!shouldAskStillWatching()) {
+            sChain++;
+            playNext();
+            return;
+        }
+        if (player != null) player.setPlayWhenReady(false);
+        if (upNext != null) upNext.setVisibility(View.GONE);
+        stillCard = new LinearLayout(this);
+        stillCard.setOrientation(LinearLayout.VERTICAL);
+        stillCard.setGravity(Gravity.CENTER_HORIZONTAL);
+        int pad = (int) (H * 0.04f);
+        stillCard.setPadding(pad * 2, pad, pad * 2, pad);
+        stillCard.setBackground(UiUtil.rounded(0xF01C1C1E, H * 0.03f));
+        stillCard.setElevation(H * 0.03f);
+        TextView t = new TextView(this);
+        t.setText("Still watching?");
+        t.setTextColor(0xFFFFFFFF);
+        t.setTypeface(UiUtil.font(UiUtil.SEMIBOLD));
+        t.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.05f);
+        stillCard.addView(t);
+        TextView s = new TextView(this);
+        s.setText(sChain + 1 + " episodes have played without a button press.\nPaused until you answer.");
+        s.setTextColor(UiUtil.TEXT2);
+        s.setGravity(Gravity.CENTER);
+        s.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.025f);
+        LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        sl.topMargin = (int) (H * 0.012f);
+        stillCard.addView(s, sl);
+        TextView b = new TextView(this);
+        b.setText("Yes, keep watching");
+        b.setTextColor(0xFF000000);
+        b.setTypeface(UiUtil.font(UiUtil.SEMIBOLD));
+        b.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.028f);
+        b.setBackground(UiUtil.rounded(0xFFE8833A, H * 0.04f));
+        b.setPadding(pad, (int) (pad * 0.4f), pad, (int) (pad * 0.4f));
+        b.setFocusable(true);
+        b.setOnClickListener(v -> {
+            touched();
+            root.removeView(stillCard);
+            stillCard = null;
+            playNext();
+        });
+        LinearLayout.LayoutParams bl = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        bl.topMargin = (int) (H * 0.03f);
+        stillCard.addView(b, bl);
+        root.addView(stillCard, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        b.requestFocus();
+    }
+
+    // ---- Live channels: playing a programme of the pretend TV schedule (see Live)
+    private int channelNum = 0;
+    private LinearLayout chanCard;
+
+    /** Next (+1) or previous (-1) channel. */
+    private void zap(int delta) {
+        List<Live.Channel> all = Live.cached();
+        if (channelNum <= 0 || all == null || all.size() < 2) return;
+        int at = 0;
+        for (int i = 0; i < all.size(); i++) if (all.get(i).num == channelNum) at = i;
+        Live.tune(this, all.get(Math.floorMod(at + delta, all.size())));
+        finish();
+    }
+
+    private void closeChannels() {
+        if (chanCard != null) root.removeView(chanCard);
+        chanCard = null;
+        view.requestFocus();
+    }
+
+    /** A strip of channels with what is on each right now. */
+    private void openChannels() {
+        List<Live.Channel> all = Live.cached();
+        if (all == null || all.isEmpty() || chanCard != null) return;
+        chanCard = new LinearLayout(this);
+        chanCard.setOrientation(LinearLayout.VERTICAL);
+        int pad = (int) (H * 0.02f);
+        chanCard.setPadding(pad, pad, pad, pad);
+        chanCard.setBackground(UiUtil.rounded(0xF01C1C1E, H * 0.025f));
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        LinearLayout lst = new LinearLayout(this);
+        lst.setOrientation(LinearLayout.VERTICAL);
+        sv.addView(lst);
+        View current = null;
+        for (final Live.Channel c : all) {
+            Live.Slot s = Live.nowOn(c);
+            final TextView r = new TextView(this);
+            r.setText(c.num + "   " + c.name + (s != null ? "\n" + s.prog.title : ""));
+            r.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.026f);
+            r.setTypeface(UiUtil.font(UiUtil.MEDIUM));
+            r.setTextColor(0xFFFFFFFF);
+            r.setSingleLine(false);
+            r.setMaxLines(2);
+            r.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            r.setPadding(pad, (int) (pad * 0.5f), pad, (int) (pad * 0.5f));
+            r.setFocusable(true);
+            final boolean cur = c.num == channelNum;
+            r.setBackground(cur ? UiUtil.rounded(0x33E8833A, H * 0.015f) : null);
+            r.setOnFocusChangeListener((v, has) -> {
+                r.setBackground(has ? UiUtil.rounded(0xFFE8833A, H * 0.015f)
+                        : cur ? UiUtil.rounded(0x33E8833A, H * 0.015f) : null);
+                r.setTextColor(has ? 0xFF000000 : 0xFFFFFFFF);
+            });
+            r.setOnClickListener(v -> {
+                if (cur) { closeChannels(); return; }
+                Live.tune(this, c);
+                finish();
+            });
+            lst.addView(r, new LinearLayout.LayoutParams(
+                    (int) (W * 0.3f), ViewGroup.LayoutParams.WRAP_CONTENT));
+            if (cur) current = r;
+        }
+        chanCard.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, (int) (H * 0.6f)));
+        root.addView(chanCard, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER_VERTICAL | Gravity.START));
+        ((FrameLayout.LayoutParams) chanCard.getLayoutParams()).leftMargin = (int) (W * 0.04f);
+        ((FrameLayout.LayoutParams) chanCard.getLayoutParams()).topMargin = (int) (H * 0.1f); // below the title
+        if (current != null) current.requestFocus();
+        else lst.getChildAt(0).requestFocus();
+    }
+
     private Plex.Item nextEpisode() {
+        if (channelNum > 0) return null; // a channel carries on by itself
         if (item == null || !"episode".equals(item.type)) return null;
         for (int i = 0; i < episodes.size() - 1; i++) {
             if (episodes.get(i).key.equals(key)) return episodes.get(i + 1);
@@ -345,7 +498,7 @@ public class PlayerActivity extends Activity {
         if (player.getPlayWhenReady()) upNextLeft -= Math.max(0, now - upNextAt); // holds while paused
         upNextAt = now;
         if (upNextLeft <= 0) {
-            playNext();
+            advanceAuto();
             return;
         }
         upNextCount.setText(player.getPlayWhenReady() ? "Playing in " + ((upNextLeft + 999) / 1000) : "Paused");
@@ -663,6 +816,8 @@ public class PlayerActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         Plex.init(this);
+        // Coming back after a while is a fresh start for the "Still watching?" count
+        if (sChainStart == 0 || System.currentTimeMillis() - sLastSeen > 10 * 60_000L) touched();
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         DisplayMetrics dm = getResources().getDisplayMetrics();
         W = dm.widthPixels;
@@ -806,7 +961,9 @@ public class PlayerActivity extends Activity {
         view.requestFocus();
 
         key = getIntent().getStringExtra("key");
+        channelNum = getIntent().getIntExtra("channel", 0);
         final long startMs = getIntent().getLongExtra("start", 0);
+        startedAtMs = startMs;
         if (getIntent().getBooleanExtra("inQueue", false)) {
             queueIndex = getIntent().getIntExtra("queueIndex", queuePos(key));
             if (queueIndex < 0 || queueIndex >= sQueue.size()) queueIndex = sQueue.isEmpty() ? -1 : 0;
@@ -828,6 +985,12 @@ public class PlayerActivity extends Activity {
                 if ("episode".equals(it.type)) {
                     subText.setText((it.parentIndex > 0 ? "S" + it.parentIndex + " \u00B7 " : "")
                             + (it.index > 0 ? "E" + it.index + "  " : "") + it.title);
+                    subText.setVisibility(View.VISIBLE);
+                }
+                if (channelNum > 0) {
+                    Live.Channel ch = Live.byNum(channelNum);
+                    subText.setText("CH " + channelNum + (ch != null ? "  ·  " + ch.name : "")
+                            + (subText.getVisibility() == View.VISIBLE ? "  ·  " + subText.getText() : ""));
                     subText.setVisibility(View.VISIBLE);
                 }
                 if (it.logo != null) {
@@ -853,6 +1016,17 @@ public class PlayerActivity extends Activity {
                 pickInitialTracks();
                 osd.loadThumbnails(it.partKey);
                 osd.loadChapterThumbnails(it.key);
+                Plex.async(() -> Plex.chapterNames(it.key), new Plex.Callback<List<String[]>>() {
+                    @Override
+                    public void ok(List<String[]> r) {
+                        remoteChapters = r;
+                    }
+
+                    @Override
+                    public void fail(Exception e) {
+                    }
+                });
+                PhoneRemote.attach(PlayerActivity.this, remoteHost);
                 if ("episode".equals(it.type) && it.gpKey != null) loadEpisodes(it.gpKey);
                 begin(startMs, false);
             }
@@ -1490,13 +1664,18 @@ public class PlayerActivity extends Activity {
                     begin(lastGood, transcoding);
                     return;
                 }
+                if (state == Player.STATE_ENDED && channelNum > 0 && Live.byNum(channelNum) != null) {
+                    Live.tune(PlayerActivity.this, Live.byNum(channelNum)); // on to whatever is next on the channel
+                    finish();
+                    return;
+                }
                 if (state == Player.STATE_ENDED) {
                     if (queueActive() && queueIndex + 1 < sQueue.size()) {
                         playQueueNext();
                         return;
                     }
                     if (nextEpisode() != null && autoPlayOn() && !upNextCancelled) {
-                        playNext();
+                        advanceAuto();
                         return;
                     }
                 }
@@ -1564,10 +1743,10 @@ public class PlayerActivity extends Activity {
     private long seekingTo = -1;
 
     // ---- Fast forward / rewind at 2x 4x 8x 16x (remote skip buttons) ----
-    private static final int[] TRICK_SPEEDS = {2, 4, 8, 16};
+    private static final int[] TRICK_SPEEDS = {2, 4, 8, 16, 32};
     private static final long TRICK_TICK_MS = 100;
     // How many seconds of film the timeline moves per real second at each step (2x, 4x, 8x, 16x)
-    private static final int[] TRICK_RATE = {10, 30, 90, 240};
+    private static final int[] TRICK_RATE = {10, 30, 90, 240, 600};
     private long trickStart = 0;
     private boolean trickWasPlaying = false;
     private int trickEat = 0;
@@ -2337,6 +2516,31 @@ public class PlayerActivity extends Activity {
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         int kc = event.getKeyCode();
+        if (event.getAction() == KeyEvent.ACTION_DOWN) touched();
+        if (chanCard != null) {
+            if (kc == KeyEvent.KEYCODE_BACK) {
+                if (event.getAction() == KeyEvent.ACTION_UP) closeChannels();
+                return true;
+            }
+            return super.dispatchKeyEvent(event);
+        }
+        if (channelNum > 0 && (kc == KeyEvent.KEYCODE_CHANNEL_UP || kc == KeyEvent.KEYCODE_CHANNEL_DOWN)) {
+            if (event.getAction() == KeyEvent.ACTION_UP) zap(kc == KeyEvent.KEYCODE_CHANNEL_UP ? 1 : -1);
+            return true;
+        }
+        if (channelNum > 0 && !panelOpen && kc == KeyEvent.KEYCODE_DPAD_DOWN) {
+            // Down shows the controls first, then the channel list
+            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                if (osd != null && osd.isVisible()) openChannels();
+                else if (osd != null) osd.show();
+            }
+            return true;
+        }
+        if (stillCard != null && kc != KeyEvent.KEYCODE_BACK) {
+            // Only OK answers the question; the rest of the remote is held until then
+            if (kc == KeyEvent.KEYCODE_DPAD_CENTER || kc == KeyEvent.KEYCODE_ENTER) return super.dispatchKeyEvent(event);
+            return true;
+        }
         if (epOpen && moveKey != null) {
             handleMoveKey(event);
             return true;
@@ -2814,6 +3018,26 @@ public class PlayerActivity extends Activity {
             showTab(TAB_INFO);
         }));
 
+        // Phone remote: scan to follow and control this from a phone on the same Wi-Fi
+        final String remoteUrl = PhoneRemote.url();
+        if (remoteUrl != null) {
+            LinearLayout remoteRow = new LinearLayout(this);
+            remoteRow.setOrientation(LinearLayout.HORIZONTAL);
+            remoteRow.setGravity(Gravity.CENTER_VERTICAL);
+            remoteRow.setPadding((int) (W * 0.014f), (int) (H * 0.02f), 0, 0);
+            ImageView code = new ImageView(this);
+            int qs = (int) (H * 0.2f);
+            code.setImageBitmap(qr(remoteUrl, qs));
+            remoteRow.addView(code, new LinearLayout.LayoutParams(qs, qs));
+            TextView how = new TextView(this);
+            how.setText("Control this from your phone\nScan the code, or open\n" + remoteUrl.replace("?t=", "\n?t="));
+            how.setTextColor(UiUtil.TEXT2);
+            how.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.022f);
+            how.setPadding((int) (W * 0.016f), 0, 0, 0);
+            remoteRow.addView(how);
+            list.addView(remoteRow);
+        }
+
         infoText = new TextView(this);
         infoText.setTextColor(0xFF9DFFB0);
         infoText.setTypeface(Typeface.MONOSPACE);
@@ -2833,9 +3057,285 @@ public class PlayerActivity extends Activity {
         return b ? "yes" : "no";
     }
 
+    // ------------------------------------------------------ Phone remote
+
+    private List<String[]> remoteChapters = new ArrayList<>();
+
+    /** What the phone page sees and can do; PhoneRemote calls this on the main thread. */
+    private final PhoneRemote.Host remoteHost = new PhoneRemote.Host() {
+        @Override
+        public String stateJson() {
+            try {
+                if (item == null || player == null) return "{\"idle\":true}";
+                org.json.JSONObject o = new org.json.JSONObject();
+                boolean ep = "episode".equals(item.type);
+                o.put("title", item.displayTitle());
+                o.put("sub", ep ? "S" + item.parentIndex + " E" + item.index + " · " + item.title : "");
+                long dur = item.duration > 0 ? item.duration : offsetMs + Math.max(0, player.getDuration());
+                o.put("pos", trickDir != 0 ? trickPos : currentMs());
+                o.put("dur", dur);
+                o.put("playing", player.getPlayWhenReady());
+                org.json.JSONArray au = new org.json.JSONArray();
+                for (Plex.Stream s : item.streamsOf(2)) {
+                    au.put(new org.json.JSONObject().put("id", s.id).put("label", s.label())
+                            .put("sel", curAudio != null && curAudio.id == s.id));
+                }
+                o.put("audio", au);
+                org.json.JSONArray su = new org.json.JSONArray();
+                boolean subsOn = curSub != null && (!transcoding || subChosen);
+                for (Plex.Stream s : item.streamsOf(3)) {
+                    su.put(new org.json.JSONObject().put("id", s.id)
+                            .put("label", s.label() + (s.forced ? " (forced)" : ""))
+                            .put("sel", subsOn && curSub.id == s.id));
+                }
+                o.put("subs", su);
+                o.put("subOff", !subsOn);
+                org.json.JSONArray ch = new org.json.JSONArray();
+                for (String[] c : remoteChapters) {
+                    ch.put(new org.json.JSONObject().put("ms", Long.parseLong(c[0])).put("name", c[1]));
+                }
+                o.put("chapters", ch);
+                o.put("info", remoteInfo(dur));
+                o.put("buffered", offsetMs + Math.max(0, player.getBufferedPosition()));
+                o.put("buf", remoteBuffer());
+                o.put("stats", remoteStats(dur));
+                return o.toString();
+            } catch (Exception e) {
+                return "{\"idle\":true}";
+            }
+        }
+
+        @Override
+        public String command(String name, java.util.Map<String, String> a) {
+            if (player == null || item == null) return "";
+            touched(); // a phone press counts as someone being there
+            try {
+                switch (name) {
+                    case "toggle":
+                        player.setPlayWhenReady(!player.getPlayWhenReady());
+                        break;
+                    case "seek": {
+                        long dur = item.duration > 0 ? item.duration : Long.MAX_VALUE;
+                        seekAbs(Math.min(dur - 2000, currentMs() + Long.parseLong(a.get("d"))));
+                        break;
+                    }
+                    case "chapter": {
+                        long dur = item.duration > 0 ? item.duration : Long.MAX_VALUE;
+                        seekAbs(Math.min(dur - 2000, Long.parseLong(a.get("ms"))));
+                        break;
+                    }
+                    case "audio": {
+                        int id = Integer.parseInt(a.get("id"));
+                        for (Plex.Stream s : item.streamsOf(2)) if (s.id == id) selectAudio(s);
+                        break;
+                    }
+                    case "sub": {
+                        int id = Integer.parseInt(a.get("id"));
+                        if (id == 0) {
+                            selectSub(null);
+                        } else {
+                            for (Plex.Stream s : item.streamsOf(3)) if (s.id == id) selectSub(s);
+                        }
+                        break;
+                    }
+                    default:
+                        break;
+                }
+            } catch (RuntimeException ignored) {
+            }
+            return "";
+        }
+    };
+
+    /** Live buffer numbers: seconds ahead in memory and on disk, how much memory, download speed. */
+    private org.json.JSONObject remoteBuffer() throws org.json.JSONException {
+        org.json.JSONObject b = new org.json.JSONObject();
+        long ramSec = player.getTotalBufferedDuration() / 1000;
+        long rate = bigBuffer != null && !transcoding ? bigBuffer.bytesPerSecond() : 0;
+        if (rate <= 0) {
+            Format vf = player.getVideoFormat();
+            Format af = player.getAudioFormat();
+            rate = ((vf != null && vf.bitrate > 0 ? vf.bitrate : 0) + (af != null && af.bitrate > 0 ? af.bitrate : 0)) / 8;
+        }
+        b.put("ramSec", ramSec);
+        b.put("ramMb", rate > 0 ? Math.min(ramSec * rate >> 20, 99999) : 0);
+        b.put("capMb", bufferCapMb);
+        boolean disk = BigBuffer.enabled(this) && !transcoding;
+        b.put("disk", disk);
+        b.put("diskSec", disk && bigBuffer != null ? Math.max(0, bigBuffer.aheadSeconds() - ramSec) : 0);
+        b.put("diskGb", disk ? Math.round(BigBuffer.usedBytes() / 1073741824.0 * 100) / 100.0 : 0);
+        double mbps = bigBuffer != null && disk ? bigBuffer.downloadMbps() : 0;
+        if (mbps <= 0) {
+            mbps = androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.getSingletonInstance(this)
+                    .getBitrateEstimate() / 1_000_000.0;
+        }
+        b.put("mbps", Math.round(mbps * 10) / 10.0);
+        return b;
+    }
+
+    /** Everything else worth a glance on the phone, as {k, v} rows. */
+    private org.json.JSONArray remoteStats(long dur) throws org.json.JSONException {
+        org.json.JSONArray out = new org.json.JSONArray();
+        java.util.function.BiConsumer<String, String> add = (k, v) -> {
+            try {
+                out.put(new org.json.JSONObject().put("k", k).put("v", v));
+            } catch (org.json.JSONException ignored) {
+            }
+        };
+        add.accept("Mode", transcoding ? "Transcode (Plex converts)" : "Direct play");
+        Format v = player.getVideoFormat();
+        if (v != null) {
+            String mime = v.sampleMimeType == null ? "" : v.sampleMimeType;
+            String codec = mime.contains("hevc") ? "HEVC" : mime.contains("avc") ? "H.264" : mime.contains("av01") ? "AV1"
+                    : mime.contains("vp9") ? "VP9" : mime.replace("video/", "").toUpperCase(Locale.ROOT);
+            String range = "SDR";
+            for (Plex.Stream s : item.streamsOf(1)) if (s.dovi) range = "Dolby Vision" + (s.doviProfile > 0 ? " P" + s.doviProfile : "");
+            if (range.equals("SDR") && v.colorInfo != null) {
+                range = v.colorInfo.colorTransfer == C.COLOR_TRANSFER_ST2084 ? "HDR10"
+                        : v.colorInfo.colorTransfer == C.COLOR_TRANSFER_HLG ? "HLG" : "SDR";
+            }
+            add.accept("Video", codec + "  " + v.width + "×" + v.height
+                    + (v.frameRate > 0 ? "  " + Math.round(v.frameRate * 1000) / 1000f + " fps" : "") + "  " + range);
+        }
+        add.accept("Video decoder", videoDecoder);
+        Format a = player.getAudioFormat();
+        if (a != null) {
+            add.accept("Audio", String.valueOf(a.sampleMimeType).replace("audio/", "") + "  " + a.channelCount + " ch  "
+                    + a.sampleRate + " Hz" + (a.averageBitrate > 0 ? "  " + a.averageBitrate / 1000 + " kbps" : ""));
+        }
+        add.accept("Audio decoder", audioDecoder);
+        if (item.fileSize > 0 && dur > 0) {
+            add.accept("File", String.format(Locale.US, "%.2f GB  (avg %.1f Mbit/s)", item.fileSize / 1073741824.0,
+                    item.fileSize * 8.0 / (dur / 1000.0) / 1_000_000.0));
+        }
+        add.accept("Dropped frames", String.valueOf(dropped));
+        add.accept("Audio underruns", String.valueOf(underruns));
+        try {
+            android.view.Display d = getWindowManager().getDefaultDisplay();
+            android.graphics.Point p = new android.graphics.Point();
+            d.getRealSize(p);
+            add.accept("TV output", p.x + "×" + p.y + "  @ " + Math.round(d.getRefreshRate() * 1000) / 1000f + " Hz");
+        } catch (RuntimeException ignored) {
+        }
+        try {
+            Runtime rt = Runtime.getRuntime();
+            long used = (rt.totalMemory() - rt.freeMemory() + android.os.Debug.getNativeHeapAllocatedSize()) >> 20;
+            android.app.ActivityManager.MemoryInfo mi = new android.app.ActivityManager.MemoryInfo();
+            ((android.app.ActivityManager) getSystemService(Context.ACTIVITY_SERVICE)).getMemoryInfo(mi);
+            add.accept("App memory", used + " MB  (device free " + (mi.availMem >> 20) + " of " + (mi.totalMem >> 20) + " MB)");
+        } catch (RuntimeException ignored) {
+        }
+        if (!lastError.isEmpty()) add.accept("Last error", lastError);
+        return out;
+    }
+
+    /** "Direct Play • HEVC • DV P8 • 74.2 Mbps • TrueHD Atmos 7.1 • buffer 61s" for the phone. */
+    private String remoteInfo(long dur) {
+        List<String> p = new ArrayList<>();
+        p.add(transcoding ? "Transcode" : "Direct Play");
+        Format v = player.getVideoFormat();
+        String mime = v == null || v.sampleMimeType == null ? "" : v.sampleMimeType;
+        if (!mime.isEmpty()) {
+            p.add(mime.contains("hevc") ? "HEVC" : mime.contains("avc") ? "H.264" : mime.contains("av01") ? "AV1"
+                    : mime.contains("vp9") ? "VP9" : mime.replace("video/", "").toUpperCase(Locale.ROOT));
+        }
+        for (Plex.Stream s : item.streamsOf(1)) {
+            if (s.dovi) p.add(s.doviProfile > 0 ? "DV P" + s.doviProfile : "DV");
+        }
+        if (item.fileSize > 0 && dur > 0) {
+            p.add(String.format(Locale.US, "%.1f Mbps", item.fileSize * 8.0 / (dur / 1000.0) / 1_000_000.0));
+        }
+        if (curAudio != null) p.add(curAudio.displayTitle.isEmpty() ? curAudio.label() : curAudio.displayTitle);
+        p.add("buffer " + player.getTotalBufferedDuration() / 1000 + "s");
+        return android.text.TextUtils.join(" • ", p);
+    }
+
+    /** A QR code for [text] as a bitmap, dark on white. */
+    private static android.graphics.Bitmap qr(String text, int px) {
+        try {
+            com.google.zxing.common.BitMatrix m = new com.google.zxing.qrcode.QRCodeWriter()
+                    .encode(text, com.google.zxing.BarcodeFormat.QR_CODE, px, px);
+            android.graphics.Bitmap b = android.graphics.Bitmap.createBitmap(px, px, android.graphics.Bitmap.Config.ARGB_8888);
+            for (int x = 0; x < px; x++) for (int y = 0; y < px; y++) b.setPixel(x, y, m.get(x, y) ? 0xFF000000 : 0xFFFFFFFF);
+            return b;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String tick(boolean ok, String text) {
+        return (ok ? "✓ " : "✗ ") + text + '\n';
+    }
+
+    /** The short "will this play properly" list shown at the top of Info: picture, sound, subtitles, refresh rate, speed. */
+    private String compatSummary() {
+        StringBuilder sb = new StringBuilder();
+        if (item != null) sb.append(item.displayTitle()).append('\n');
+        Format v = player.getVideoFormat();
+        String mime = v == null || v.sampleMimeType == null ? "" : v.sampleMimeType;
+        if (v != null) {
+            String codec = mime.contains("hevc") ? "HEVC" : mime.contains("avc") ? "H.264"
+                    : mime.contains("av01") ? "AV1" : mime.contains("vp9") ? "VP9"
+                    : mime.contains("dolby-vision") ? "Dolby Vision" : mime.replace("video/", "").toUpperCase(Locale.ROOT);
+            String dec = videoDecoder == null ? "" : videoDecoder.toLowerCase(Locale.ROOT);
+            boolean software = dec.startsWith("c2.android.") || dec.startsWith("omx.google.") || dec.contains(".sw.");
+            sb.append(tick(!software, codec + (software ? " software decode" : " hardware decode")));
+            boolean dv = false;
+            if (item != null) for (Plex.Stream s : item.streamsOf(1)) if (s.dovi) dv = true;
+            boolean pq = v.colorInfo != null && v.colorInfo.colorTransfer == C.COLOR_TRANSFER_ST2084;
+            if (dv) sb.append(tick(displaySupportsDolbyVision(this), displaySupportsDolbyVision(this)
+                    ? "Dolby Vision supported" : "Dolby Vision (this TV can't show it)"));
+            else if (pq) sb.append(tick(tvHdr10(this), tvHdr10(this) ? "HDR10 supported" : "HDR10 (this TV can't show it)"));
+        }
+        Format a = player.getAudioFormat();
+        if (a != null && a.sampleMimeType != null) {
+            String m = a.sampleMimeType;
+            boolean atmos = curAudio != null && curAudio.displayTitle != null
+                    && curAudio.displayTitle.toLowerCase(Locale.ROOT).contains("atmos");
+            String name = m.contains("true-hd") ? "TrueHD" + (atmos ? " Atmos" : "")
+                    : m.contains("eac3-joc") ? "Dolby Digital Plus Atmos"
+                    : m.contains("eac3") ? "Dolby Digital Plus" : m.contains("ac3") ? "Dolby Digital"
+                    : m.contains("vnd.dts.hd") ? "DTS-HD" : m.contains("dts") ? "DTS"
+                    : m.contains("mp4a") ? "AAC" : m.replace("audio/", "").toUpperCase(Locale.ROOT);
+            boolean bitstream = m.contains("true-hd") || m.contains("ac3") || m.contains("dts");
+            sb.append(tick(true, name + (bitstream && !transcoding && !ac3 ? " passthrough" : " (decoded by the Fire TV)")));
+        }
+        if (curSub != null && (!transcoding || subChosen)) {
+            String f = (curSub.format.isEmpty() ? curSub.codec : curSub.format).toUpperCase(Locale.ROOT);
+            if (f.contains("PGS") || f.contains("HDMV")) f = "PGS";
+            sb.append(tick(true, f + " subtitles " + (transcoding && isPicture(curSub) ? "(burned in by Plex)" : "supported")));
+        }
+        if (v != null && v.frameRate > 0) {
+            float best = 0;
+            try {
+                for (android.view.Display.Mode mode : getWindowManager().getDefaultDisplay().getSupportedModes()) {
+                    for (int k = 1; k <= 4; k++) {
+                        if (Math.abs(mode.getRefreshRate() - v.frameRate * k) < 0.05f) best = Math.max(best, mode.getRefreshRate());
+                    }
+                }
+            } catch (RuntimeException ignored) {
+            }
+            float fps = Math.round(v.frameRate * 1000) / 1000f;
+            if (best > 0) sb.append(tick(true, String.format(Locale.US, "%.3f Hz available", best)));
+            else sb.append(tick(false, String.format(Locale.US, "%.3f Hz not offered by the TV", fps)));
+        }
+        double avg = item != null && item.fileSize > 0 && item.duration > 0
+                ? item.fileSize * 8.0 / (item.duration / 1000.0) / 1_000_000.0 : 0;
+        if (avg > 0 && !transcoding) {
+            double est = androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.getSingletonInstance(this)
+                    .getBitrateEstimate() / 1_000_000.0;
+            if (est > 0) sb.append(tick(est >= avg * 1.3, est >= avg * 1.3 ? "Bandwidth sufficient" : "Bandwidth is tight for this file"));
+        }
+        sb.append(transcoding ? "TRANSCODING (Plex converts)" : "DIRECT PLAY");
+        if (avg > 0) sb.append(String.format(Locale.US, " — %.1f Mbps", avg));
+        sb.append('\n');
+        return sb.toString();
+    }
+
     private String debugText() {
         StringBuilder sb = new StringBuilder();
         if (player == null) return "Not playing";
+        sb.append(compatSummary()).append('\n');
         if (!lastError.isEmpty()) sb.append("Last error ").append(lastError).append('\n');
         if (transcoding && !plan.isEmpty()) sb.append("Plex plan:\n").append(plan);
 
@@ -2984,7 +3484,9 @@ public class PlayerActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        sLastSeen = System.currentTimeMillis();
         handler.removeCallbacksAndMessages(null);
+        PhoneRemote.detach(remoteHost);
         if (osd != null) osd.release();
         // Update the Fire TV home row once Plex has recorded where you stopped.
         final android.content.Context app = getApplicationContext();
@@ -2993,11 +3495,17 @@ public class PlayerActivity extends Activity {
         releasePlayer();
     }
 
+    private static final long SAMPLE_MS = 5 * 60_000L;
+    private long startedAtMs = 0; // where this play began (0 for a fresh start)
+
     private void finishReporting() {
         if (reportedStop || item == null || player == null) return;
         long pos = currentMs();
-        Plex.timeline(key, "stopped", pos, item.duration);
-        if (item.duration > 0 && pos > item.duration * 0.92) Plex.setWatched(key, true);
+        // Quit within the first five minutes of something you only just started: don't leave it in Continue Watching
+        boolean justSampled = channelNum > 0 || (pos < SAMPLE_MS && startedAtMs < SAMPLE_MS && item.viewOffset <= 0);
+        Plex.timeline(key, "stopped", justSampled ? 0 : pos, item.duration);
+        // Channel viewing is just TV in the background: it never marks things watched or fills Continue Watching
+        if (channelNum <= 0 && item.duration > 0 && pos > item.duration * 0.92) Plex.setWatched(key, true);
         reportedStop = true;
     }
 }

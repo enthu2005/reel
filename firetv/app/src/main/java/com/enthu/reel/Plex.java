@@ -671,6 +671,30 @@ public final class Plex {
         return l.isEmpty() ? null : l.get(0);
     }
 
+    /** Every episode of a show, in order. */
+    public static List<Item> episodesOf(String showKey) throws Exception {
+        return items(paged("/library/metadata/" + showKey + "/allLeaves", 600));
+    }
+
+    /** Every title of a library as Plex's raw JSON (genres, cast and so on included), for the smart search. */
+    public static JSONArray listAll(String sectionKey) throws Exception {
+        long now = System.currentTimeMillis();
+        Object[] hit = LIST_CACHE.get(sectionKey);
+        if (hit != null && now - (Long) hit[0] < 300_000L) return (JSONArray) hit[1];
+        JSONObject mc = get("/library/sections/" + sectionKey
+                + "/all?X-Plex-Container-Start=0&X-Plex-Container-Size=6000").getJSONObject("MediaContainer");
+        JSONArray m = mc.optJSONArray("Metadata");
+        if (m == null) m = new JSONArray();
+        LIST_CACHE.put(sectionKey, new Object[]{now, m});
+        return m;
+    }
+
+    private static final java.util.Map<String, Object[]> LIST_CACHE = new java.util.HashMap<>();
+
+    public static Item parseItem(JSONObject m) {
+        return parse(m);
+    }
+
     /** Searches movies, shows and episodes. */
     public static List<Item> search(String query) throws Exception {
         JSONArray hubs = get("/hubs/search?query=" + enc(query) + "&limit=24&includeCollections=0")
@@ -910,6 +934,26 @@ public final class Plex {
         } catch (Exception ignored) {
         }
         return null;
+    }
+
+    /** Chapters of a title: {startMs, name} in order (empty if Plex has none). */
+    public static java.util.List<String[]> chapterNames(String ratingKey) {
+        java.util.List<String[]> out = new ArrayList<>();
+        try {
+            JSONObject mc = get("/library/metadata/" + ratingKey + "?includeChapters=1").getJSONObject("MediaContainer");
+            JSONArray m = mc.optJSONArray("Metadata");
+            if (m == null || m.length() == 0) return out;
+            JSONArray ch = m.getJSONObject(0).optJSONArray("Chapter");
+            if (ch == null) return out;
+            for (int i = 0; i < ch.length(); i++) {
+                JSONObject c = ch.getJSONObject(i);
+                String tag = c.optString("tag", "");
+                out.add(new String[]{String.valueOf(c.optLong("startTimeOffset", 0)),
+                        tag.isEmpty() ? "Chapter " + (i + 1) : tag});
+            }
+        } catch (Exception ignored) {
+        }
+        return out;
     }
 
     /** Chapter pictures for a title: {startMs, thumbPath} in order (empty if Plex has none). */

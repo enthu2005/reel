@@ -61,6 +61,7 @@ public class LibrariesActivity extends ReelActivity {
         grid = new RecyclerView(this);
         grid.setLayoutManager(new GridLayoutManager(this, 3));
         grid.setClipToPadding(false);
+        grid.setClipChildren(false);
         grid.setItemAnimator(null);
         col.addView(grid, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));

@@ -61,6 +61,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
     private TextView summary;
     private TextView playBtn;
     private TextView startOverBtn;
+    private TextView watchedBtn;
     private TextView trailerBtn;
     private TextView previewBtn;
     private FrameLayout rootView;
@@ -86,6 +87,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
     private RecyclerView requestRow;
     private LinearLayout.LayoutParams requestLp;
     private android.widget.ScrollView lowerScroll;
+    private FrameLayout lowerClip;
     private TextView shuffleBtn;
 
     @Override
@@ -124,10 +126,9 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         // The home screen's preview, if one was playing for this title, carries on here.
-        previewView = new androidx.media3.ui.PlayerView(this);
-        previewView.setUseController(false);
-        previewView.setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM);
-        previewView.setShutterBackgroundColor(0x00000000);
+        // (Inflated from XML so it can use a texture view: a preview handed over from Home then keeps playing
+        // smoothly while the page fades in over it.)
+        previewView = (androidx.media3.ui.PlayerView) getLayoutInflater().inflate(R.layout.view_preview_player, root, false);
         previewView.setAlpha(0f);
         root.addView(previewView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -144,14 +145,12 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         root.addView(tint, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        scrimLeft = new View(this);
-        scrimLeft.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
-                new int[]{0xEE000000, 0x99000000, 0x00000000}));
+        scrimLeft = new ShadeView(this, new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{0xA6000000, 0x4D000000, 0x00000000}));
         root.addView(scrimLeft, new FrameLayout.LayoutParams((int) (W * 0.70f),
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
-        scrimBottom = new View(this);
-        scrimBottom.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+        scrimBottom = new ShadeView(this, new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
                 new int[]{0x00000000, 0xB3000000, 0xFF000000}));
         root.addView(scrimBottom, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, (int) (H * 0.5f), Gravity.BOTTOM));
@@ -184,6 +183,29 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         col.addView(logoBox, new LinearLayout.LayoutParams(
                 (int) (W * 0.42f), (int) (H * 0.095f)));
 
+        // Under the title: the buttons on the left, the ratings, details and summary on the right
+        LinearLayout heroRow = new LinearLayout(this);
+        heroRow.setOrientation(LinearLayout.HORIZONTAL);
+        heroRow.setClipChildren(false);
+        heroRow.setClipToPadding(false);
+        LinearLayout leftBlock = new LinearLayout(this);
+        leftBlock.setOrientation(LinearLayout.VERTICAL);
+        leftBlock.setClipChildren(false);
+        leftBlock.setClipToPadding(false);
+        LinearLayout rightCol = new LinearLayout(this);
+        rightCol.setOrientation(LinearLayout.VERTICAL);
+        rightCol.setClipChildren(false);
+        heroRow.addView(leftBlock, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams rightLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        rightLp.leftMargin = (int) (W * 0.04f);
+        rightLp.rightMargin = (int) (W * 0.03f);
+        heroRow.addView(rightCol, rightLp);
+        LinearLayout.LayoutParams heroLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        heroLp.topMargin = (int) (H * 0.018f);
+        col.addView(heroRow, heroLp);
+
         meta = new TextView(this);
         meta.setTextColor(UiUtil.TEXT2);
         meta.setTypeface(UiUtil.font(UiUtil.MEDIUM));
@@ -191,9 +213,8 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         meta.setSingleLine(true);
         meta.setEllipsize(TextUtils.TruncateAt.END);
         LinearLayout.LayoutParams metaLp = new LinearLayout.LayoutParams(
-                (int) (W * 0.5f), ViewGroup.LayoutParams.WRAP_CONTENT);
-        metaLp.topMargin = (int) (H * 0.012f);
-        col.addView(meta, metaLp);
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rightCol.addView(meta, metaLp);
 
         ratingRow = new LinearLayout(this);
         ratingRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -202,7 +223,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         LinearLayout.LayoutParams ratingLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         ratingLp.topMargin = (int) (H * 0.012f);
-        col.addView(ratingRow, ratingLp);
+        rightCol.addView(ratingRow, ratingLp);
 
         badgeRow = new LinearLayout(this);
         badgeRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -214,23 +235,27 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         summary = new TextView(this);
         summary.setTextColor(0xD9FFFFFF);
         summary.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.025f);
-        summary.setMaxLines(3);
+        summary.setMaxLines(4);
         summary.setEllipsize(TextUtils.TruncateAt.END);
         summary.setLineSpacing(0, 1.1f);
         LinearLayout.LayoutParams sumLp = new LinearLayout.LayoutParams(
-                (int) (W * 0.5f), ViewGroup.LayoutParams.WRAP_CONTENT);
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         sumLp.topMargin = (int) (H * 0.012f);
 
+        // Small buttons on top (preview, shuffle, start over), then Play and Mark as watched
         LinearLayout buttons = new LinearLayout(this);
         buttons.setOrientation(LinearLayout.HORIZONTAL);
         buttons.setClipChildren(false);
+        buttons.setClipToPadding(false);
         playBtn = makeButton("Play", true);
         startOverBtn = makeButton("Start over", false);
+        watchedBtn = makeButton("Mark as watched", false);
         playBtn.setOnClickListener(v -> play(false));
         startOverBtn.setOnClickListener(v -> play(true));
-        // Play, then the preview and trailer, then the rest. The row sizes to its buttons so
-        // none of them get squeezed or cut off.
+        watchedBtn.setOnClickListener(v -> toggleWatched());
+        watchedBtn.setVisibility(View.GONE);
         buttons.addView(playBtn);
+        buttons.addView(watchedBtn, buttonGap());
         // A small "expand" icon (four corner brackets) instead of a word; it takes the button's text colour
         previewBtn = makeButton("", false);
         previewBtn.setCompoundDrawablesRelativeWithIntrinsicBounds(
@@ -238,6 +263,10 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         previewBtn.setContentDescription("Full preview");
         previewBtn.setVisibility(View.GONE);
         previewBtn.setOnClickListener(v -> expandPreview());
+        // A round icon button, the same height as Play, last in the row
+        int ip = (int) (H * 0.018f);
+        previewBtn.setPadding(ip, ip, ip, ip);
+        previewBtn.setMinWidth(0);
         buttons.addView(previewBtn, buttonGap());
         trailerBtn = makeButton("Trailer", false); // kept out of the page: the trailer just plays behind it
         trailerBtn.setVisibility(View.GONE);
@@ -245,22 +274,20 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         shuffleBtn.setVisibility(View.GONE);
         shuffleBtn.setOnClickListener(v -> shuffleQueue());
         buttons.addView(shuffleBtn, buttonGap());
-        buttons.addView(startOverBtn, buttonGap());
+        buttons.addView(startOverBtn, 1, buttonGap()); // right after Play
         LinearLayout.LayoutParams btnRowLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        btnRowLp.topMargin = (int) (H * 0.025f);
-        btnRowLp.topMargin = (int) (H * 0.028f);
-        col.addView(buttons, btnRowLp);
-        sumLp.topMargin = (int) (H * 0.026f);
-        col.addView(summary, sumLp);
-        col.addView(badgeRow, badgeLp);
+        leftBlock.addView(buttons, btnRowLp);
+        sumLp.topMargin = (int) (H * 0.016f);
+        rightCol.addView(summary, sumLp);
+        rightCol.addView(badgeRow, badgeLp);
 
         col.setClipChildren(false);
         col.setClipToPadding(false);
         FrameLayout.LayoutParams colLp = new FrameLayout.LayoutParams(
-                (int) (W * 0.92f), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.START);
+                (int) (W * 0.92f), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.START);
         colLp.leftMargin = (int) (W * 0.05f);
-        colLp.topMargin = (int) (H * 0.05f);
+        colLp.bottomMargin = (int) (H * 0.06f); // sits low, so the picture shows above it like a poster
         root.addView(col, colLp);
 
         // Episodes, along the bottom
@@ -295,17 +322,17 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         epBox.setVisibility(View.GONE);
         epBox.setTag("epbox");
 
-        FrameLayout.LayoutParams epLp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM);
-        epLp.bottomMargin = (int) (H * 0.05f);
-        root.addView(epBox, epLp);
-
-        // Cast and Similar stack in one box along the bottom, so they can never sit on top of each other
+        // Episodes, Cast, Similar and Similar to request stack in one box along the bottom, so they can never
+        // sit on top of each other
         final LinearLayout lowerBox = new LinearLayout(this);
         lowerBox.setOrientation(LinearLayout.VERTICAL);
         lowerBox.setClipChildren(false);
         lowerBox.setClipToPadding(false);
+
+        LinearLayout.LayoutParams epLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        epLp.bottomMargin = (int) (H * 0.06f);
+        lowerBox.addView(epBox, epLp);
 
         // Cast, along the bottom of movie pages
         castBox = new LinearLayout(this);
@@ -375,8 +402,9 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lowerBox.addView(requestBox, requestLp);
         FrameLayout.LayoutParams lowerLp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM);
-        lowerLp.bottomMargin = (int) (H * 0.004f);
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP);
+        // The rows start just below the screen; pressing Down slides the page up to them (see pageShift)
+        lowerLp.topMargin = (int) (H * 0.97f); // a sliver stays on screen (a view wholly off screen isn't drawn); invisible until shown
         // Cast and Similar fill this window as before; "Similar to request" waits just below it and
         // scrolls into view when you press down, so the three rows never sit on top of each other.
         lowerScroll = new android.widget.ScrollView(this);
@@ -388,13 +416,35 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         lowerScroll.setPadding(0, lift, 0, lift);
         lowerScroll.addView(lowerBox, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        // The padding above would lift the rows, so pull the window down by the same amount (and a touch more)
-        lowerLp.bottomMargin = (int) (H * 0.004f) - lift - (int) (H * 0.015f);
-        root.addView(lowerScroll, lowerLp);
+        // Its own clipping box: the page root lets buttons grow past their edges, but rows that scroll out of this
+        // window must not draw over the title, buttons and summary above it
+        lowerClip = new FrameLayout(this);
+        lowerClip.setClipChildren(true);
+        lowerClip.addView(lowerScroll, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        lowerClip.setAlpha(0f);
+        root.addView(lowerClip, lowerLp);
 
         setContentView(root);
         rootView = root;
         takePreview();
+
+        // Down from the buttons slides the page up to Cast / Similar / Episodes; Up from them slides it back
+        root.getViewTreeObserver().addOnGlobalFocusChangeListener((oldF, newF) -> {
+            if (newF == null || infoCol == null || lowerClip == null) return;
+            boolean low = isInside(newF, lowerClip);
+            if (!low && !isInside(newF, infoCol)) return;
+            float to = low ? -H * 0.53f : 0f;
+            if (infoCol.getTranslationY() == to) return;
+            infoCol.animate().translationY(to).setDuration(Motion.MEDIUM_MS).setInterpolator(Motion.EASE).start();
+            lowerClip.animate().translationY(to).alpha(low ? 1f : 0f).setDuration(Motion.MEDIUM_MS)
+                    .setInterpolator(Motion.EASE).start();
+        });
+    }
+
+    private static boolean isInside(View v, View parent) {
+        for (android.view.ViewParent p = v.getParent(); p != null; p = p.getParent()) if (p == parent) return true;
+        return v == parent;
     }
 
     private androidx.media3.ui.PlayerView previewView;
@@ -409,8 +459,19 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
      * buttons go a little see-through so more of the video shows. The focused button stays solid.
      */
     private void previewOn(boolean on) {
+        previewOn(on, false);
+    }
+
+    /** [now]: set the shading straight away (a playing preview just carried over), no slow fade over the video. */
+    private void previewOn(boolean on, boolean now) {
         previewBtn.setVisibility(on ? View.VISIBLE : View.GONE);
         if (scrimLeft == null) return;
+        if (now) {
+            scrimLeft.setAlpha(on ? 0.85f : 1f);
+            scrimBottom.setAlpha(on ? 0.85f : 1f);
+            if (tint != null && !previewFull) tint.setAlpha(on ? 1f : 0f);
+            return;
+        }
         // The side and bottom shading stay mostly there (text must stay readable) and fade to clear
         // where there is nothing on the page; the whole picture also gets a light tint.
         scrimLeft.animate().alpha(on ? 0.85f : 1f).setDuration(on ? FADE_MS : Motion.LONG_MS).setInterpolator(FADE_EASE).start();
@@ -569,7 +630,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         PreviewHandoff.session = null;
         previewView.setPlayer(preview);
         previewView.setAlpha(1f); // carries straight on from the grown card
-        previewOn(true);
+        previewOn(true, true);
         // A touch louder on the title page, still quiet.
         float v = HomeActivity.previewVolume(this);
         HomeActivity.fadeVolume(preview, v, 1200);
@@ -912,7 +973,20 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
 
     private void style(TextView t, boolean primary, boolean focused, float r) {
         UiUtil.stylePill(t, focused, r);
-        if (primary && !focused) t.setBackground(UiUtil.rounded(0x4DFFFFFF, r));
+        if (primary && !focused) {
+            t.setBackground(UiUtil.rounded(0xFFE8833A, r)); // the orange Play button
+            t.setTextColor(0xFFFFFFFF);
+        }
+    }
+
+    private void toggleWatched() {
+        if (item == null) return;
+        SoundFx.click();
+        boolean watch = !item.isWatched();
+        Plex.setWatched(item.key, watch);
+        watchedBtn.setText(watch ? "Mark as unwatched" : "Mark as watched");
+        // Plex needs a moment to record it before the page asks again
+        handler.postDelayed(() -> { if (!isDestroyed()) load(); }, 900);
     }
 
     private boolean shouldShowShuffle() {
@@ -1078,7 +1152,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
                         int c = dominantColour(bmp);
                         if (c == 0) return;
                         scrimLeft.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
-                                new int[]{shade(c, 0.17f, 0xEE), shade(c, 0.20f, 0x99), shade(c, 0.20f, 0x00)}));
+                                new int[]{shade(c, 0.17f, 0xA6), shade(c, 0.20f, 0x4D), shade(c, 0.20f, 0x00)}));
                         scrimBottom.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
                                 new int[]{shade(c, 0.14f, 0x00), shade(c, 0.12f, 0xB3), shade(c, 0.07f, 0xFF)}));
                     }
@@ -1172,9 +1246,10 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         summary.setText(item.summary);
         Badges.fill(badgeRow, item, (int) (H * 0.8f)); // smaller badges leave room for the rows below
 
-        String art = Plex.img(item.heroArt() != null ? item.heroArt() : item.poster(), 1920, 1080);
+        // 1280x720 is plenty behind the dark overlays and is far lighter to decode and draw
+        String art = Plex.img(item.heroArt() != null ? item.heroArt() : item.poster(), 1280, 720);
         if (art != null) {
-            Glide.with(this).load(art).centerCrop()
+            Glide.with(this).load(art).centerCrop().format(com.bumptech.glide.load.DecodeFormat.PREFER_RGB_565)
                     .transition(DrawableTransitionOptions.withCrossFade(300)).into(bg);
         }
 
@@ -1186,6 +1261,9 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             logo.setVisibility(View.VISIBLE);
             title.setVisibility(View.GONE);
         }
+
+        watchedBtn.setText(item.isWatched() ? "Mark as unwatched" : "Mark as watched");
+        watchedBtn.setVisibility(View.VISIBLE);
 
         Plex.Item t = target();
         if (t == null) {
@@ -1341,22 +1419,25 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
     private void sizeLowerWindow(final int tries) {
         lowerScroll.postDelayed(() -> {
             if (isDestroyed()) return;
+            View ep = (View) epRow.getParent();
+            boolean eps = ep.getVisibility() == View.VISIBLE;
             boolean cast = castBox.getVisibility() == View.VISIBLE;
             boolean more = moreBox.getVisibility() == View.VISIBLE;
             boolean request = requestBox.getVisibility() == View.VISIBLE;
-            if ((cast && castBox.getHeight() == 0) || (more && moreBox.getHeight() == 0)
+            if ((eps && ep.getHeight() == 0) || (cast && castBox.getHeight() == 0) || (more && moreBox.getHeight() == 0)
                     || (request && requestBox.getHeight() == 0) || infoCol.getHeight() == 0) {
                 if (tries > 0) sizeLowerWindow(tries - 1); // not laid out yet
                 return;
             }
             int pad = lowerScroll.getPaddingTop() + lowerScroll.getPaddingBottom();
-            int shown = pad + (cast ? castBox.getHeight() : 0)
+            int epGap = eps ? ((LinearLayout.LayoutParams) ep.getLayoutParams()).bottomMargin : 0;
+            int shown = pad + (eps ? ep.getHeight() + epGap : 0) + (cast ? castBox.getHeight() : 0)
                     + (more ? moreBox.getHeight() + moreLp.topMargin : 0);
             int all = shown + (request ? requestBox.getHeight() + requestLp.topMargin : 0);
-            // Cast and Similar are what rests on screen; the request row waits below
-            int want = request && (cast || more) ? shown : all;
+            // Episodes, Cast and Similar are what rests on screen; the request row waits below
+            int want = request && (eps || cast || more) ? shown : all;
             // Never taller than the space under the title, buttons, summary and badges
-            int room = H - ((FrameLayout.LayoutParams) lowerScroll.getLayoutParams()).bottomMargin - infoCol.getBottom();
+            int room = (int) (H * 0.54f); // what shows once the page has slid up
             want = Math.max((int) (H * 0.2f), Math.min(want, room));
             if (want >= all) want = ViewGroup.LayoutParams.WRAP_CONTENT;
             ViewGroup.LayoutParams lp = lowerScroll.getLayoutParams();

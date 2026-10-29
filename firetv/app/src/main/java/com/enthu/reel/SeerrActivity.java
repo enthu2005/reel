@@ -102,6 +102,9 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
     private RecyclerView rowsView;
     private RowAdapter adapter;
     private TextView searchBtn;
+    private FrameLayout rootLayout;
+    private FrameLayout skeleton;
+    private android.animation.ObjectAnimator skeletonAnim;
     private String searchQuery = "";
 
     @Override
@@ -116,8 +119,10 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
 
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(UiUtil.BG);
+        rootLayout = root;
+        root.setClipChildren(false); // the focused Search button grows past the header's box
 
-        backdrop = new ImageView(this);
+        backdrop =new ImageView(this);
         backdrop.setScaleType(ImageView.ScaleType.CENTER_CROP);
         root.addView(backdrop, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 (int) (H * 0.62f), Gravity.TOP));
@@ -137,6 +142,9 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.setGravity(Gravity.CENTER_VERTICAL);
+        // The focused Search button grows; don't cut its rounded ends flat at the header's edge
+        head.setClipChildren(false);
+        head.setClipToPadding(false);
         TextView title = new TextView(this);
         gType = getIntent().getStringExtra("genreType");
         gId = getIntent().getStringExtra("genreId");
@@ -146,7 +154,16 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
         title.setTypeface(UiUtil.font(UiUtil.BOLD));
         title.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.045f);
         head.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        searchBtn = pill("Search Seerr");
+        searchBtn = pill("Search");
+        final SearchIcon searchIcon = new SearchIcon((int) (H * 0.03f));
+        searchBtn.setCompoundDrawablesRelative(searchIcon, null, null, null);
+        searchBtn.setCompoundDrawablePadding((int) (H * 0.012f));
+        searchIcon.set(0xFFFFFFFF);
+        final View.OnFocusChangeListener pillFocus = searchBtn.getOnFocusChangeListener();
+        searchBtn.setOnFocusChangeListener((v, f) -> {
+            pillFocus.onFocusChange(v, f);
+            searchIcon.set(f ? 0xFF000000 : 0xFFFFFFFF);
+        });
         searchBtn.setOnClickListener(v -> askSearch());
         if (gId == null) head.addView(searchBtn);
         FrameLayout.LayoutParams hl = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
@@ -236,6 +253,41 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
         }
     }
 
+    /** A magnifying glass: a ring with a short handle. */
+    private static final class SearchIcon extends android.graphics.drawable.Drawable {
+        private final int size;
+        private final android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+
+        SearchIcon(int size) {
+            this.size = size;
+            setBounds(0, 0, size, size);
+            paint.setStyle(android.graphics.Paint.Style.STROKE);
+            paint.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+            paint.setStrokeWidth(Math.max(2f, size * 0.11f));
+        }
+
+        void set(int color) {
+            paint.setColor(color);
+            invalidateSelf();
+        }
+
+        @Override
+        public void draw(android.graphics.Canvas c) {
+            float r = size * 0.31f;
+            float cx = size * 0.43f;
+            float cy = size * 0.43f;
+            c.drawCircle(cx, cy, r, paint);
+            float d = r * 0.7071f;
+            c.drawLine(cx + d, cy + d, size * 0.9f, size * 0.9f, paint);
+        }
+
+        @Override public void setAlpha(int a) { paint.setAlpha(a); }
+        @Override public void setColorFilter(android.graphics.ColorFilter cf) { paint.setColorFilter(cf); }
+        @Override public int getOpacity() { return android.graphics.PixelFormat.TRANSLUCENT; }
+        @Override public int getIntrinsicWidth() { return size; }
+        @Override public int getIntrinsicHeight() { return size; }
+    }
+
     private TextView pill(String label) {
         final TextView t = new TextView(this);
         t.setText(label);
@@ -264,9 +316,9 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
             message.requestFocus();
             return;
         }
-        message.setText("Loading…");
         message.setOnClickListener(null);
-        message.setVisibility(View.VISIBLE);
+        message.setVisibility(View.GONE);
+        showSkeleton();
         if (gId != null) {
             loadGenre();
             return;
@@ -315,6 +367,7 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
             @SuppressWarnings("unchecked")
             public void ok(List<Object[]> result) {
                 if (isDestroyed()) return;
+                hideSkeleton();
                 rows.clear();
                 media.clear();
                 genreCards.clear();
@@ -347,6 +400,7 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
                 adapter.notifyDataSetChanged();
                 if (rows.isEmpty()) {
                     message.setText(q.isEmpty() ? "Seerr didn't return anything." : "Nothing found for \u201C" + q + "\u201D");
+                    message.setVisibility(View.VISIBLE);
                     return;
                 }
                 message.setVisibility(View.GONE);
@@ -366,8 +420,53 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
         });
     }
 
+    /** Grey placeholder title and poster rows that pulse while Seerr loads. */
+    private void showSkeleton() {
+        if (skeleton != null) return;
+        FrameLayout sk = new FrameLayout(this);
+        float r = H * 0.014f;
+        int left = (int) (W * 0.05f);
+        sk.addView(skeletonBar((int) (W * 0.38f), (int) (H * 0.05f), H * 0.012f, left, (int) (H * 0.19f)));
+        sk.addView(skeletonBar((int) (W * 0.45f), (int) (H * 0.022f), H * 0.008f, left, (int) (H * 0.27f)));
+        sk.addView(skeletonBar((int) (W * 0.40f), (int) (H * 0.022f), H * 0.008f, left, (int) (H * 0.31f)));
+        sk.addView(skeletonBar((int) (W * 0.16f), (int) (H * 0.032f), H * 0.01f, left, (int) (H * 0.50f)));
+        int cw = (int) (W * 0.097f);
+        int gap = (int) (H * 0.022f);
+        for (int i = 0; i * (cw + gap) < W; i++) {
+            sk.addView(skeletonBar(cw, (int) (cw * 1.5f), r, left + i * (cw + gap), (int) (H * 0.56f)));
+        }
+        rootLayout.addView(sk, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        skeleton = sk;
+        skeletonAnim = android.animation.ObjectAnimator.ofFloat(sk, View.ALPHA, 0.35f, 1f);
+        skeletonAnim.setDuration(900);
+        skeletonAnim.setRepeatMode(android.animation.ValueAnimator.REVERSE);
+        skeletonAnim.setRepeatCount(android.animation.ValueAnimator.INFINITE);
+        skeletonAnim.start();
+    }
+
+    private View skeletonBar(int w, int h, float radius, int left, int top) {
+        View v = new View(this);
+        v.setBackground(UiUtil.rounded(0x26FFFFFF, radius));
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(w, h);
+        lp.leftMargin = left;
+        lp.topMargin = top;
+        v.setLayoutParams(lp);
+        return v;
+    }
+
+    private void hideSkeleton() {
+        if (skeletonAnim != null) skeletonAnim.cancel();
+        if (skeleton != null && skeleton.getParent() instanceof ViewGroup) {
+            ((ViewGroup) skeleton.getParent()).removeView(skeleton);
+        }
+        skeleton = null;
+        skeletonAnim = null;
+    }
+
     private void showError(Exception e) {
         if (isDestroyed()) return;
+        hideSkeleton();
         message.setText("Couldn't reach Seerr: " + e.getMessage()
                 + "\nCheck the address in Settings. Press OK to try again.");
         message.setOnClickListener(v -> load());
@@ -392,6 +491,7 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
             @Override
             public void ok(List<Seerr.Media> list) {
                 if (isDestroyed()) return;
+                hideSkeleton();
                 media.clear();
                 List<Plex.Item> items = new ArrayList<>();
                 java.util.Set<String> seen = new java.util.HashSet<>();
@@ -402,6 +502,7 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
                 }
                 if (items.isEmpty()) {
                     message.setText("Nothing in " + gName + " right now.");
+                    message.setVisibility(View.VISIBLE);
                     return;
                 }
                 message.setVisibility(View.GONE);
@@ -450,7 +551,7 @@ public class SeerrActivity extends ReelActivity implements PosterAdapter.Listene
             String q = box.getText().toString().trim();
             if (!q.equals(searchQuery)) {
                 searchQuery = q;
-                searchBtn.setText(q.isEmpty() ? "Search Seerr" : "Search: " + q);
+                searchBtn.setText(q.isEmpty() ? "Search" : "Search: " + q);
                 load();
             }
         });

@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0b0d">
+<title>Reel remote</title>
+<style>
+  :root { --bg:#0b0b0d; --card:#17181c; --line:#26272d; --text:#f4f4f6; --dim:#9a9ca6; --accent:#e8833a; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; background:var(--bg); color:var(--text);
+    font:16px/1.4 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; }
+  main { max-width:560px; margin:0 auto; padding:20px 16px calc(40px + env(safe-area-inset-bottom)); }
+  h1 { font-size:22px; margin:6px 0 2px; }
+  .sub { color:var(--dim); font-size:14px; min-height:18px; }
+  .times { display:flex; justify-content:space-between; color:var(--dim); font-variant-numeric:tabular-nums; margin-top:18px; }
+  input[type=range] { width:100%; accent-color:var(--accent); height:34px; margin:2px 0 6px; }
+  .row { display:flex; gap:10px; margin:10px 0; }
+  .row button { flex:1; padding:16px 0; font-size:17px; }
+  button { background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:14px; font:inherit; }
+  button:active { background:#202228; }
+  button.play { background:var(--accent); border-color:var(--accent); color:#fff; font-size:22px; flex:1.3; }
+  h2 { font-size:13px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); margin:26px 0 8px; font-weight:600; }
+  .list { background:var(--card); border:1px solid var(--line); border-radius:14px; overflow:hidden; }
+  .item { display:flex; justify-content:space-between; gap:12px; width:100%; text-align:left; padding:14px 16px;
+    border:0; border-radius:0; border-bottom:1px solid var(--line); background:none; }
+  .item:last-child { border-bottom:0; }
+  .item.sel { color:var(--accent); }
+  .item .t { overflow:hidden; text-overflow:ellipsis; }
+  .item .ms { color:var(--dim); font-variant-numeric:tabular-nums; flex:none; }
+  .info { margin-top:26px; padding:12px 14px; border:1px dashed var(--line); border-radius:12px; color:var(--dim);
+    font:13px/1.5 ui-monospace, Menlo, Consolas, monospace; word-break:break-word; }
+  .seek { position:relative; margin:2px 0 6px; }
+  .seek .buf { position:absolute; left:0; right:0; top:50%; height:6px; margin-top:-3px; border-radius:3px;
+    background:linear-gradient(to right, #4a4c56 var(--b,0%), #26272d var(--b,0%)); }
+  .seek input[type=range] { position:relative; margin:0; background:transparent; }
+  .seek input[type=range]::-webkit-slider-runnable-track { background:transparent; }
+  .seek input[type=range]::-moz-range-track { background:transparent; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px 16px; }
+  .meter { margin:10px 0 2px; }
+  .meter .top { display:flex; justify-content:space-between; font-size:14px; }
+  .meter .top span:last-child { color:var(--dim); font-variant-numeric:tabular-nums; }
+  .track { height:8px; background:#26272d; border-radius:4px; margin-top:6px; overflow:hidden; }
+  .fill { height:100%; width:0; border-radius:4px; background:var(--accent); transition:width .6s; }
+  .fill.disk { background:#4aa3ff; }
+  .speed { display:flex; align-items:baseline; justify-content:space-between; margin-top:14px; }
+  .speed b { font-size:26px; font-variant-numeric:tabular-nums; }
+  .speed span { color:var(--dim); font-size:13px; }
+  svg.spark { width:100%; height:54px; margin-top:6px; display:block; }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:8px 14px; font-size:14px; }
+  .kv div:nth-child(odd) { color:var(--dim); }
+  .kv div:nth-child(even) { text-align:right; word-break:break-word; font-variant-numeric:tabular-nums; }
+  #idle { text-align:center; color:var(--dim); margin-top:30vh; }
+  .hide { display:none; }
+</style>
+</head>
+<body>
+<main>
+  <div id="idle" class="hide">Nothing is playing.<br>Start something on the TV and this page will follow it.</div>
+  <div id="ui" class="hide">
+    <h1 id="title"></h1>
+    <div class="sub" id="sub"></div>
+    <div class="times"><span id="pos">0:00</span><span id="dur">0:00</span></div>
+    <div class="seek" id="seek"><div class="buf"></div><input id="bar" type="range" min="0" max="1000" value="0"></div>
+    <div class="row">
+      <button data-seek="-60000">&#9194; 1m</button>
+      <button data-seek="-10000">&#9194; 10s</button>
+      <button class="play" id="toggle">&#9199;</button>
+      <button data-seek="30000">30s &#9193;</button>
+      <button data-seek="60000">1m &#9193;</button>
+    </div>
+    <div id="audioBox"><h2>Audio</h2><div class="list" id="audio"></div></div>
+    <div id="subBox"><h2>Subtitles</h2><div class="list" id="subs"></div></div>
+    <div id="chapBox"><h2>Chapters</h2><div class="list" id="chaps"></div></div>
+    <h2>Live</h2>
+    <div class="card">
+      <div class="meter"><div class="top"><span>Buffer in memory</span><span id="ramT"></span></div>
+        <div class="track"><div class="fill" id="ramF"></div></div></div>
+      <div class="meter" id="diskM"><div class="top"><span>Buffer on disk</span><span id="diskT"></span></div>
+        <div class="track"><div class="fill disk" id="diskF"></div></div></div>
+      <div class="speed"><span>Download speed</span><b id="mbps">&ndash;</b></div>
+      <svg class="spark" id="spark" viewBox="0 0 120 40" preserveAspectRatio="none"></svg>
+    </div>
+    <h2>Details</h2>
+    <div class="card"><div class="kv" id="stats"></div></div>
+    <div class="info" id="info"></div>
+  </div>
+</main>
+<script>
+const T = new URLSearchParams(location.search).get('t') || '';
+const $ = id => document.getElementById(id);
+let dragging = false, last = null;
+
+function fmt(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60;
+  const p = n => String(n).padStart(2, '0');
+  return h > 0 ? h + ':' + p(m) + ':' + p(x) : m + ':' + p(x);
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+async function call(path) {
+  try {
+    const r = await fetch(path + (path.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(T), {cache: 'no-store'});
+    if (r.status === 403) { $('idle').textContent = 'Scan the QR code on the TV again.'; show(false); return null; }
+    return await r.json();
+  } catch (e) { return null; }
+}
+const cmd = (c, extra) => call('/cmd?c=' + c + (extra || '')).then(render);
+
+function show(on) { $('ui').classList.toggle('hide', !on); $('idle').classList.toggle('hide', on); }
+
+function list(el, rows, pick) {
+  el.innerHTML = rows.map((r, i) =>
+    '<button class="item' + (r.sel ? ' sel' : '') + '" data-i="' + i + '"><span class="t">' + esc(r.label) +
+    '</span><span class="ms">' + (r.sel ? '&#10003;' : (r.right || '')) + '</span></button>').join('');
+  el.querySelectorAll('button').forEach(b => b.onclick = () => pick(rows[+b.dataset.i]));
+}
+
+function render(s) {
+  if (!s || s.idle) { show(false); return; }
+  show(true);
+  last = s;
+  $('title').textContent = s.title || '';
+  $('sub').textContent = s.sub || '';
+  $('dur').textContent = fmt(s.dur);
+  if (!dragging) {
+    $('pos').textContent = fmt(s.pos);
+    $('bar').value = s.dur > 0 ? Math.round(1000 * s.pos / s.dur) : 0;
+  }
+  $('toggle').innerHTML = s.playing ? '&#9208;' : '&#9654;';
+  $('audioBox').classList.toggle('hide', !(s.audio && s.audio.length));
+  list($('audio'), s.audio || [], r => cmd('audio', '&id=' + r.id));
+  const subs = [{label: 'Off', sel: !!s.subOff, id: 0}].concat(s.subs || []);
+  $('subBox').classList.toggle('hide', subs.length < 2);
+  list($('subs'), subs, r => cmd('sub', '&id=' + r.id));
+  $('chapBox').classList.toggle('hide', !(s.chapters && s.chapters.length));
+  const cur = (s.chapters || []).reduce((a, c, i) => c.ms <= s.pos ? i : a, -1);
+  list($('chaps'), (s.chapters || []).map((c, i) => ({label: (i + 1) + '. ' + c.name, right: fmt(c.ms), sel: i === cur, ms: c.ms})),
+    r => cmd('chapter', '&ms=' + r.ms));
+  $('info').textContent = s.info || '';
+  $('seek').style.setProperty('--b', (s.dur > 0 ? Math.min(100, 100 * s.buffered / s.dur) : 0) + '%');
+  live(s.buf);
+  $('stats').innerHTML = (s.stats || []).map(r => '<div>' + esc(r.k) + '</div><div>' + esc(r.v) + '</div>').join('');
+}
+
+const speeds = [];
+function live(b) {
+  if (!b) return;
+  // Bars fill up to 10 minutes ahead for the time buffers
+  $('ramT').textContent = b.ramSec + ' s ahead' + (b.ramMb ? '  ·  ~' + b.ramMb + ' of ' + b.capMb + ' MB' : '');
+  $('ramF').style.width = Math.min(100, b.ramSec / 6) + '%';
+  $('diskM').classList.toggle('hide', !b.disk);
+  $('diskT').textContent = b.diskSec + ' s ahead  ·  ' + b.diskGb + ' GB';
+  $('diskF').style.width = Math.min(100, b.diskSec / 6) + '%';
+  $('mbps').textContent = b.mbps > 0 ? b.mbps.toFixed(1) + ' Mbit/s' : '–';
+  speeds.push(b.mbps || 0);
+  if (speeds.length > 60) speeds.shift();
+  const max = Math.max(1, ...speeds);
+  const pts = speeds.map((v, i) => (i * 120 / 59).toFixed(1) + ',' + (38 - 36 * v / max).toFixed(1)).join(' ');
+  $('spark').innerHTML = '<polyline fill="none" stroke="#e8833a" stroke-width="1.6" vector-effect="non-scaling-stroke" points="' + pts + '"/>';
+}
+
+document.querySelectorAll('[data-seek]').forEach(b => b.onclick = () => cmd('seek', '&d=' + b.dataset.seek));
+$('toggle').onclick = () => cmd('toggle');
+$('bar').addEventListener('input', () => { dragging = true; if (last) $('pos').textContent = fmt(last.dur * $('bar').value / 1000); });
+$('bar').addEventListener('change', () => {
+  const ms = Math.round(last.dur * $('bar').value / 1000);
+  dragging = false;
+  cmd('chapter', '&ms=' + ms);
+});
+
+async function tick() { if (!dragging) render(await call('/state')); }
+tick(); setInterval(tick, 1000);
+</script>
+</body>
+</html>

@@ -8,7 +8,7 @@
 # Run:   powershell -ExecutionPolicy Bypass -File .\install-firetv.ps1
 #   or:  powershell -ExecutionPolicy Bypass -File .\install-firetv.ps1 -Ip 192.168.1.50 -Apk C:\path\app-debug.apk
 
-param([string]$Ip = '192.168.0.225', [string]$Apk)
+param([string]$Ip = '192.168.1.8', [string]$Apk)
 $ErrorActionPreference = 'Stop'
 
 if (-not $Ip) { $Ip = Read-Host 'Fire Stick IP address' } else { Write-Host "Fire Stick: $Ip" }

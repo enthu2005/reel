@@ -1,0 +1,270 @@
+package com.enthu.reel;
+
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.DisplayMetrics;
+import android.util.TypedValue;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Locale;
+
+/** Live: a TV guide of channels made from your libraries. OK on any programme tunes the channel. */
+public class LiveActivity extends ReelActivity {
+
+    private static final long WINDOW_MS = 3 * 3_600_000L;
+    private static final long HALF_H = 30 * 60_000L;
+
+    private int W;
+    private int H;
+    private LinearLayout rows;
+    private FrameLayout rulerBox;
+    private ScrollView scroll;
+    private TextView message;
+    private TextView clock;
+    private TextView dChannel;
+    private TextView dTitle;
+    private TextView dSub;
+    private TextView dTime;
+    private List<Live.Channel> channels = new ArrayList<>();
+    private long t0;
+    private int gridW;
+    private int nameW;
+    private int rowH;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final SimpleDateFormat fmt = new SimpleDateFormat("h:mm a", Locale.getDefault());
+    private final Runnable tick = new Runnable() {
+        @Override
+        public void run() {
+            clock.setText(fmt.format(new Date()));
+            if (!channels.isEmpty() && windowStart() != t0) render(focusedRow());
+            handler.postDelayed(this, 20_000);
+        }
+    };
+
+    private static long windowStart() {
+        long n = System.currentTimeMillis();
+        return n - Math.floorMod(n, HALF_H);
+    }
+
+    private TextView text(String s, float size, int color, boolean bold) {
+        TextView t = new TextView(this);
+        t.setText(s);
+        t.setTextColor(color);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_PX, size);
+        t.setTypeface(bold ? UiUtil.font(UiUtil.SEMIBOLD) : UiUtil.font(UiUtil.MEDIUM));
+        return t;
+    }
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        Plex.init(this);
+        SoundFx.init(this);
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        W = dm.widthPixels;
+        H = dm.heightPixels;
+        nameW = (int) (W * 0.15f);
+        gridW = (int) (W * 0.76f);
+        rowH = (int) (H * 0.088f);
+
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(UiUtil.BG);
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding((int) (W * 0.045f), (int) (H * 0.06f), (int) (W * 0.045f), (int) (H * 0.04f));
+        col.setClipChildren(false);
+
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = text("Live", H * 0.06f, Color.WHITE, true);
+        head.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        clock = text(fmt.format(new Date()), H * 0.034f, UiUtil.TEXT2, false);
+        head.addView(clock);
+        col.addView(head);
+
+        // What the highlighted programme is
+        LinearLayout det = new LinearLayout(this);
+        det.setOrientation(LinearLayout.VERTICAL);
+        det.setPadding(0, (int) (H * 0.018f), 0, (int) (H * 0.02f));
+        dChannel = text("", H * 0.022f, 0xFFE8833A, true);
+        dTitle = text("", H * 0.042f, Color.WHITE, true);
+        dTitle.setSingleLine();
+        dTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        dSub = text("", H * 0.026f, 0xE6FFFFFF, false);
+        dSub.setSingleLine();
+        dSub.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        dTime = text("", H * 0.023f, UiUtil.TEXT2, false);
+        det.addView(dChannel);
+        det.addView(dTitle);
+        det.addView(dSub);
+        det.addView(dTime);
+        col.addView(det, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (int) (H * 0.2f)));
+
+        rulerBox = new FrameLayout(this);
+        col.addView(rulerBox, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (int) (H * 0.045f)));
+
+        scroll = new ScrollView(this);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.setClipChildren(false);
+        scroll.setClipToPadding(false);
+        rows = new LinearLayout(this);
+        rows.setOrientation(LinearLayout.VERTICAL);
+        rows.setClipChildren(false);
+        scroll.addView(rows);
+        col.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        root.addView(col);
+
+        message = text("Setting up your channels…", H * 0.032f, 0x99FFFFFF, false);
+        root.addView(message, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        setContentView(root);
+
+        Plex.async(Live::load, new Plex.Callback<List<Live.Channel>>() {
+            @Override
+            public void ok(List<Live.Channel> r) {
+                if (isDestroyed()) return;
+                channels = r;
+                if (r.isEmpty()) {
+                    message.setText("No channels yet. They fill up from the genres in your libraries.");
+                    return;
+                }
+                message.setVisibility(View.GONE);
+                render(0);
+            }
+
+            @Override
+            public void fail(Exception e) {
+                if (!isDestroyed()) message.setText("Couldn't build the guide: " + e.getMessage());
+            }
+        });
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        handler.removeCallbacks(tick);
+        handler.postDelayed(tick, 20_000);
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        handler.removeCallbacks(tick);
+    }
+
+    private int focusedRow() {
+        View f = getCurrentFocus();
+        if (f != null && f.getTag() instanceof Integer) return (Integer) f.getTag();
+        return 0;
+    }
+
+    private void showDetail(Live.Channel c, Live.Slot s) {
+        long now = System.currentTimeMillis();
+        boolean live = s.start <= now && now < s.end;
+        dChannel.setText("CH " + c.num + "  ·  " + c.name + (live ? "   ·   ON NOW" : ""));
+        dTitle.setText(s.prog.title);
+        dSub.setText(s.prog.sub);
+        long mins = s.prog.durMs / 60_000;
+        String dur = mins >= 60 ? (mins / 60) + " h " + (mins % 60) + " min" : mins + " min";
+        dTime.setText(fmt.format(new Date(s.start)) + " – " + fmt.format(new Date(s.end)) + "   ·   " + dur
+                + (live ? "   ·   " + Math.max(1, (s.end - now) / 60_000) + " min left" : ""));
+    }
+
+    private void render(int focusRow) {
+        t0 = windowStart();
+        long t1 = t0 + WINDOW_MS;
+        float ppm = (float) gridW / WINDOW_MS;
+        long now = System.currentTimeMillis();
+
+        rulerBox.removeAllViews();
+        for (long t = t0; t < t1; t += HALF_H) {
+            TextView r = text(fmt.format(new Date(t)), H * 0.022f, UiUtil.TEXT2, false);
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER_VERTICAL);
+            lp.leftMargin = nameW + (int) ((t - t0) * ppm);
+            rulerBox.addView(r, lp);
+        }
+
+        rows.removeAllViews();
+        View toFocus = null;
+        float gap = H * 0.004f;
+        for (int ci = 0; ci < channels.size(); ci++) {
+            final Live.Channel c = channels.get(ci);
+            LinearLayout line = new LinearLayout(this);
+            line.setOrientation(LinearLayout.HORIZONTAL);
+            line.setClipChildren(false);
+
+            LinearLayout name = new LinearLayout(this);
+            name.setOrientation(LinearLayout.VERTICAL);
+            name.setGravity(Gravity.CENTER_VERTICAL);
+            name.setPadding((int) (W * 0.006f), 0, (int) (W * 0.01f), 0);
+            name.addView(text(String.valueOf(c.num), H * 0.032f, 0xFFE8833A, true));
+            TextView nm = text(c.name, H * 0.022f, Color.WHITE, false);
+            nm.setSingleLine();
+            nm.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            name.addView(nm);
+            line.addView(name, new LinearLayout.LayoutParams(nameW, rowH));
+
+            FrameLayout area = new FrameLayout(this);
+            area.setClipChildren(false);
+            for (final Live.Slot s : Live.window(c, t0, t1)) {
+                long a = Math.max(s.start, t0);
+                long b = Math.min(s.end, t1);
+                int w = Math.max(1, (int) ((b - a) * ppm - gap * 2));
+                final TextView blk = new TextView(this);
+                blk.setTag(ci);
+                blk.setText(s.prog.title + (s.prog.sub.isEmpty() ? "" : "\n" + s.prog.sub));
+                blk.setMaxLines(2);
+                blk.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                blk.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.022f);
+                blk.setTypeface(UiUtil.font(UiUtil.MEDIUM));
+                blk.setGravity(Gravity.CENTER_VERTICAL);
+                blk.setPadding((int) (W * 0.008f), 0, (int) (W * 0.006f), 0);
+                final boolean live = s.start <= now && now < s.end;
+                final int idle = live ? 0xFF2B2B30 : UiUtil.CARD;
+                blk.setBackground(UiUtil.rounded(idle, H * 0.01f));
+                blk.setTextColor(Color.WHITE);
+                blk.setFocusable(true);
+                blk.setOnFocusChangeListener((v, has) -> {
+                    blk.setBackground(UiUtil.rounded(has ? 0xFFE8833A : idle, H * 0.01f));
+                    blk.setTextColor(has ? Color.BLACK : Color.WHITE);
+                    if (has) showDetail(c, s);
+                });
+                blk.setOnClickListener(v -> {
+                    SoundFx.click();
+                    Live.tune(this, c);
+                });
+                FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(w, rowH - (int) (gap * 2));
+                lp.leftMargin = (int) ((a - t0) * ppm + gap);
+                lp.topMargin = (int) gap;
+                area.addView(blk, lp);
+                if (ci == focusRow && toFocus == null && s.start <= now && now < s.end) toFocus = blk;
+            }
+            line.addView(area, new LinearLayout.LayoutParams(gridW, rowH));
+            rows.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowH));
+        }
+
+        // A thin orange line marks "now"
+        View nowLine = new View(this);
+        nowLine.setBackgroundColor(0xFFE8833A);
+        FrameLayout.LayoutParams nl = new FrameLayout.LayoutParams(Math.max(2, (int) (H * 0.003f)), (int) (H * 0.045f));
+        nl.leftMargin = nameW + (int) ((now - t0) * ppm);
+        rulerBox.addView(nowLine, nl);
+
+        if (toFocus != null) toFocus.requestFocus();
+    }
+}
