@@ -236,7 +236,7 @@ final class Party {
 
     // ------------------------------------------------------------------ games: guess the film, movie quiz
 
-    static final int VOTE_MODE = 0, GUESS = 1, QUIZ = 2;
+    static final int VOTE_MODE = 0, GUESS = 1, QUIZ = 2, TRAILER = 3;
     static final int G_LOBBY = 0, G_ASK = 1, G_RESULT = 2, G_FINAL = 3;
     private static final long RESULT_MS = 4500;
 
@@ -246,9 +246,17 @@ final class Party {
         final String[] options;
         final int correct;
         final String thumb; // guess the film: the poster the TV sharpens, "" for text questions
+        final String trailer;   // trailer guess: the clip the TV plays (never sent to phones)
+        final boolean audioOnly; // ... with the picture hidden
         final long ms;
 
         Round(String prompt, String[] options, int correct, String thumb, long ms) {
+            this(prompt, options, correct, thumb, ms, "", false);
+        }
+
+        Round(String prompt, String[] options, int correct, String thumb, long ms, String trailer, boolean audioOnly) {
+            this.trailer = trailer == null ? "" : trailer;
+            this.audioOnly = audioOnly;
             this.prompt = prompt;
             this.options = options;
             this.correct = correct;

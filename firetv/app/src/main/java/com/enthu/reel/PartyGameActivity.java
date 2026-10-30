@@ -127,6 +127,24 @@ public class PartyGameActivity extends ReelActivity {
             }
             return out;
         }
+        if (mode == Party.TRAILER) {
+            int tries = 0;
+            for (Plex.Item c : pool) {
+                if (out.size() >= 6 || tries++ >= 30) break;
+                String url;
+                try {
+                    url = Plex.trailerUrl(c.key);
+                } catch (Exception e) {
+                    continue;
+                }
+                if (url == null) continue;
+                boolean audio = out.size() % 2 == 0; // every other clip has its picture hidden
+                Party.Round base = titleRound(audio ? "Which film is this trailer?\n\nListen to the TV — the picture is hidden."
+                        : "Which film is this trailer?\n\nWatch the TV — it is silent.", c, pool, c.thumb, 25000, rnd);
+                out.add(new Party.Round(base.prompt, base.options, base.correct, c.thumb, 25000, url, audio));
+            }
+            return out;
+        }
         int next = 0;
         for (int q = 0; q < 8 && next < pool.size(); q++) {
             Plex.Item c = pool.get(next++);
@@ -264,6 +282,7 @@ public class PartyGameActivity extends ReelActivity {
     }
 
     private void lobby() {
+        releaseTrailer();
         stopFx();
         root.removeAllViews();
         root.setBackgroundColor(UiUtil.BG);
@@ -276,7 +295,7 @@ public class PartyGameActivity extends ReelActivity {
         row.setPadding((int) (W * 0.06f), (int) (H * 0.08f), (int) (W * 0.05f), 0);
         LinearLayout left = new LinearLayout(this);
         left.setOrientation(LinearLayout.VERTICAL);
-        left.addView(text(mode == Party.GUESS ? "Guess the film" : "Movie quiz night", H * 0.05f, Color.WHITE, true));
+        left.addView(text(mode == Party.GUESS ? "Guess the film" : mode == Party.TRAILER ? "Trailer guess" : "Movie quiz night", H * 0.05f, Color.WHITE, true));
         left.addView(text("Scan to join · " + (sectionTitle == null ? "" : sectionTitle), H * 0.026f, 0x99FFFFFF, false));
         int qs = (int) (H * 0.4f);
         ImageView code = new ImageView(this);
@@ -339,7 +358,9 @@ public class PartyGameActivity extends ReelActivity {
 
         poster = null;
         shownStage = -1;
-        if (!q.thumb.isEmpty()) {
+        if (mode == Party.TRAILER) {
+            trailerBox(col, q, s.round, result);
+        } else if (!q.thumb.isEmpty()) {
             poster = new ImageView(this);
             poster.setScaleType(ImageView.ScaleType.CENTER_CROP);
             poster.setBackground(UiUtil.rounded(UiUtil.CARD, H * 0.015f));
@@ -404,7 +425,97 @@ public class PartyGameActivity extends ReelActivity {
         }
     }
 
+    // ---------------------------------------------------------------- trailer guess
+
+    private androidx.media3.exoplayer.ExoPlayer trailerPlayer;
+    private int trailerRound = -1;
+
+    private void releaseTrailer() {
+        if (trailerPlayer != null) {
+            trailerPlayer.release();
+            trailerPlayer = null;
+        }
+        trailerRound = -1;
+    }
+
+    /**
+     * The clip for this round. Some have the picture hidden ("LISTEN"), the others play silently. When the answer
+     * comes up the same clip carries on with sound (and the poster replaces the hidden picture).
+     */
+    private void trailerBox(LinearLayout col, Party.Round q, int round, boolean result) {
+        int bh = (int) (H * 0.4f);
+        FrameLayout box = new FrameLayout(this);
+        box.setBackground(UiUtil.rounded(UiUtil.CARD, H * 0.015f));
+        UiUtil.clipRounded(box, H * 0.015f);
+        androidx.media3.ui.PlayerView pv = new androidx.media3.ui.PlayerView(this);
+        pv.setUseController(false);
+        box.addView(pv, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        if (trailerPlayer == null || trailerRound != round) {
+            releaseTrailer();
+            trailerRound = round;
+            final androidx.media3.exoplayer.ExoPlayer p = PreviewHandoff.newPlayer(this);
+            trailerPlayer = p;
+            p.setRepeatMode(androidx.media3.common.Player.REPEAT_MODE_ONE);
+            p.addListener(new androidx.media3.common.Player.Listener() {
+                private boolean jumped;
+
+                @Override
+                public void onPlaybackStateChanged(int state) {
+                    // start somewhere in the middle, past the studio logos
+                    if (state == androidx.media3.common.Player.STATE_READY && !jumped && p.getDuration() > 20000) {
+                        jumped = true;
+                        p.seekTo((long) (p.getDuration() * (0.2 + new Random().nextDouble() * 0.4)));
+                    }
+                }
+
+                @Override
+                public void onPlayerError(androidx.media3.common.PlaybackException error) {
+                    // this clip won't play: the round carries on without it
+                }
+            });
+            p.setMediaItem(androidx.media3.common.MediaItem.fromUri(q.trailer));
+            p.setVolume(q.audioOnly ? 1f : 0f);
+            p.prepare();
+            p.play();
+        }
+        pv.setPlayer(trailerPlayer);
+        if (result) trailerPlayer.setVolume(1f);
+
+        if (q.audioOnly) {
+            pv.setAlpha(0f);
+            if (result) {
+                ImageView pic = new ImageView(this);
+                pic.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                String url = Plex.img(q.thumb.isEmpty() ? null : q.thumb, 400, 600);
+                if (url != null) com.bumptech.glide.Glide.with(this).load(url).centerCrop().into(pic);
+                box.addView(pic, new FrameLayout.LayoutParams(bh * 2 / 3, bh, Gravity.CENTER));
+            } else {
+                TextView listen = text("LISTEN", H * 0.09f, Color.WHITE, true);
+                listen.setLetterSpacing(0.2f);
+                listen.setGravity(Gravity.CENTER);
+                box.addView(listen, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER));
+                listen.animate().alpha(0.35f).setDuration(700).withEndAction(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (!isDestroyed() && listen.isAttachedToWindow()) {
+                            listen.animate().alpha(listen.getAlpha() > 0.5f ? 0.35f : 1f).setDuration(700).withEndAction(this).start();
+                        }
+                    }
+                }).start();
+            }
+        }
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(q.audioOnly && result ? bh * 2 / 3 : bh * 16 / 9, bh);
+        blp.topMargin = (int) (H * 0.02f);
+        col.addView(box, blp);
+        TextView cap = text(result ? q.options[q.correct] : q.prompt, result ? H * 0.04f : H * 0.03f, Color.WHITE, result);
+        cap.setGravity(Gravity.CENTER);
+        col.addView(cap, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    }
+
     private void finale(Party.Snap s) {
+        releaseTrailer();
         root.removeAllViews();
         root.setBackgroundColor(0xFF05050A);
         fx = new FireworksView(this);
@@ -519,6 +630,7 @@ public class PartyGameActivity extends ReelActivity {
     @Override
     protected void onDestroy() {
         handler.removeCallbacksAndMessages(null);
+        releaseTrailer();
         stopFx();
         if (started) Party.cancel();
         super.onDestroy();

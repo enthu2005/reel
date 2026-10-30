@@ -174,7 +174,7 @@ function renderGame(s) {
   last = s; gotAt = performance.now();
   ['adder', 'list', 'win', 'clock'].forEach(id => $(id).classList.add('hide'));
   $('game').classList.remove('hide');
-  $('h').textContent = s.mode === 1 ? 'Guess the film' : 'Movie quiz night';
+  $('h').textContent = s.mode === 1 ? 'Guess the film' : s.mode === 3 ? 'Trailer guess' : 'Movie quiz night';
   $('sub').textContent = '';
   const g = $('game');
   if (!s.name) {
@@ -198,7 +198,7 @@ function renderGame(s) {
   const asking = s.gPhase === 1, correct = s.correct;
   let html = '<div class="sub">Round ' + (s.round + 1) + ' of ' + s.total + ' · ' + s.myScore + ' points</div>';
   if (asking) html += '<div class="clock" id="gclock"></div>';
-  html += '<div style="font-size:19px;margin:6px 0 14px;font-weight:600">' + esc(s.prompt) + '</div>';
+  html += '<div style="font-size:19px;margin:6px 0 14px;font-weight:600;white-space:pre-line">' + esc(s.prompt) + '</div>';
   (s.options || []).forEach((o, i) => {
     let st = 'background:' + COLORS[i] + ';color:#fff;';
     if (!asking) {
