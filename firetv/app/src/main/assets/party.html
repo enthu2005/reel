@@ -174,7 +174,7 @@ function renderGame(s) {
   last = s; gotAt = performance.now();
   ['adder', 'list', 'win', 'clock'].forEach(id => $(id).classList.add('hide'));
   $('game').classList.remove('hide');
-  $('h').textContent = s.mode === 1 ? 'Guess the film' : s.mode === 3 ? 'Trailer guess' : s.mode === 4 ? 'Emoji plot' : 'Movie quiz night';
+  $('h').textContent = s.mode === 1 ? 'Guess the film' : s.mode === 3 ? 'Trailer guess' : s.mode === 4 ? 'Emoji plot' : s.mode === 5 ? 'Soundtrack game' : 'Movie quiz night';
   $('sub').textContent = '';
   const g = $('game');
   if (!s.name) {

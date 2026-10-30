@@ -128,10 +128,10 @@ public class PartyGameActivity extends ReelActivity {
             }
             return out;
         }
-        if (mode == Party.TRAILER) {
+        if (mode == Party.TRAILER || mode == Party.SOUND) {
             int tries = 0;
             for (Plex.Item c : pool) {
-                if (out.size() >= 6 || tries++ >= 30) break;
+                if (out.size() >= (mode == Party.SOUND ? 8 : 6) || tries++ >= 45) break;
                 String url;
                 try {
                     url = Plex.trailerUrl(c.key);
@@ -139,7 +139,13 @@ public class PartyGameActivity extends ReelActivity {
                     continue;
                 }
                 if (url == null) continue;
-                boolean audio = out.size() % 2 == 0; // every other clip has its picture hidden
+                boolean audio = mode == Party.SOUND || out.size() % 2 == 0; // every other clip has its picture hidden
+                if (mode == Party.SOUND) {
+                    Party.Round b = titleRound("Name the film from its sound.\n\nListen to the TV — the picture is hidden.",
+                            c, pool, c.thumb, 20000, rnd);
+                    out.add(new Party.Round(b.prompt, b.options, b.correct, c.thumb, 20000, url, true));
+                    continue;
+                }
                 Party.Round base = titleRound(audio ? "Which film is this trailer?\n\nListen to the TV — the picture is hidden."
                         : "Which film is this trailer?\n\nWatch the TV — it is silent.", c, pool, c.thumb, 25000, rnd);
                 out.add(new Party.Round(base.prompt, base.options, base.correct, c.thumb, 25000, url, audio));
@@ -387,7 +393,7 @@ public class PartyGameActivity extends ReelActivity {
         row.setPadding((int) (W * 0.06f), (int) (H * 0.08f), (int) (W * 0.05f), 0);
         LinearLayout left = new LinearLayout(this);
         left.setOrientation(LinearLayout.VERTICAL);
-        left.addView(text(mode == Party.GUESS ? "Guess the film" : mode == Party.TRAILER ? "Trailer guess" : mode == Party.EMOJI ? "Emoji plot" : "Movie quiz night", H * 0.05f, Color.WHITE, true));
+        left.addView(text(mode == Party.GUESS ? "Guess the film" : mode == Party.TRAILER ? "Trailer guess" : mode == Party.EMOJI ? "Emoji plot" : mode == Party.SOUND ? "Soundtrack game" : "Movie quiz night", H * 0.05f, Color.WHITE, true));
         left.addView(text("Scan to join · " + (sectionTitle == null ? "" : sectionTitle), H * 0.026f, 0x99FFFFFF, false));
         int qs = (int) (H * 0.4f);
         ImageView code = new ImageView(this);
@@ -450,7 +456,7 @@ public class PartyGameActivity extends ReelActivity {
 
         poster = null;
         shownStage = -1;
-        if (mode == Party.TRAILER) {
+        if (mode == Party.TRAILER || mode == Party.SOUND) {
             trailerBox(col, q, s.round, result);
         } else if (mode == Party.GUESS && !q.thumb.isEmpty()) {
             poster = new ImageView(this);
@@ -564,7 +570,7 @@ public class PartyGameActivity extends ReelActivity {
                     // start somewhere in the middle, past the studio logos
                     if (state == androidx.media3.common.Player.STATE_READY && !jumped && p.getDuration() > 20000) {
                         jumped = true;
-                        p.seekTo((long) (p.getDuration() * (0.2 + new Random().nextDouble() * 0.4)));
+                        p.seekTo((long) (p.getDuration() * (mode == Party.SOUND ? 0.5 + new Random().nextDouble() * 0.3 : 0.2 + new Random().nextDouble() * 0.4)));
                     }
                 }
 
@@ -589,6 +595,9 @@ public class PartyGameActivity extends ReelActivity {
                 String url = Plex.img(q.thumb.isEmpty() ? null : q.thumb, 400, 600);
                 if (url != null) com.bumptech.glide.Glide.with(this).load(url).centerCrop().into(pic);
                 box.addView(pic, new FrameLayout.LayoutParams(bh * 2 / 3, bh, Gravity.CENTER));
+            } else if (mode == Party.SOUND) {
+                box.addView(new Equalizer(this), new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT));
             } else {
                 TextView listen = text("LISTEN", H * 0.09f, Color.WHITE, true);
                 listen.setLetterSpacing(0.2f);
@@ -723,6 +732,38 @@ public class PartyGameActivity extends ReelActivity {
                     }
                 }
             }
+        }
+    }
+
+    /** Dancing sound bars for the soundtrack game: not tied to the audio, just a sign that something is playing. */
+    private static final class Equalizer extends View {
+        private final android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final float[] speed = new float[28];
+        private final float[] phase = new float[28];
+
+        Equalizer(android.content.Context c) {
+            super(c);
+            Random r = new Random();
+            for (int i = 0; i < speed.length; i++) {
+                speed[i] = 1.5f + r.nextFloat() * 4f;
+                phase[i] = r.nextFloat() * 6.28f;
+            }
+        }
+
+        @Override
+        protected void onDraw(android.graphics.Canvas c) {
+            float w = getWidth(), h = getHeight();
+            float t = android.os.SystemClock.uptimeMillis() / 1000f;
+            float slot = w / speed.length;
+            for (int i = 0; i < speed.length; i++) {
+                float v = 0.2f + 0.8f * (0.5f + 0.5f * (float) Math.sin(t * speed[i] + phase[i]))
+                        * (0.6f + 0.4f * (float) Math.sin(t * 0.7f + i * 0.4f));
+                float bh = h * 0.7f * v;
+                paint.setColor(i % 3 == 0 ? 0xFFE8833A : i % 3 == 1 ? 0xFFF0A868 : 0xFFC96A22);
+                c.drawRoundRect(i * slot + slot * 0.2f, (h - bh) / 2, i * slot + slot * 0.8f, (h + bh) / 2,
+                        slot * 0.3f, slot * 0.3f, paint);
+            }
+            postInvalidateOnAnimation();
         }
     }
 
