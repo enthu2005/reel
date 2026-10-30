@@ -416,25 +416,35 @@ public class PartyGameActivity extends ReelActivity {
         col.setGravity(Gravity.CENTER_HORIZONTAL);
         col.setPadding(0, (int) (H * 0.1f), 0, 0);
         String winner = s.board.isEmpty() ? "" : String.valueOf(s.board.get(0)[0]);
-        col.addView(text("AND THE WINNER IS…", H * 0.04f, 0xFFE8833A, true));
+        TextView who = text("AND THE WINNER IS…", H * 0.04f, 0xFFE8833A, true);
+        who.setGravity(Gravity.CENTER);
+        col.addView(who);
         TextView w = text(winner, H * 0.12f, Color.WHITE, true);
+        w.setGravity(Gravity.CENTER);
         w.setPadding(0, (int) (H * 0.01f), 0, (int) (H * 0.04f));
         col.addView(w);
         for (int i = 0; i < Math.min(5, s.board.size()); i++) {
             TextView r = text((i + 1) + "   " + s.board.get(i)[0] + "   ·   " + s.board.get(i)[1], H * 0.04f,
                     i == 0 ? 0xFFE8833A : Color.WHITE, i == 0);
+            r.setGravity(Gravity.CENTER);
             r.setPadding(0, (int) (H * 0.006f), 0, 0);
             col.addView(r);
         }
         LinearLayout buttons = new LinearLayout(this);
         buttons.setOrientation(LinearLayout.HORIZONTAL);
-        TextView again = button("Play again");
+        TextView again = button("New round");
         again.setOnClickListener(v -> {
             SoundFx.click();
             stopFx();
             message("Writing new " + (mode == Party.GUESS ? "posters" : "questions") + "…");
             handler.removeCallbacks(tick);
             build(true);
+        });
+        TextView change = button("Change game");
+        change.setOnClickListener(v -> {
+            SoundFx.click();
+            startActivity(new android.content.Intent(this, PartyActivity.class));
+            finish();
         });
         TextView done = button("Done");
         done.setOnClickListener(v -> {
@@ -443,6 +453,9 @@ public class PartyGameActivity extends ReelActivity {
         });
         LinearLayout.LayoutParams bl = new LinearLayout.LayoutParams((int) (W * 0.16f), ViewGroup.LayoutParams.WRAP_CONTENT);
         buttons.addView(again, bl);
+        LinearLayout.LayoutParams cl = new LinearLayout.LayoutParams((int) (W * 0.16f), ViewGroup.LayoutParams.WRAP_CONTENT);
+        cl.leftMargin = (int) (W * 0.012f);
+        buttons.addView(change, cl);
         LinearLayout.LayoutParams dl = new LinearLayout.LayoutParams((int) (W * 0.16f), ViewGroup.LayoutParams.WRAP_CONTENT);
         dl.leftMargin = (int) (W * 0.012f);
         buttons.addView(done, dl);
