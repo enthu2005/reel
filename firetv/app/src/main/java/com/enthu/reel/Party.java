@@ -10,10 +10,15 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Party mode: a handful of random films from one library, voted on from guests' phones (one vote each, changeable).
+ * Party mode: a handful of random films from one library, voted on from guests' phones.
+ * Phases: LOBBY (the code is up, guests wait), VOTING (a countdown runs), DONE (the winner is known).
+ * One vote per guest: a guest is identified by their device's address on the Wi-Fi, so clearing the browser or
+ * opening a private tab doesn't give a second vote. Changing your mind replaces your vote.
  * Guests only ever get this page's own link code, never the phone remote's, so they can vote but not control the TV.
  */
 final class Party {
+    static final int LOBBY = 0, VOTING = 1, DONE = 2;
+
     static final class Film {
         final String key;
         final String title;
@@ -28,16 +33,18 @@ final class Party {
         }
     }
 
-    private static volatile boolean open;
+    private static int phase = DONE;
+    private static boolean active;
     private static String token = "";
     private static final List<Film> films = new ArrayList<>();
-    private static final Map<String, String> votes = new HashMap<>(); // guest id -> film key
+    private static final Map<String, String> votes = new HashMap<>(); // guest address -> film key
     private static String winnerKey = "";
+    private static long endsAt;
 
     private Party() {
     }
 
-    /** Starts a new vote on these films; returns the code that goes in the guests' link. */
+    /** Opens a lobby for these films (guests can see the page but not vote yet); returns the code for the link. */
     static synchronized String start(List<Film> list) {
         byte[] b = new byte[6];
         new SecureRandom().nextBytes(b);
@@ -48,16 +55,36 @@ final class Party {
         films.addAll(list);
         votes.clear();
         winnerKey = "";
-        open = true;
+        endsAt = 0;
+        phase = LOBBY;
+        active = true;
         return token;
     }
 
-    static boolean isOpen() {
-        return open;
+    /** The host starts the vote: it runs for [ms], then closes by itself. */
+    static synchronized void begin(long ms) {
+        if (!active || phase != LOBBY) return;
+        endsAt = System.currentTimeMillis() + ms;
+        phase = VOTING;
+    }
+
+    static synchronized int phase() {
+        checkTime();
+        return phase;
+    }
+
+    /** Closes the vote when the time is up. */
+    private static void checkTime() {
+        if (phase == VOTING && System.currentTimeMillis() >= endsAt) finish();
+    }
+
+    static synchronized long remainingMs() {
+        checkTime();
+        return phase == VOTING ? Math.max(0, endsAt - System.currentTimeMillis()) : 0;
     }
 
     static synchronized boolean valid(String p) {
-        return p != null && !token.isEmpty() && token.equals(p);
+        return active && p != null && !token.isEmpty() && token.equals(p);
     }
 
     static synchronized String token() {
@@ -69,8 +96,10 @@ final class Party {
         return false;
     }
 
+    /** One vote per guest address; voting again replaces it. */
     static synchronized boolean vote(String guest, String filmKey) {
-        if (!open || guest == null || guest.isEmpty() || guest.length() > 64) return false;
+        checkTime();
+        if (phase != VOTING || guest == null || guest.isEmpty()) return false;
         for (Film f : films) {
             if (f.key.equals(filmKey)) {
                 votes.put(guest, filmKey);
@@ -100,8 +129,8 @@ final class Party {
 
     /** Closes the vote and returns the winning film's key (a random one of those tied), or "" if no film exists. */
     static synchronized String finish() {
-        if (!open) return winnerKey;
-        open = false;
+        if (phase == DONE) return winnerKey;
+        phase = DONE;
         List<Object[]> r = ranking();
         if (r.isEmpty()) return "";
         int best = (Integer) r.get(0)[1];
@@ -111,22 +140,30 @@ final class Party {
         return winnerKey;
     }
 
+    static synchronized Film winnerFilm() {
+        for (Film f : films) if (f.key.equals(winnerKey)) return f;
+        return null;
+    }
+
+    static synchronized int votesFor(String filmKey) {
+        return count(filmKey);
+    }
+
     static synchronized void cancel() {
-        open = false;
+        active = false;
+        phase = DONE;
         token = "";
         films.clear();
         votes.clear();
         winnerKey = "";
     }
 
-    static synchronized String winner() {
-        return winnerKey;
-    }
-
     static synchronized String stateJson(String guest) {
         try {
+            checkTime();
             JSONObject o = new JSONObject();
-            o.put("open", open);
+            o.put("phase", phase);
+            o.put("left", phase == VOTING ? Math.max(0, endsAt - System.currentTimeMillis()) : 0);
             o.put("voters", votes.size());
             o.put("mine", guest == null ? "" : votes.getOrDefault(guest, ""));
             o.put("winner", winnerKey);
@@ -139,7 +176,7 @@ final class Party {
             o.put("films", a);
             return o.toString();
         } catch (Exception e) {
-            return "{\"open\":false,\"films\":[]}";
+            return "{\"phase\":2,\"films\":[]}";
         }
     }
 }

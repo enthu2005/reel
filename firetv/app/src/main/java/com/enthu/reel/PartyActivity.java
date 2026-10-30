@@ -21,21 +21,31 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Party mode on the TV: you pick a library, ten of its films are drawn at random, and guests scan the code to vote on
- * their phones. The leaderboard updates live here and on every phone. "Reveal winner" closes the vote and opens
- * the winning title's page (it is opened, not played).
+ * Party mode on the TV. 1) Pick a library and ten of its films are drawn. 2) The code goes up (the lobby) until you
+ * press Start votes. 3) A countdown runs while guests vote on their phones and the leaderboard updates live.
+ * 4) When time is up (or you press Reveal now) comes the big reveal: fireworks, the winning poster, and OK opens
+ * that title's page (it is opened, not played).
  */
 public class PartyActivity extends ReelActivity {
     private static final int FILMS = 10;
+    private static final int[] MINUTES = {1, 2, 3, 5};
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private FrameLayout root;
     private LinearLayout board;
     private TextView voters;
+    private TextView clock;
+    private TextView startBtn;
+    private TextView timeBtn;
+    private TextView revealBtn;
+    private TextView bigCount;
+    private int minutesAt = 1;
     private int W;
     private int H;
-    private boolean started;
+    private boolean started;   // a party exists (the code is up)
+    private boolean voting;    // Start votes was pressed
     private boolean revealed;
+    private long lastBoard;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -138,7 +148,7 @@ public class PartyActivity extends ReelActivity {
         return b;
     }
 
-    /** Step 2: draw the films and open the vote. */
+    /** Step 2: draw the films and put the code up. */
     private void begin(final Plex.Section s) {
         message("Choosing " + FILMS + " films from " + s.title + "…");
         Plex.async(() -> {
@@ -147,8 +157,7 @@ public class PartyActivity extends ReelActivity {
             List<Party.Film> out = new ArrayList<>();
             for (Plex.Item it : pool) {
                 if (out.size() >= FILMS) break;
-                String thumb = it.poster();
-                out.add(new Party.Film(it.key, it.displayTitle(), it.year > 0 ? String.valueOf(it.year) : "", thumb));
+                out.add(new Party.Film(it.key, it.displayTitle(), it.year > 0 ? String.valueOf(it.year) : "", it.poster()));
             }
             return out;
         }, new Plex.Callback<List<Party.Film>>() {
@@ -161,7 +170,7 @@ public class PartyActivity extends ReelActivity {
                 }
                 started = true;
                 Party.start(films);
-                showVote();
+                showLobby();
             }
 
             @Override
@@ -171,7 +180,8 @@ public class PartyActivity extends ReelActivity {
         });
     }
 
-    private void showVote() {
+    /** The code and the ten films; nobody can vote until Start votes is pressed. */
+    private void showLobby() {
         root.removeAllViews();
         String base = PhoneRemote.baseUrl();
         final String link = base == null ? null : base + "/party?p=" + Party.token();
@@ -183,51 +193,141 @@ public class PartyActivity extends ReelActivity {
         LinearLayout left = new LinearLayout(this);
         left.setOrientation(LinearLayout.VERTICAL);
         TextView head = new TextView(this);
-        head.setText("Scan to vote");
+        head.setText("Scan to join");
         head.setTextColor(Color.WHITE);
         head.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.05f);
         head.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
         left.addView(head);
-        int qs = (int) (H * 0.42f);
+        int qs = (int) (H * 0.4f);
         ImageView code = new ImageView(this);
         if (link != null) code.setImageBitmap(PlayerActivity.qr(link, qs));
         LinearLayout.LayoutParams qlp = new LinearLayout.LayoutParams(qs, qs);
         qlp.topMargin = (int) (H * 0.03f);
         left.addView(code, qlp);
         TextView how = new TextView(this);
-        how.setText(link == null ? "No network" : "Same Wi-Fi as this TV");
+        how.setText(link == null ? "No network" : "Same Wi-Fi as this TV. One vote each.");
         how.setTextColor(0x99FFFFFF);
         how.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.024f);
-        how.setPadding(0, (int) (H * 0.015f), 0, 0);
+        how.setPadding(0, (int) (H * 0.012f), 0, 0);
         left.addView(how);
+
+        clock = new TextView(this);
+        clock.setTextColor(0xFFE8833A);
+        clock.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.085f);
+        clock.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+        clock.setVisibility(View.GONE);
+        left.addView(clock);
         voters = new TextView(this);
         voters.setTextColor(0xFFE8833A);
         voters.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.03f);
         voters.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
-        voters.setPadding(0, (int) (H * 0.02f), 0, (int) (H * 0.03f));
+        voters.setPadding(0, (int) (H * 0.012f), 0, (int) (H * 0.02f));
+        voters.setVisibility(View.GONE);
         left.addView(voters);
-        TextView reveal = button("Reveal winner");
-        reveal.setOnClickListener(v -> {
+
+        timeBtn = button("");
+        paintTime();
+        timeBtn.setOnClickListener(v -> {
             SoundFx.click();
+            minutesAt = (minutesAt + 1) % MINUTES.length;
+            paintTime();
+        });
+        LinearLayout.LayoutParams bl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        bl.topMargin = (int) (H * 0.025f);
+        left.addView(timeBtn, bl);
+        startBtn = button("Start votes");
+        startBtn.setOnClickListener(v -> {
+            SoundFx.click();
+            startVoting();
+        });
+        LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        sl.topMargin = (int) (H * 0.012f);
+        left.addView(startBtn, sl);
+        revealBtn = button("Reveal now");
+        revealBtn.setVisibility(View.GONE);
+        revealBtn.setOnClickListener(v -> {
+            SoundFx.click();
+            Party.finish();
             reveal();
         });
-        left.addView(reveal, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
+        left.addView(revealBtn, sl);
         row.addView(left, new LinearLayout.LayoutParams((int) (W * 0.34f), ViewGroup.LayoutParams.WRAP_CONTENT));
 
         board = new LinearLayout(this);
         board.setOrientation(LinearLayout.VERTICAL);
         row.addView(board, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         root.addView(row);
-        reveal.requestFocus();
-        refresh();
+
+        bigCount = new TextView(this);
+        bigCount.setTextColor(Color.WHITE);
+        bigCount.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.4f);
+        bigCount.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+        bigCount.setShadowLayer(H * 0.02f, 0, 0, 0xFFE8833A);
+        bigCount.setVisibility(View.GONE);
+        root.addView(bigCount, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        startBtn.requestFocus();
+        refresh(true);
     }
 
-    private final Runnable tick = this::refresh;
+    private void paintTime() {
+        timeBtn.setText("Voting time: " + MINUTES[minutesAt] + (MINUTES[minutesAt] == 1 ? " minute" : " minutes"));
+    }
 
-    private void refresh() {
+    private void startVoting() {
+        if (voting) return;
+        voting = true;
+        Party.begin(MINUTES[minutesAt] * 60_000L);
+        startBtn.setVisibility(View.GONE);
+        timeBtn.setVisibility(View.GONE);
+        revealBtn.setVisibility(View.VISIBLE);
+        clock.setVisibility(View.VISIBLE);
+        voters.setVisibility(View.VISIBLE);
+        revealBtn.requestFocus();
+        refresh(true);
+    }
+
+    private final Runnable tick = () -> refresh(false);
+
+    private void refresh(boolean force) {
         if (isDestroyed() || board == null || revealed) return;
+        int phase = Party.phase();
+        if (voting && phase == Party.DONE) { // the time ran out
+            reveal();
+            return;
+        }
+        long now = android.os.SystemClock.uptimeMillis();
+        if (voting) {
+            long left = Party.remainingMs();
+            long s = (left + 999) / 1000;
+            clock.setText(s / 60 + ":" + String.format("%02d", s % 60));
+            clock.setTextColor(s <= 10 ? 0xFFFF5A5A : 0xFFE8833A);
+            if (s <= 5 && s > 0) { // the last five seconds, big in the middle
+                bigCount.setText(String.valueOf(s));
+                if (bigCount.getVisibility() != View.VISIBLE || !String.valueOf(s).equals(bigCount.getTag())) {
+                    bigCount.setTag(String.valueOf(s));
+                    bigCount.setVisibility(View.VISIBLE);
+                    bigCount.setScaleX(1.5f);
+                    bigCount.setScaleY(1.5f);
+                    bigCount.setAlpha(1f);
+                    bigCount.animate().scaleX(0.8f).scaleY(0.8f).alpha(0.25f).setDuration(900).start();
+                    SoundFx.move();
+                }
+            }
+        }
+        if (force || now - lastBoard >= 1000) {
+            lastBoard = now;
+            drawBoard();
+        }
+        handler.removeCallbacks(tick);
+        handler.postDelayed(tick, 250);
+    }
+
+    private void drawBoard() {
         board.removeAllViews();
+        boolean lobby = !voting;
         List<Object[]> rank = Party.ranking();
         int max = 1;
         for (Object[] r : rank) max = Math.max(max, (Integer) r[1]);
@@ -239,7 +339,8 @@ public class PartyActivity extends ReelActivity {
             FrameLayout line = new FrameLayout(this);
             View bar = new View(this);
             bar.setBackground(UiUtil.rounded(0x33E8833A, H * 0.012f));
-            line.addView(bar, new FrameLayout.LayoutParams((int) (W * 0.5f * votes / max), ViewGroup.LayoutParams.MATCH_PARENT));
+            line.addView(bar, new FrameLayout.LayoutParams(lobby ? 0 : (int) (W * 0.5f * votes / max),
+                    ViewGroup.LayoutParams.MATCH_PARENT));
             TextView t = new TextView(this);
             t.setText(n + "   " + f.title + (f.sub.isEmpty() ? "" : "  (" + f.sub + ")"));
             t.setTextColor(Color.WHITE);
@@ -248,14 +349,16 @@ public class PartyActivity extends ReelActivity {
             t.setEllipsize(android.text.TextUtils.TruncateAt.END);
             t.setPadding((int) (W * 0.01f), (int) (H * 0.011f), (int) (W * 0.08f), (int) (H * 0.011f));
             line.addView(t);
-            TextView c = new TextView(this);
-            c.setText(String.valueOf(votes));
-            c.setTextColor(0xFFE8833A);
-            c.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.034f);
-            c.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
-            c.setPadding(0, (int) (H * 0.008f), (int) (W * 0.012f), 0);
-            line.addView(c, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END));
+            if (!lobby) {
+                TextView c = new TextView(this);
+                c.setText(String.valueOf(votes));
+                c.setTextColor(0xFFE8833A);
+                c.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.034f);
+                c.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+                c.setPadding(0, (int) (H * 0.008f), (int) (W * 0.012f), 0);
+                line.addView(c, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END));
+            }
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, (int) (H * 0.062f)); // fixed, so the bar can fill the row
             lp.bottomMargin = (int) (H * 0.008f);
@@ -263,27 +366,118 @@ public class PartyActivity extends ReelActivity {
         }
         int v = Party.voters();
         voters.setText(v + (v == 1 ? " vote" : " votes") + " in");
-        handler.removeCallbacks(tick);
-        handler.postDelayed(tick, 1000);
     }
 
-    /** Closes the vote and opens the winning film's page (not played). */
+    // ---------------------------------------------------------------- the big reveal
+
+    private FireworksView fx;
+
     private void reveal() {
         if (revealed) return;
         final String win = Party.finish();
-        if (win.isEmpty()) return;
+        final Party.Film film = Party.winnerFilm();
+        if (win.isEmpty() || film == null) return;
         revealed = true;
         handler.removeCallbacks(tick);
-        String name = "";
-        for (Object[] r : Party.ranking()) if (((Party.Film) r[0]).key.equals(win)) name = ((Party.Film) r[0]).title;
-        message("The winner is\n" + name);
+        final int votes = Party.votesFor(win);
+        root.removeAllViews();
+        root.setBackgroundColor(0xFF05050A);
+
+        fx = new FireworksView(this);
+        root.addView(fx, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        fx.start(false);
+
+        final TextView suspense = new TextView(this);
+        suspense.setText("AND THE WINNER IS…");
+        suspense.setTextColor(Color.WHITE);
+        suspense.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.07f);
+        suspense.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+        suspense.setLetterSpacing(0.08f);
+        suspense.setAlpha(0f);
+        root.addView(suspense, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        suspense.animate().alpha(1f).setDuration(700).start();
+
+        // Rockets go up while it builds
+        for (int i = 0; i < 6; i++) {
+            final int k = i;
+            handler.postDelayed(() -> {
+                if (!isDestroyed() && fx != null) fx.launch(0.12f + 0.15f * k, 0.15f + (k % 3) * 0.1f);
+            }, 400 + i * 380L);
+        }
+
         handler.postDelayed(() -> {
             if (isDestroyed()) return;
+            suspense.animate().alpha(0f).setDuration(300).withEndAction(() -> root.removeView(suspense)).start();
+            showWinner(win, film, votes);
+        }, 3200);
+    }
+
+    private void showWinner(final String win, Party.Film film, int votes) {
+        fx.autoLaunch(true);
+        for (int i = 0; i < 7; i++) {
+            final int k = i;
+            handler.postDelayed(() -> {
+                if (!isDestroyed() && fx != null) fx.burst(0.1f + 0.13f * k, 0.2f + (k % 2) * 0.25f, 110);
+            }, i * 120L);
+        }
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setGravity(Gravity.CENTER_HORIZONTAL);
+        int ph = (int) (H * 0.56f);
+        ImageView poster = new ImageView(this);
+        poster.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        poster.setBackground(UiUtil.rounded(UiUtil.CARD, H * 0.015f));
+        UiUtil.clipRounded(poster, H * 0.015f);
+        poster.setElevation(H * 0.03f);
+        String url = Plex.img(film.thumb.isEmpty() ? null : film.thumb, 600, 900);
+        if (url != null) com.bumptech.glide.Glide.with(this).load(url).centerCrop().into(poster);
+        col.addView(poster, new LinearLayout.LayoutParams(ph * 2 / 3, ph));
+
+        TextView title = new TextView(this);
+        title.setText(film.title);
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.06f);
+        title.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+        title.setGravity(Gravity.CENTER);
+        title.setPadding((int) (W * 0.05f), (int) (H * 0.02f), (int) (W * 0.05f), 0);
+        col.addView(title, new LinearLayout.LayoutParams((int) (W * 0.8f), ViewGroup.LayoutParams.WRAP_CONTENT));
+        TextView sub = new TextView(this);
+        sub.setText((film.sub.isEmpty() ? "" : film.sub + "   ·   ") + votes + (votes == 1 ? " vote" : " votes"));
+        sub.setTextColor(0xFFE8833A);
+        sub.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.034f);
+        sub.setGravity(Gravity.CENTER);
+        sub.setPadding(0, (int) (H * 0.006f), 0, (int) (H * 0.025f));
+        col.addView(sub);
+        TextView open = button("Open");
+        open.setGravity(Gravity.CENTER);
+        open.setOnClickListener(v -> {
+            SoundFx.click();
             Intent i = new Intent(this, DetailActivity.class);
             i.putExtra("key", win);
             startActivity(i);
             finish();
-        }, 2500);
+        });
+        col.addView(open, new LinearLayout.LayoutParams((int) (W * 0.16f), ViewGroup.LayoutParams.WRAP_CONTENT));
+        FrameLayout.LayoutParams clp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        root.addView(col, clp);
+
+        poster.setPivotX(ph / 3f);
+        poster.setPivotY(ph / 2f);
+        poster.setScaleX(0.15f);
+        poster.setScaleY(0.15f);
+        poster.setAlpha(0f);
+        poster.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(900)
+                .setInterpolator(new android.view.animation.OvershootInterpolator(1.2f)).start();
+        title.setAlpha(0f);
+        sub.setAlpha(0f);
+        open.setAlpha(0f);
+        title.animate().alpha(1f).setStartDelay(700).setDuration(500).start();
+        sub.animate().alpha(1f).setStartDelay(900).setDuration(500).start();
+        open.animate().alpha(1f).setStartDelay(1200).setDuration(500).start();
+        open.requestFocus();
     }
 
     @Override
@@ -297,6 +491,7 @@ public class PartyActivity extends ReelActivity {
     @Override
     protected void onDestroy() {
         handler.removeCallbacksAndMessages(null);
+        if (fx != null) fx.stop();
         if (started && !revealed) Party.cancel();
         super.onDestroy();
     }

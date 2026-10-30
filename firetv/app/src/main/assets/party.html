@@ -13,6 +13,10 @@
   main { max-width:560px; margin:0 auto; padding:20px 16px calc(40px + env(safe-area-inset-bottom)); }
   h1 { font-size:24px; margin:6px 0 2px; }
   .sub { color:var(--dim); font-size:14px; margin-bottom:14px; }
+  .clock { text-align:center; font-size:46px; font-weight:700; font-variant-numeric:tabular-nums; color:var(--accent);
+    margin:4px 0 10px; }
+  .clock.low { color:#ff5a5a; animation:pulse 1s infinite; }
+  @keyframes pulse { 50% { transform:scale(1.08); } }
   .film { display:flex; gap:12px; align-items:center; padding:10px; margin:8px 0; background:var(--card);
     border:1px solid var(--line); border-radius:14px; position:relative; overflow:hidden; }
   .film.mine { border-color:var(--accent); }
@@ -28,59 +32,113 @@
     padding:10px 14px; flex:none; }
   button.vote { background:var(--accent); border-color:var(--accent); color:#fff; }
   button.done { background:none; color:var(--accent); border-color:var(--accent); }
-  .win { text-align:center; padding:22px 12px; margin:10px 0 16px; border:1px solid var(--accent); border-radius:16px;
+  .win { text-align:center; padding:18px 12px 20px; margin:10px 0 16px; border:1px solid var(--accent); border-radius:16px;
     background:rgba(232,131,58,.12); }
-  .win b { display:block; font-size:24px; margin-top:4px; }
+  .win img { width:150px; border-radius:12px; display:block; margin:10px auto 8px; box-shadow:0 10px 30px rgba(0,0,0,.5); }
+  .win b { display:block; font-size:24px; margin-top:2px; }
   .hide { display:none; }
+  #fx { position:fixed; inset:0; pointer-events:none; }
 </style>
 </head>
 <body>
+<canvas id="fx"></canvas>
 <main>
   <h1>Pick tonight's film</h1>
-  <div class="sub" id="sub">Tap a film to vote. You can change your vote any time.</div>
-  <div class="win hide" id="win">The winner is<b id="winT"></b></div>
+  <div class="sub" id="sub"></div>
+  <div class="clock hide" id="clock"></div>
+  <div class="win hide" id="win">The winner is<img id="winImg" alt=""><b id="winT"></b><div class="sub" id="winV"></div></div>
   <div id="list"></div>
 </main>
 <script>
 const P = new URLSearchParams(location.search).get('p') || '';
-let G = '';
-try { G = localStorage.getItem('reelGuest') || ''; } catch (e) {}
-if (!G) { G = Math.random().toString(36).slice(2) + Date.now().toString(36); try { localStorage.setItem('reelGuest', G); } catch (e) {} }
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const LOBBY = 0, VOTING = 1, DONE = 2;
+let last = null, gotAt = 0, boomed = false;
 
-async function call(path) {
+async function call(path, extra) {
   try {
-    const r = await fetch(path + '?p=' + encodeURIComponent(P) + '&g=' + encodeURIComponent(G) + (arguments[1] || ''), {cache: 'no-store'});
+    const r = await fetch(path + '?p=' + encodeURIComponent(P) + (extra || ''), {cache: 'no-store'});
     if (r.status === 403) { document.body.innerHTML = '<main><h1>This party has ended</h1></main>'; return null; }
     return await r.json();
   } catch (e) { return null; }
 }
 
+function fmt(ms) {
+  const s = Math.ceil(ms / 1000), m = Math.floor(s / 60);
+  return m + ':' + String(s % 60).padStart(2, '0');
+}
+
 function render(s) {
   if (!s) return;
+  last = s; gotAt = performance.now();
   const max = Math.max(1, ...s.films.map(f => f.votes));
-  $('sub').textContent = s.open ? s.voters + (s.voters === 1 ? ' vote' : ' votes') + ' so far. Tap a film to vote; you can change it any time.'
-                                : 'Voting has closed.';
+  $('sub').textContent = s.phase === LOBBY ? 'Waiting for the host to start the vote…'
+    : s.phase === VOTING ? s.voters + (s.voters === 1 ? ' vote' : ' votes') + ' so far. One vote each; tap another film to change it.'
+    : 'Voting has closed.';
   const w = s.films.find(f => f.key === s.winner);
-  $('win').classList.toggle('hide', !(w && !s.open));
-  if (w) $('winT').textContent = w.title;
+  $('win').classList.toggle('hide', !(w && s.phase === DONE));
+  if (w && s.phase === DONE) {
+    $('winT').textContent = w.title;
+    $('winV').textContent = w.votes + (w.votes === 1 ? ' vote' : ' votes');
+    $('winImg').src = w.thumb ? '/party/img?p=' + encodeURIComponent(P) + '&path=' + encodeURIComponent(w.thumb) : '';
+    if (!boomed) { boomed = true; burst(); }
+  }
   $('list').innerHTML = s.films.map((f, i) =>
-    '<div class="film' + (f.key === s.mine ? ' mine' : '') + '"><div class="bar" style="width:' + (100 * f.votes / max) + '%"></div>' +
+    '<div class="film' + (f.key === s.mine ? ' mine' : '') + '"><div class="bar" style="width:' + (s.phase === LOBBY ? 0 : 100 * f.votes / max) + '%"></div>' +
     '<div class="rank">' + (i + 1) + '</div>' +
     '<img alt="" loading="lazy" src="' + (f.thumb ? '/party/img?p=' + encodeURIComponent(P) + '&path=' + encodeURIComponent(f.thumb) : '') + '">' +
     '<div class="txt"><b>' + esc(f.title) + '</b><span>' + esc(f.sub) + '</span></div>' +
-    '<div class="count">' + f.votes + '</div>' +
-    (s.open ? '<button class="' + (f.key === s.mine ? 'done' : 'vote') + '" data-k="' + f.key + '">' + (f.key === s.mine ? 'Voted' : 'Vote') + '</button>' : '') +
+    (s.phase === LOBBY ? '' : '<div class="count">' + f.votes + '</div>') +
+    (s.phase === VOTING ? '<button class="' + (f.key === s.mine ? 'done' : 'vote') + '" data-k="' + f.key + '">' + (f.key === s.mine ? 'Voted' : 'Vote') + '</button>' : '') +
     '</div>').join('');
   document.querySelectorAll('button[data-k]').forEach(b => b.onclick = async () => {
     b.disabled = true;
     render(await call('/party/vote', '&key=' + encodeURIComponent(b.dataset.k)));
   });
+  clock();
 }
 
+function clock() {
+  const c = $('clock');
+  if (!last || last.phase !== VOTING) { c.classList.add('hide'); return; }
+  const left = Math.max(0, last.left - (performance.now() - gotAt));
+  c.classList.remove('hide');
+  c.textContent = fmt(left);
+  c.classList.toggle('low', left < 10000);
+}
+setInterval(clock, 250);
+
+// a little firework on the phone when the winner is known
+const cv = $('fx'), g = cv.getContext('2d');
+let parts = [];
+function size() { cv.width = innerWidth; cv.height = innerHeight; }
+addEventListener('resize', size); size();
+function burst() {
+  for (let k = 0; k < 5; k++) setTimeout(() => {
+    const x = innerWidth * (0.15 + Math.random() * 0.7), y = innerHeight * (0.15 + Math.random() * 0.4);
+    const hue = Math.random() * 360;
+    for (let i = 0; i < 70; i++) {
+      const a = Math.random() * 6.283, v = 1.5 + Math.random() * 4.5;
+      parts.push({x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1, hue: hue + Math.random() * 40});
+    }
+  }, k * 450);
+}
+function frame() {
+  g.clearRect(0, 0, cv.width, cv.height);
+  parts = parts.filter(p => p.life > 0);
+  for (const p of parts) {
+    p.x += p.vx; p.y += p.vy; p.vy += 0.06; p.vx *= 0.99; p.life -= 0.012;
+    g.globalAlpha = Math.max(0, p.life);
+    g.fillStyle = 'hsl(' + p.hue + ',90%,60%)';
+    g.fillRect(p.x, p.y, 3, 3);
+  }
+  requestAnimationFrame(frame);
+}
+frame();
+
 async function tick() { render(await call('/party/state')); }
-tick(); setInterval(tick, 2000);
+tick(); setInterval(tick, 1500);
 </script>
 </body>
 </html>

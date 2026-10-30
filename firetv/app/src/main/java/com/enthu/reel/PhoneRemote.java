@@ -180,16 +180,17 @@ final class PhoneRemote {
             }
             OutputStream out = s.getOutputStream();
             if (path.startsWith("/party")) {
+                final String ip = s.getInetAddress().getHostAddress(); // one vote per guest device on the Wi-Fi
                 // Guests: their own link code, which only lets them vote
                 if (!Party.valid(q.get("p"))) {
                     reply(out, 403, "text/plain", "This party has ended.");
                 } else if (path.equals("/party")) {
                     reply(out, 200, "text/html; charset=utf-8", asset("party.html"));
                 } else if (path.equals("/party/state")) {
-                    reply(out, 200, "application/json; charset=utf-8", Party.stateJson(q.get("g")));
+                    reply(out, 200, "application/json; charset=utf-8", Party.stateJson(ip));
                 } else if (path.equals("/party/vote")) {
-                    boolean ok = Party.vote(q.get("g"), q.get("key"));
-                    reply(out, 200, "application/json; charset=utf-8", Party.stateJson(q.get("g")).replaceFirst("^\\{", "{\"ok\":" + ok + ","));
+                    boolean ok = Party.vote(ip, q.get("key"));
+                    reply(out, 200, "application/json; charset=utf-8", Party.stateJson(ip).replaceFirst("^\\{", "{\"ok\":" + ok + ","));
                 } else if (path.equals("/party/img")) {
                     String pth = q.get("path");
                     if (pth != null && Party.allowsThumb(pth)) image(out, pth);
