@@ -112,19 +112,35 @@ public class PartyGameActivity extends ReelActivity {
 
     // ---------------------------------------------------------------- the questions
 
+    private final List<String> used = new ArrayList<>();
+
+    private String scope() {
+        return "g" + mode + "_" + sectionKey;
+    }
+
+    /** The questions, from films this game has not used lately; the ones used are remembered for next time. */
     private List<Party.Round> makeRounds() throws Exception {
+        used.clear();
+        List<Party.Round> r = buildRounds();
+        PartyMemory.add(this, scope(), used);
+        return r;
+    }
+
+    private List<Party.Round> buildRounds() throws Exception {
         if (mode == Party.EMOJI) return emojiRounds();
         List<Plex.Item> pool = new ArrayList<>();
-        for (Plex.Item it : Plex.items(Plex.paged("/library/sections/" + sectionKey + "/all?sort=random", 80))) {
+        for (Plex.Item it : Plex.items(Plex.paged("/library/sections/" + sectionKey + "/all?sort=random", 300))) {
             if (it.type.equals("movie") && it.title != null && !it.title.isEmpty() && it.thumb != null) pool.add(it);
         }
         Collections.shuffle(pool);
+        pool = PartyMemory.fresh(this, scope(), pool, it -> it.key, 10);
         Random rnd = new Random();
         List<Party.Round> out = new ArrayList<>();
         if (mode == Party.GUESS) {
             for (int i = 0; i < 6 && i < pool.size(); i++) {
                 Plex.Item c = pool.get(i);
                 out.add(titleRound("Which film is this?", c, pool, c.thumb, 30000, rnd));
+                used.add(c.key);
             }
             return out;
         }
@@ -144,17 +160,20 @@ public class PartyGameActivity extends ReelActivity {
                     Party.Round b = titleRound("Name the film from its sound.\n\nListen to the TV — the picture is hidden.",
                             c, pool, c.thumb, 20000, rnd);
                     out.add(new Party.Round(b.prompt, b.options, b.correct, c.thumb, 20000, url, true));
+                    used.add(c.key);
                     continue;
                 }
                 Party.Round base = titleRound(audio ? "Which film is this trailer?\n\nListen to the TV — the picture is hidden."
                         : "Which film is this trailer?\n\nWatch the TV — it is silent.", c, pool, c.thumb, 25000, rnd);
                 out.add(new Party.Round(base.prompt, base.options, base.correct, c.thumb, 25000, url, audio));
+                used.add(c.key);
             }
             return out;
         }
         int next = 0;
         for (int q = 0; q < 8 && next < pool.size(); q++) {
             Plex.Item c = pool.get(next++);
+            used.add(c.key);
             int kind = q % 3;
             if (kind == 1 && (c.summary == null || c.summary.length() < 60)) kind = 0;
             if (kind == 2 && next + 3 >= pool.size()) kind = 0;
@@ -273,6 +292,7 @@ public class PartyGameActivity extends ReelActivity {
             titles.add(m.optString("title"));
         }
         Collections.shuffle(movies);
+        movies = PartyMemory.fresh(this, scope(), movies, m -> m.optString("ratingKey"), 10);
         Random rnd = new Random();
         List<Party.Round> out = new ArrayList<>();
         for (org.json.JSONObject m : movies) {
@@ -290,6 +310,7 @@ public class PartyGameActivity extends ReelActivity {
             if (opts.size() < 4) continue;
             Collections.shuffle(opts);
             out.add(new Party.Round(plot, opts.toArray(new String[0]), opts.indexOf(right), m.optString("thumb"), 20000));
+            used.add(m.optString("ratingKey"));
         }
         return out;
     }

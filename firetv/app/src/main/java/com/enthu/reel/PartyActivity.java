@@ -259,8 +259,9 @@ public class PartyActivity extends ReelActivity {
     private void begin(final Plex.Section s) {
         message("Choosing " + FILMS + " films from " + s.title + "…");
         Plex.async(() -> {
-            List<Plex.Item> pool = Plex.items(Plex.paged("/library/sections/" + s.key + "/all?sort=random", 60));
+            List<Plex.Item> pool = Plex.items(Plex.paged("/library/sections/" + s.key + "/all?sort=random", 300));
             java.util.Collections.shuffle(pool);
+            pool = PartyMemory.fresh(this, "vote_" + s.key, pool, it -> it.key, FILMS); // films not drawn lately first
             if (again) { // not the films that were just on the board, if there are enough others
                 List<Plex.Item> fresh = new ArrayList<>();
                 for (Plex.Item it : pool) if (!lastKeys.contains(it.key)) fresh.add(it);
@@ -271,6 +272,9 @@ public class PartyActivity extends ReelActivity {
                 if (out.size() >= FILMS) break;
                 out.add(new Party.Film(it.key, it.displayTitle(), it.year > 0 ? String.valueOf(it.year) : "", it.poster()));
             }
+            List<String> drawn = new ArrayList<>();
+            for (Party.Film f : out) drawn.add(f.key);
+            PartyMemory.add(this, "vote_" + s.key, drawn);
             return out;
         }, new Plex.Callback<List<Party.Film>>() {
             @Override
@@ -680,7 +684,9 @@ public class PartyActivity extends ReelActivity {
         root.addView(head, hlp);
 
         final java.util.Random rnd = new java.util.Random();
-        final Party.Film landed = films.get(rnd.nextInt(films.size()));
+        List<Party.Film> candidates = PartyMemory.unseen(this, "roulette_" + (section == null ? "" : section.key), films, f -> f.key);
+        final Party.Film landed = candidates.get(rnd.nextInt(candidates.size()));
+        PartyMemory.add(this, "roulette_" + (section == null ? "" : section.key), java.util.Collections.singletonList(landed.key));
         // Ticks slow down like a real reel: quick at first, then longer and longer gaps
         final List<Long> delays = new ArrayList<>();
         for (double d = 55; d < 480; d *= 1.14) delays.add((long) d);
@@ -690,8 +696,11 @@ public class PartyActivity extends ReelActivity {
             final boolean last = i == delays.size() - 1;
             handler.postDelayed(() -> {
                 if (isDestroyed()) return;
-                Party.Film f = last ? landed : films.get(rnd.nextInt(films.size()));
-                title.setText(f.title);
+                // The chosen film is never shown on the reel: it flickers through the others and ends on question
+                // marks, so the pick stays a secret until the fireworks and the poster
+                Party.Film f = films.get(rnd.nextInt(films.size()));
+                for (int guard = 0; f == landed && guard < 20; guard++) f = films.get(rnd.nextInt(films.size()));
+                title.setText(last ? "?   ?   ?" : f.title);
                 title.setScaleX(1.08f);
                 title.setScaleY(1.08f);
                 title.animate().scaleX(1f).scaleY(1f).setDuration(120).start();
