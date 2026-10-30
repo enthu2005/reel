@@ -1806,7 +1806,8 @@ public class PlayerActivity extends Activity {
                     return;
                 }
                 if (state == Player.STATE_ENDED && channelNum > 0 && Live.byNum(channelNum) != null) {
-                    Live.tune(PlayerActivity.this, Live.byNum(channelNum)); // on to whatever is next on the channel
+                    // on to whatever is next on the channel, after a short break of trailers (if they are on)
+                    TrailerBreakActivity.startFor(PlayerActivity.this, Live.byNum(channelNum));
                     finish();
                     return;
                 }

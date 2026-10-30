@@ -253,6 +253,15 @@ public class SettingsActivity extends ReelActivity {
                     render(false);
                 });
 
+        final boolean liveTrailers = TrailerBreakActivity.enabled(this);
+        row("Trailers on Live TV", liveTrailers ? "On" : "Off",
+                "Between one programme and the next on a Live channel, show up to three trailers of what is coming up. "
+                        + "Each one can be skipped, or skip them all. Press to change.",
+                v -> {
+                    prefs.edit().putBoolean("liveTrailers", !liveTrailers).apply();
+                    render(false);
+                });
+
         row("Theme", SeasonalView.name(SeasonalView.theme()),
                 "A seasonal look for special occasions: falling snow for Christmas, rising embers for Halloween. "
                         + "It shows on the Home page. Press to change.",
