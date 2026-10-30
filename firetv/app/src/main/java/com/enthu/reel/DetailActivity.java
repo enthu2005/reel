@@ -604,6 +604,16 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         boolean clip = PreviewHandoff.clip;
         final boolean rendered = PreviewHandoff.rendered;
         preview = PreviewHandoff.take(key);
+        final androidx.media3.exoplayer.ExoPlayer dbg = preview;
+        if (dbg != null) {
+            handler.postDelayed(() -> {
+                if (isDestroyed()) return;
+                android.util.Log.w("ReelDetail", "handoff rendered=" + rendered + " clip=" + clip + " state="
+                        + dbg.getPlaybackState() + " playing=" + dbg.isPlaying() + " vol=" + dbg.getVolume()
+                        + " size=" + dbg.getVideoSize().width + "x" + dbg.getVideoSize().height
+                        + " alpha=" + previewView.getAlpha() + " same=" + (preview == dbg));
+            }, 6000);
+        }
         if (preview == null) return; // startBehindWhenReady() takes over once the title has loaded
         previewClip = clip;
         if (!rendered) {
@@ -641,6 +651,15 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
             handler.postDelayed(() -> {
                 if (preview == p) p.play();
             }, BEHIND_DELAY_MS);
+            // A preview that came from the card but never gets going (the server was slow, or it quietly stalled)
+            // must not block the page's own one: let it go and find another
+            handler.postDelayed(() -> {
+                if (isDestroyed() || preview != p || p.isPlaying()) return;
+                android.util.Log.w("ReelDetail", "carried-over preview never started, replacing it");
+                endPreview();
+                behindStarted = false;
+                startBehindWhenReady();
+            }, BEHIND_DELAY_MS + 5000);
             if (clip) handler.postDelayed(this::endPreview, 60_000);
             return;
         }
@@ -648,6 +667,7 @@ public class DetailActivity extends ReelActivity implements PosterAdapter.Listen
         PreviewHandoff.session = null;
         previewView.setPlayer(preview);
         previewView.setAlpha(1f); // carries straight on from the grown card
+        if (!preview.getPlayWhenReady()) preview.play(); // it can arrive paused (the card was held while the page opened)
         previewOn(true, true);
         // A touch louder on the title page, still quiet.
         float v = HomeActivity.previewVolume(this);
