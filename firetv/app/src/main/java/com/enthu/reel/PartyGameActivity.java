@@ -113,6 +113,7 @@ public class PartyGameActivity extends ReelActivity {
     // ---------------------------------------------------------------- the questions
 
     private List<Party.Round> makeRounds() throws Exception {
+        if (mode == Party.EMOJI) return emojiRounds();
         List<Plex.Item> pool = new ArrayList<>();
         for (Plex.Item it : Plex.items(Plex.paged("/library/sections/" + sectionKey + "/all?sort=random", 80))) {
             if (it.type.equals("movie") && it.title != null && !it.title.isEmpty() && it.thumb != null) pool.add(it);
@@ -192,6 +193,97 @@ public class PartyGameActivity extends ReelActivity {
                 }
                 out.add(new Party.Round("Which of these came out first?", opts, best, "", 20000));
             }
+        }
+        return out;
+    }
+
+    // ---------------------------------------------------------------- emoji plot
+
+    private java.util.LinkedHashMap<String, String> words;  // word -> emoji
+    private java.util.Map<String, String> genreEmoji;       // genre -> emoji
+
+    private void loadEmojiWords() {
+        words = new java.util.LinkedHashMap<>();
+        genreEmoji = new java.util.HashMap<>();
+        try (java.io.BufferedReader r = new java.io.BufferedReader(
+                new java.io.InputStreamReader(getAssets().open("emoji_words.txt"), "UTF-8"))) {
+            String line;
+            while ((line = r.readLine()) != null) {
+                int tab = line.indexOf('\t');
+                if (tab <= 0) continue;
+                String k = line.substring(0, tab).trim().toLowerCase(Locale.ROOT);
+                String e = line.substring(tab + 1).trim();
+                if (k.startsWith("genre:")) genreEmoji.put(k.substring(6), e);
+                else words.put(k, e);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private String emojiOf(String token) {
+        for (java.util.Map.Entry<String, String> w : words.entrySet()) {
+            String k = w.getKey();
+            if (token.equals(k) || token.equals(k + "s") || token.equals(k + "es") || token.equals(k + "ed")
+                    || token.equals(k + "ing") || (k.length() >= 5 && token.startsWith(k))) {
+                return w.getValue();
+            }
+        }
+        return null;
+    }
+
+    /** The film as up to five emoji, from the words of its title and plot (then its genres); null if too few. */
+    private String emojiPlot(String title, String summary, org.json.JSONArray genres) {
+        List<String> out = new ArrayList<>();
+        String[] tokens = ((title == null ? "" : title) + " " + (summary == null ? "" : summary))
+                .toLowerCase(Locale.ROOT).split("[^a-z]+");
+        for (String t : tokens) {
+            if (t.length() < 3) continue;
+            String e = emojiOf(t);
+            if (e != null && !out.contains(e)) out.add(e);
+            if (out.size() >= 5) break;
+        }
+        if (out.size() < 4 && genres != null) {
+            for (int i = 0; i < genres.length() && out.size() < 4; i++) {
+                String e = genreEmoji.get(genres.optJSONObject(i) == null ? "" : genres.optJSONObject(i).optString("tag", "").toLowerCase(Locale.ROOT));
+                if (e != null && !out.contains(e)) out.add(e);
+            }
+        }
+        if (out.size() < 3) return null;
+        StringBuilder sb = new StringBuilder();
+        for (String e : out) sb.append(e).append(' ');
+        return sb.toString().trim();
+    }
+
+    /** Eight films shown only as emoji; the answer is the right title among three others from the library. */
+    private List<Party.Round> emojiRounds() throws Exception {
+        loadEmojiWords();
+        org.json.JSONArray all = Plex.listAll(sectionKey);
+        List<org.json.JSONObject> movies = new ArrayList<>();
+        List<String> titles = new ArrayList<>();
+        for (int i = 0; i < all.length(); i++) {
+            org.json.JSONObject m = all.optJSONObject(i);
+            if (m == null || !"movie".equals(m.optString("type")) || m.optString("title").isEmpty()) continue;
+            movies.add(m);
+            titles.add(m.optString("title"));
+        }
+        Collections.shuffle(movies);
+        Random rnd = new Random();
+        List<Party.Round> out = new ArrayList<>();
+        for (org.json.JSONObject m : movies) {
+            if (out.size() >= 8) break;
+            String plot = emojiPlot(m.optString("title"), m.optString("summary"), m.optJSONArray("Genre"));
+            if (plot == null) continue;
+            String right = m.optString("title");
+            List<String> opts = new ArrayList<>();
+            opts.add(right);
+            int tries = 0;
+            while (opts.size() < 4 && tries++ < 200) {
+                String t = titles.get(rnd.nextInt(titles.size()));
+                if (!opts.contains(t)) opts.add(t);
+            }
+            if (opts.size() < 4) continue;
+            Collections.shuffle(opts);
+            out.add(new Party.Round(plot, opts.toArray(new String[0]), opts.indexOf(right), m.optString("thumb"), 20000));
         }
         return out;
     }
@@ -295,7 +387,7 @@ public class PartyGameActivity extends ReelActivity {
         row.setPadding((int) (W * 0.06f), (int) (H * 0.08f), (int) (W * 0.05f), 0);
         LinearLayout left = new LinearLayout(this);
         left.setOrientation(LinearLayout.VERTICAL);
-        left.addView(text(mode == Party.GUESS ? "Guess the film" : mode == Party.TRAILER ? "Trailer guess" : "Movie quiz night", H * 0.05f, Color.WHITE, true));
+        left.addView(text(mode == Party.GUESS ? "Guess the film" : mode == Party.TRAILER ? "Trailer guess" : mode == Party.EMOJI ? "Emoji plot" : "Movie quiz night", H * 0.05f, Color.WHITE, true));
         left.addView(text("Scan to join · " + (sectionTitle == null ? "" : sectionTitle), H * 0.026f, 0x99FFFFFF, false));
         int qs = (int) (H * 0.4f);
         ImageView code = new ImageView(this);
@@ -360,7 +452,7 @@ public class PartyGameActivity extends ReelActivity {
         shownStage = -1;
         if (mode == Party.TRAILER) {
             trailerBox(col, q, s.round, result);
-        } else if (!q.thumb.isEmpty()) {
+        } else if (mode == Party.GUESS && !q.thumb.isEmpty()) {
             poster = new ImageView(this);
             poster.setScaleType(ImageView.ScaleType.CENTER_CROP);
             poster.setBackground(UiUtil.rounded(UiUtil.CARD, H * 0.015f));
@@ -372,10 +464,17 @@ public class PartyGameActivity extends ReelActivity {
             col.addView(text(result ? q.options[q.correct] : q.prompt, H * 0.04f, Color.WHITE, true),
                     new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         } else {
-            TextView p = text(q.prompt, H * 0.04f, Color.WHITE, true);
+            TextView p = text(q.prompt, mode == Party.EMOJI ? H * 0.13f : H * 0.04f, Color.WHITE, true);
             p.setGravity(Gravity.CENTER);
             LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams((int) (W * 0.82f), (int) (H * 0.4f));
             pp.topMargin = (int) (H * 0.03f);
+            if (mode == Party.EMOJI) {
+                TextView cap = text("Which film is this?", H * 0.035f, 0xB3FFFFFF, false);
+                cap.setGravity(Gravity.CENTER);
+                col.addView(cap, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT));
+                pp = new LinearLayout.LayoutParams((int) (W * 0.82f), (int) (H * 0.3f));
+            }
             col.addView(p, pp);
         }
         answeredText = text("", H * 0.026f, 0x99FFFFFF, false);

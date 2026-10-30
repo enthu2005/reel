@@ -117,8 +117,8 @@ public class PartyActivity extends ReelActivity {
         sub.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.028f);
         sub.setPadding(0, (int) (H * 0.01f), 0, (int) (H * 0.04f));
         col.addView(sub);
-        String[] labels = {"Vote on films", "Movie roulette", "Guess the film", "Trailer guess", "Movie quiz night"};
-        final int[] modes = {Party.VOTE_MODE, ROULETTE, Party.GUESS, Party.TRAILER, Party.QUIZ};
+        String[] labels = {"Vote on films", "Movie roulette", "Guess the film", "Trailer guess", "Emoji plot", "Movie quiz night"};
+        final int[] modes = {Party.VOTE_MODE, ROULETTE, Party.GUESS, Party.TRAILER, Party.EMOJI, Party.QUIZ};
         View first = null;
         for (int i = 0; i < labels.length; i++) {
             final int m = modes[i];
@@ -171,6 +171,7 @@ public class PartyActivity extends ReelActivity {
                 : gameMode == ROULETTE ? "Pick the library. The reel lands on a random film you haven't watched."
                 : gameMode == Party.GUESS ? "Pick the library. Posters sharpen on the TV; everyone races to name the film on their phone."
                 : gameMode == Party.TRAILER ? "Pick the library. Trailer clips play on the TV, some with the picture hidden; name the film on your phone."
+                : gameMode == Party.EMOJI ? "Pick the library. A film is shown as emoji on the TV; name it on your phone."
                 : "Pick the library. Questions about its films; everyone answers on their phone.");
         sub.setTextColor(0x99FFFFFF);
         sub.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.028f);

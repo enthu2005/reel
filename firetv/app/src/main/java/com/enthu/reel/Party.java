@@ -236,7 +236,7 @@ final class Party {
 
     // ------------------------------------------------------------------ games: guess the film, movie quiz
 
-    static final int VOTE_MODE = 0, GUESS = 1, QUIZ = 2, TRAILER = 3;
+    static final int VOTE_MODE = 0, GUESS = 1, QUIZ = 2, TRAILER = 3, EMOJI = 4;
     static final int G_LOBBY = 0, G_ASK = 1, G_RESULT = 2, G_FINAL = 3;
     private static final long RESULT_MS = 4500;
 
