@@ -39,13 +39,17 @@ public class PartyActivity extends ReelActivity {
     private TextView timeBtn;
     private TextView revealBtn;
     private TextView bigCount;
-    private int minutesAt = 1;
+    private int minutesAt = 0; // 1 minute unless changed
     private int W;
     private int H;
     private boolean started;   // a party exists (the code is up)
     private boolean voting;    // Start votes was pressed
     private boolean revealed;
     private long lastBoard;
+    private Plex.Section section;
+    private boolean guestAdd;
+    private boolean again;     // the next draw is "Pick again": same code and settings
+    private final java.util.Set<String> lastKeys = new java.util.HashSet<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -115,7 +119,7 @@ public class PartyActivity extends ReelActivity {
             TextView b = button(s.title);
             b.setOnClickListener(v -> {
                 SoundFx.click();
-                begin(s);
+                options(s);
             });
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     (int) (W * 0.4f), ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -148,12 +152,56 @@ public class PartyActivity extends ReelActivity {
         return b;
     }
 
+    /** Between the library and the code: whether guests may add films too. */
+    private void options(final Plex.Section s) {
+        section = s;
+        root.removeAllViews();
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding((int) (W * 0.1f), (int) (H * 0.12f), (int) (W * 0.1f), 0);
+        TextView head = new TextView(this);
+        head.setText(s.title);
+        head.setTextColor(Color.WHITE);
+        head.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.06f);
+        head.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+        col.addView(head);
+        TextView sub = new TextView(this);
+        sub.setText("Guests can search this library on their phones and add films to the vote (two each).");
+        sub.setTextColor(0x99FFFFFF);
+        sub.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.028f);
+        sub.setPadding(0, (int) (H * 0.01f), 0, (int) (H * 0.04f));
+        col.addView(sub);
+        final TextView add = button("");
+        add.setText("Guests can add films: " + (guestAdd ? "Yes" : "No"));
+        add.setOnClickListener(v -> {
+            SoundFx.click();
+            guestAdd = !guestAdd;
+            add.setText("Guests can add films: " + (guestAdd ? "Yes" : "No"));
+        });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams((int) (W * 0.4f), ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.bottomMargin = (int) (H * 0.015f);
+        col.addView(add, lp);
+        TextView go = button("Continue");
+        go.setOnClickListener(v -> {
+            SoundFx.click();
+            begin(s);
+        });
+        col.addView(go, lp);
+        root.addView(col);
+        go.requestFocus();
+    }
+
     /** Step 2: draw the films and put the code up. */
     private void begin(final Plex.Section s) {
         message("Choosing " + FILMS + " films from " + s.title + "…");
         Plex.async(() -> {
             List<Plex.Item> pool = Plex.items(Plex.paged("/library/sections/" + s.key + "/all?sort=random", 60));
             java.util.Collections.shuffle(pool);
+            if (again) { // not the films that were just on the board, if there are enough others
+                List<Plex.Item> fresh = new ArrayList<>();
+                for (Plex.Item it : pool) if (!lastKeys.contains(it.key)) fresh.add(it);
+                if (fresh.size() >= FILMS) pool = fresh;
+            }
             List<Party.Film> out = new ArrayList<>();
             for (Plex.Item it : pool) {
                 if (out.size() >= FILMS) break;
@@ -169,7 +217,9 @@ public class PartyActivity extends ReelActivity {
                     return;
                 }
                 started = true;
-                Party.start(films);
+                if (again) Party.restart(films);
+                else Party.start(films, section.key, guestAdd);
+                again = false;
                 showLobby();
             }
 
@@ -331,6 +381,7 @@ public class PartyActivity extends ReelActivity {
         List<Object[]> rank = Party.ranking();
         int max = 1;
         for (Object[] r : rank) max = Math.max(max, (Integer) r[1]);
+        int rowH = (int) Math.min(H * 0.062f, H * 0.8f / Math.max(1, rank.size()) - H * 0.008f);
         int n = 0;
         for (Object[] r : rank) {
             Party.Film f = (Party.Film) r[0];
@@ -360,7 +411,7 @@ public class PartyActivity extends ReelActivity {
                         ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END));
             }
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, (int) (H * 0.062f)); // fixed, so the bar can fill the row
+                    ViewGroup.LayoutParams.MATCH_PARENT, rowH); // fixed, so the bar can fill the row
             lp.bottomMargin = (int) (H * 0.008f);
             board.addView(line, lp);
         }
@@ -459,7 +510,20 @@ public class PartyActivity extends ReelActivity {
             startActivity(i);
             finish();
         });
-        col.addView(open, new LinearLayout.LayoutParams((int) (W * 0.16f), ViewGroup.LayoutParams.WRAP_CONTENT));
+        final TextView again = button("Pick again");
+        again.setGravity(Gravity.CENTER);
+        again.setOnClickListener(v -> {
+            SoundFx.click();
+            pickAgain();
+        });
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        buttons.addView(open, new LinearLayout.LayoutParams((int) (W * 0.16f), ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams((int) (W * 0.16f),
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        alp.leftMargin = (int) (W * 0.012f);
+        buttons.addView(again, alp);
+        col.addView(buttons);
         FrameLayout.LayoutParams clp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
         root.addView(col, clp);
@@ -474,10 +538,27 @@ public class PartyActivity extends ReelActivity {
         title.setAlpha(0f);
         sub.setAlpha(0f);
         open.setAlpha(0f);
+        again.setAlpha(0f);
+        again.animate().alpha(1f).setStartDelay(1200).setDuration(500).start();
         title.animate().alpha(1f).setStartDelay(700).setDuration(500).start();
         sub.animate().alpha(1f).setStartDelay(900).setDuration(500).start();
         open.animate().alpha(1f).setStartDelay(1200).setDuration(500).start();
         open.requestFocus();
+    }
+
+    /** After a reveal: ten new films from the same library, the same code, a fresh vote. */
+    private void pickAgain() {
+        if (section == null) return;
+        lastKeys.clear();
+        for (Object[] r : Party.ranking()) lastKeys.add(((Party.Film) r[0]).key);
+        again = true;
+        revealed = false;
+        voting = false;
+        handler.removeCallbacksAndMessages(null);
+        if (fx != null) fx.stop();
+        fx = null;
+        root.setBackgroundColor(UiUtil.BG);
+        begin(section);
     }
 
     @Override

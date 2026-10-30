@@ -40,12 +40,20 @@ final class Party {
     private static final Map<String, String> votes = new HashMap<>(); // guest address -> film key
     private static String winnerKey = "";
     private static long endsAt;
+    private static String sectionKey = "";
+    private static boolean guestAdd;
+    private static final Map<String, Integer> adds = new HashMap<>(); // guest address -> films they added
+    static final int MAX_FILMS = 16;
+    static final int ADDS_EACH = 2;
 
     private Party() {
     }
 
     /** Opens a lobby for these films (guests can see the page but not vote yet); returns the code for the link. */
-    static synchronized String start(List<Film> list) {
+    static synchronized String start(List<Film> list, String section, boolean guestsMayAdd) {
+        sectionKey = section == null ? "" : section;
+        guestAdd = guestsMayAdd;
+        adds.clear();
         byte[] b = new byte[6];
         new SecureRandom().nextBytes(b);
         StringBuilder sb = new StringBuilder();
@@ -92,8 +100,42 @@ final class Party {
     }
 
     static synchronized boolean allowsThumb(String path) {
+        if (path == null) return false;
         for (Film f : films) if (!f.thumb.isEmpty() && f.thumb.equals(path)) return true;
-        return false;
+        // when guests may add films, the posters of their search results are fine too (and only posters)
+        return guestAdd && path.matches("^/library/metadata/\\d+/thumb/\\d+$");
+    }
+
+    /** A new round with the same code and settings, so guests' pages carry on: fresh films, no votes. */
+    static synchronized void restart(List<Film> list) {
+        if (!active) return;
+        films.clear();
+        films.addAll(list);
+        votes.clear();
+        adds.clear();
+        winnerKey = "";
+        endsAt = 0;
+        phase = LOBBY;
+    }
+
+    static synchronized String section() {
+        return sectionKey;
+    }
+
+    static synchronized boolean guestsMayAdd() {
+        return guestAdd;
+    }
+
+    /** A guest adds a film from the chosen library: a couple each, up to a cap, no repeats, not once the vote is over. */
+    static synchronized String addFilm(String guest, Film f) {
+        if (!active || !guestAdd || phase == DONE) return "closed";
+        if (films.size() >= MAX_FILMS) return "full";
+        for (Film x : films) if (x.key.equals(f.key)) return "already there";
+        int n = adds.getOrDefault(guest, 0);
+        if (n >= ADDS_EACH) return "limit";
+        adds.put(guest, n + 1);
+        films.add(f);
+        return "";
     }
 
     /** One vote per guest address; voting again replaces it. */
@@ -150,6 +192,9 @@ final class Party {
     }
 
     static synchronized void cancel() {
+        guestAdd = false;
+        sectionKey = "";
+        adds.clear();
         active = false;
         phase = DONE;
         token = "";
@@ -167,6 +212,8 @@ final class Party {
             o.put("voters", votes.size());
             o.put("mine", guest == null ? "" : votes.getOrDefault(guest, ""));
             o.put("winner", winnerKey);
+            o.put("canAdd", guestAdd && phase != DONE && films.size() < MAX_FILMS);
+            o.put("addsLeft", guest == null ? 0 : Math.max(0, ADDS_EACH - adds.getOrDefault(guest, 0)));
             JSONArray a = new JSONArray();
             for (Object[] r : ranking()) {
                 Film f = (Film) r[0];

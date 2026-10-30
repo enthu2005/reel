@@ -191,6 +191,10 @@ final class PhoneRemote {
                 } else if (path.equals("/party/vote")) {
                     boolean ok = Party.vote(ip, q.get("key"));
                     reply(out, 200, "application/json; charset=utf-8", Party.stateJson(ip).replaceFirst("^\\{", "{\"ok\":" + ok + ","));
+                } else if (path.equals("/party/search")) {
+                    reply(out, 200, "application/json; charset=utf-8", partySearch(q.get("q")));
+                } else if (path.equals("/party/add")) {
+                    reply(out, 200, "application/json; charset=utf-8", partyAdd(ip, q.get("key")));
                 } else if (path.equals("/party/img")) {
                     String pth = q.get("path");
                     if (pth != null && Party.allowsThumb(pth)) image(out, pth);
@@ -245,6 +249,41 @@ final class PhoneRemote {
             return new org.json.JSONObject().put("results", arr).toString();
         } catch (Exception e) {
             return "{\"results\":[],\"error\":true}";
+        }
+    }
+
+    /** Guests' search: films of the party's library only (and only when the host allowed adding). */
+    private static String partySearch(String text) {
+        try {
+            org.json.JSONArray arr = new org.json.JSONArray();
+            final String q = text == null ? "" : text.trim();
+            if (Party.guestsMayAdd() && q.length() >= 2) {
+                for (Plex.Item it : Plex.search(q)) {
+                    if (arr.length() >= 12) break;
+                    if (!it.type.equals("movie") || !String.valueOf(it.librarySectionID).equals(Party.section())) continue;
+                    arr.put(new org.json.JSONObject().put("key", it.key).put("title", it.displayTitle())
+                            .put("sub", it.year > 0 ? String.valueOf(it.year) : "")
+                            .put("thumb", it.poster() == null ? "" : it.poster()));
+                }
+            }
+            return new org.json.JSONObject().put("results", arr).toString();
+        } catch (Exception e) {
+            return "{\"results\":[]}";
+        }
+    }
+
+    private static String partyAdd(String guest, String key) {
+        try {
+            if (key == null || !key.matches("\\d+")) return "{\"ok\":false,\"why\":\"bad film\"}";
+            Plex.Item it = Plex.metadata(key);
+            if (it == null || !it.type.equals("movie") || !String.valueOf(it.librarySectionID).equals(Party.section())) {
+                return "{\"ok\":false,\"why\":\"not in this library\"}";
+            }
+            String why = Party.addFilm(guest, new Party.Film(it.key, it.displayTitle(),
+                    it.year > 0 ? String.valueOf(it.year) : "", it.poster()));
+            return new org.json.JSONObject().put("ok", why.isEmpty()).put("why", why).toString();
+        } catch (Exception e) {
+            return "{\"ok\":false,\"why\":\"error\"}";
         }
     }
 

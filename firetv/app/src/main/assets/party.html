@@ -37,6 +37,8 @@
   .win img { width:150px; border-radius:12px; display:block; margin:10px auto 8px; box-shadow:0 10px 30px rgba(0,0,0,.5); }
   .win b { display:block; font-size:24px; margin-top:2px; }
   .hide { display:none; }
+  #q { width:100%; padding:12px 14px; font:inherit; color:var(--text); background:var(--card); border:1px solid var(--line); border-radius:12px; outline:none; margin-bottom:6px; }
+  #q:focus { border-color:var(--accent); }
   #fx { position:fixed; inset:0; pointer-events:none; }
 </style>
 </head>
@@ -45,6 +47,11 @@
 <main>
   <h1>Pick tonight's film</h1>
   <div class="sub" id="sub"></div>
+  <div id="adder" class="hide">
+    <input id="q" type="search" placeholder="Add a film from the library" autocomplete="off">
+    <div class="sub" id="addMsg"></div>
+    <div id="found"></div>
+  </div>
   <div class="clock hide" id="clock"></div>
   <div class="win hide" id="win">The winner is<img id="winImg" alt=""><b id="winT"></b><div class="sub" id="winV"></div></div>
   <div id="list"></div>
@@ -72,6 +79,11 @@ function fmt(ms) {
 function render(s) {
   if (!s) return;
   last = s; gotAt = performance.now();
+  if (s.phase !== DONE) boomed = false;
+  const canAdd = s.canAdd && s.addsLeft > 0;
+  $('adder').classList.toggle("hide", !canAdd);
+  if (canAdd) $('addMsg').textContent = "You can add " + s.addsLeft + (s.addsLeft === 1 ? " more film" : " more films") + " to the vote.";
+  else $('found').innerHTML = "";
   const max = Math.max(1, ...s.films.map(f => f.votes));
   $('sub').textContent = s.phase === LOBBY ? 'Waiting for the host to start the vote…'
     : s.phase === VOTING ? s.voters + (s.voters === 1 ? ' vote' : ' votes') + ' so far. One vote each; tap another film to change it.'
@@ -136,6 +148,27 @@ function frame() {
   requestAnimationFrame(frame);
 }
 frame();
+
+let findTimer = null, findSeq = 0;
+$('q').addEventListener('input', () => { clearTimeout(findTimer); findTimer = setTimeout(find, 350); });
+async function find() {
+  const text = $('q').value.trim(), mine = ++findSeq;
+  if (text.length < 2) { $('found').innerHTML = ''; return; }
+  const r = await call('/party/search', '&q=' + encodeURIComponent(text));
+  if (mine !== findSeq || !r) return;
+  const rows = r.results || [];
+  $('found').innerHTML = rows.length ? rows.map((f, i) =>
+    '<div class="film"><img alt="" src="' + (f.thumb ? '/party/img?p=' + encodeURIComponent(P) + '&path=' + encodeURIComponent(f.thumb) : '') + '">' +
+    '<div class="txt"><b>' + esc(f.title) + '</b><span>' + esc(f.sub) + '</span></div>' +
+    '<button class="vote" data-a="' + i + '">Add</button></div>').join('') : '<div class="sub">Nothing found in this library.</div>';
+  $('found').querySelectorAll('button[data-a]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    const res = await call('/party/add', '&key=' + encodeURIComponent(rows[+b.dataset.a].key));
+    $('addMsg').textContent = res && res.ok ? 'Added!' : 'Could not add: ' + ((res && res.why) || 'try again');
+    if (res && res.ok) { $('q').value = ''; $('found').innerHTML = ''; }
+    tick();
+  });
+}
 
 async function tick() { render(await call('/party/state')); }
 tick(); setInterval(tick, 1500);
