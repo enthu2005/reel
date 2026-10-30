@@ -51,6 +51,7 @@ final class Party {
 
     /** Opens a lobby for these films (guests can see the page but not vote yet); returns the code for the link. */
     static synchronized String start(List<Film> list, String section, boolean guestsMayAdd) {
+        mode = VOTE_MODE;
         sectionKey = section == null ? "" : section;
         guestAdd = guestsMayAdd;
         adds.clear();
@@ -192,6 +193,11 @@ final class Party {
     }
 
     static synchronized void cancel() {
+        mode = VOTE_MODE;
+        rounds.clear();
+        names.clear();
+        scores.clear();
+        answers.clear();
         guestAdd = false;
         sectionKey = "";
         adds.clear();
@@ -204,6 +210,7 @@ final class Party {
     }
 
     static synchronized String stateJson(String guest) {
+        if (mode != VOTE_MODE) return gameJson(guest);
         try {
             checkTime();
             JSONObject o = new JSONObject();
@@ -224,6 +231,198 @@ final class Party {
             return o.toString();
         } catch (Exception e) {
             return "{\"phase\":2,\"films\":[]}";
+        }
+    }
+
+    // ------------------------------------------------------------------ games: guess the film, movie quiz
+
+    static final int VOTE_MODE = 0, GUESS = 1, QUIZ = 2;
+    static final int G_LOBBY = 0, G_ASK = 1, G_RESULT = 2, G_FINAL = 3;
+    private static final long RESULT_MS = 4500;
+
+    /** One question: a prompt (or a poster that sharpens), four options, and which one is right. */
+    static final class Round {
+        final String prompt;
+        final String[] options;
+        final int correct;
+        final String thumb; // guess the film: the poster the TV sharpens, "" for text questions
+        final long ms;
+
+        Round(String prompt, String[] options, int correct, String thumb, long ms) {
+            this.prompt = prompt;
+            this.options = options;
+            this.correct = correct;
+            this.thumb = thumb == null ? "" : thumb;
+            this.ms = ms;
+        }
+    }
+
+    private static int mode = VOTE_MODE;
+    private static int gPhase = G_LOBBY;
+    private static int gRound;
+    private static long gEndsAt;
+    private static final List<Round> rounds = new ArrayList<>();
+    private static final Map<String, String> names = new HashMap<>();   // guest address -> name
+    private static final Map<String, Integer> scores = new HashMap<>();
+    private static final Map<String, int[]> answers = new HashMap<>();  // this round: guest -> {choice, points}
+
+    /** Opens a game lobby: players join with a name, the host starts it. Returns the code for the link. */
+    static synchronized String startGame(int gameMode, List<Round> list) {
+        byte[] b = new byte[6];
+        new SecureRandom().nextBytes(b);
+        StringBuilder sb = new StringBuilder();
+        for (byte x : b) sb.append(String.format("%02x", x));
+        token = sb.toString();
+        mode = gameMode;
+        active = true;
+        films.clear();
+        votes.clear();
+        guestAdd = false;
+        names.clear();
+        scores.clear();
+        answers.clear();
+        loadRounds(list);
+        return token;
+    }
+
+    private static void loadRounds(List<Round> list) {
+        rounds.clear();
+        rounds.addAll(list);
+        gPhase = G_LOBBY;
+        gRound = 0;
+    }
+
+    /** Another game with the same players and code: new questions, scores back to zero. */
+    static synchronized void restartGame(List<Round> list) {
+        if (!active || mode == VOTE_MODE) return;
+        for (String k : new ArrayList<>(scores.keySet())) scores.put(k, 0);
+        answers.clear();
+        loadRounds(list);
+    }
+
+    static synchronized int mode() {
+        return mode;
+    }
+
+    static synchronized boolean join(String guest, String name) {
+        if (!active || mode == VOTE_MODE || guest == null || guest.isEmpty()) return false;
+        String n = name == null ? "" : name.trim().replaceAll("[<>&\"]", "");
+        if (n.isEmpty()) return false;
+        if (n.length() > 14) n = n.substring(0, 14);
+        names.put(guest, n);
+        if (!scores.containsKey(guest)) scores.put(guest, 0);
+        return true;
+    }
+
+    /** The host starts the game: round one begins. */
+    static synchronized void beginGame() {
+        if (!active || mode == VOTE_MODE || gPhase != G_LOBBY || rounds.isEmpty()) return;
+        gRound = 0;
+        startRound();
+    }
+
+    private static void startRound() {
+        answers.clear();
+        gPhase = G_ASK;
+        gEndsAt = System.currentTimeMillis() + rounds.get(gRound).ms;
+    }
+
+    /** Moves the game on when time is up or everyone has answered. Safe to call as often as you like. */
+    static synchronized void gameTick() {
+        if (mode == VOTE_MODE || !active) return;
+        long now = System.currentTimeMillis();
+        if (gPhase == G_ASK && (now >= gEndsAt || (!names.isEmpty() && answers.size() >= names.size()))) {
+            gPhase = G_RESULT;
+            gEndsAt = now + RESULT_MS;
+        } else if (gPhase == G_RESULT && now >= gEndsAt) {
+            if (gRound + 1 < rounds.size()) {
+                gRound++;
+                startRound();
+            } else {
+                gPhase = G_FINAL;
+            }
+        }
+    }
+
+    /** A player's answer: the first one counts; right answers score more the faster they come (500 to 1000). */
+    static synchronized boolean answer(String guest, int round, int choice) {
+        gameTick();
+        if (gPhase != G_ASK || round != gRound || !names.containsKey(guest) || answers.containsKey(guest)) return false;
+        Round r = rounds.get(gRound);
+        if (choice < 0 || choice >= r.options.length) return false;
+        int pts = 0;
+        if (choice == r.correct) {
+            double left = Math.max(0, gEndsAt - System.currentTimeMillis());
+            pts = 500 + (int) (500.0 * left / r.ms);
+            scores.put(guest, scores.getOrDefault(guest, 0) + pts);
+        }
+        answers.put(guest, new int[]{choice, pts});
+        return true;
+    }
+
+    /** What the TV needs, as plain values. */
+    static final class Snap {
+        int phase, round, total, answered, players;
+        long left;
+        Round question;
+        List<Object[]> board = new ArrayList<>(); // {name, score}
+    }
+
+    static synchronized Snap snap() {
+        gameTick();
+        Snap s = new Snap();
+        s.phase = gPhase;
+        s.round = gRound;
+        s.total = rounds.size();
+        s.answered = answers.size();
+        s.players = names.size();
+        s.left = Math.max(0, gEndsAt - System.currentTimeMillis());
+        s.question = rounds.isEmpty() ? null : rounds.get(Math.min(gRound, rounds.size() - 1));
+        List<Map.Entry<String, Integer>> es = new ArrayList<>(scores.entrySet());
+        java.util.Collections.sort(es, (a, b) -> b.getValue() - a.getValue());
+        for (Map.Entry<String, Integer> e : es) s.board.add(new Object[]{names.getOrDefault(e.getKey(), "?"), e.getValue()});
+        return s;
+    }
+
+    private static String gameJson(String guest) {
+        try {
+            gameTick();
+            JSONObject o = new JSONObject();
+            o.put("mode", mode);
+            o.put("gPhase", gPhase);
+            o.put("round", gRound);
+            o.put("total", rounds.size());
+            o.put("left", gPhase == G_ASK || gPhase == G_RESULT ? Math.max(0, gEndsAt - System.currentTimeMillis()) : 0);
+            o.put("name", guest == null ? "" : names.getOrDefault(guest, ""));
+            o.put("myScore", guest == null ? 0 : scores.getOrDefault(guest, 0));
+            int[] mine = guest == null ? null : answers.get(guest);
+            o.put("myChoice", mine == null ? -1 : mine[0]);
+            o.put("myPoints", mine == null ? 0 : mine[1]);
+            o.put("players", names.size());
+            o.put("answered", answers.size());
+            if ((gPhase == G_ASK || gPhase == G_RESULT) && !rounds.isEmpty()) {
+                Round r = rounds.get(gRound);
+                o.put("prompt", r.prompt);
+                o.put("ms", r.ms);
+                JSONArray opts = new JSONArray();
+                for (String s : r.options) opts.put(s);
+                o.put("options", opts);
+                if (gPhase == G_RESULT) o.put("correct", r.correct);
+            }
+            JSONArray board = new JSONArray();
+            List<Map.Entry<String, Integer>> es = new ArrayList<>(scores.entrySet());
+            java.util.Collections.sort(es, (a, b) -> b.getValue() - a.getValue());
+            int rank = 0, myRank = 0;
+            for (Map.Entry<String, Integer> e : es) {
+                rank++;
+                if (e.getKey().equals(guest)) myRank = rank;
+                if (rank <= 8) board.put(new JSONObject().put("name", names.getOrDefault(e.getKey(), "?")).put("score", e.getValue()));
+            }
+            o.put("board", board);
+            o.put("myRank", myRank);
+            return o.toString();
+        } catch (Exception e) {
+            return "{\"mode\":1,\"gPhase\":0}";
         }
     }
 }

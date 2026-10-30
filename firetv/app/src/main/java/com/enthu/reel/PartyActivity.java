@@ -76,7 +76,7 @@ public class PartyActivity extends ReelActivity {
                     message("No movie library to draw films from.");
                     return;
                 }
-                chooseLibrary(libs);
+                chooseMode(libs);
             }
 
             @Override
@@ -96,6 +96,64 @@ public class PartyActivity extends ReelActivity {
                 ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
     }
 
+    private static final int ROULETTE = 3;
+    private int gameMode = Party.VOTE_MODE;
+
+    /** First: what to play. */
+    private void chooseMode(final List<Plex.Section> libs) {
+        root.removeAllViews();
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding((int) (W * 0.1f), (int) (H * 0.12f), (int) (W * 0.1f), 0);
+        TextView head = new TextView(this);
+        head.setText("Party mode");
+        head.setTextColor(Color.WHITE);
+        head.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.06f);
+        head.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+        col.addView(head);
+        TextView sub = new TextView(this);
+        sub.setText("What are we playing?");
+        sub.setTextColor(0x99FFFFFF);
+        sub.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.028f);
+        sub.setPadding(0, (int) (H * 0.01f), 0, (int) (H * 0.04f));
+        col.addView(sub);
+        String[] labels = {"Vote on films", "Movie roulette", "Guess the film", "Movie quiz night"};
+        final int[] modes = {Party.VOTE_MODE, ROULETTE, Party.GUESS, Party.QUIZ};
+        View first = null;
+        for (int i = 0; i < labels.length; i++) {
+            final int m = modes[i];
+            TextView b = button(labels[i]);
+            b.setOnClickListener(v -> {
+                SoundFx.click();
+                gameMode = m;
+                chooseLibrary(libs);
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams((int) (W * 0.4f), ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.bottomMargin = (int) (H * 0.015f);
+            col.addView(b, lp);
+            if (first == null) first = b;
+        }
+        root.addView(col);
+        if (first != null) first.requestFocus();
+    }
+
+    /** What the mode does with the library you picked. */
+    private void pickLibrary(Plex.Section s) {
+        section = s;
+        if (gameMode == Party.VOTE_MODE) {
+            options(s);
+        } else if (gameMode == ROULETTE) {
+            spin(s);
+        } else {
+            Intent i = new Intent(this, PartyGameActivity.class);
+            i.putExtra("mode", gameMode);
+            i.putExtra("section", s.key);
+            i.putExtra("title", s.title);
+            startActivity(i);
+            finish();
+        }
+    }
+
     /** Step 1: which library the ten films come from (before any code is shown). */
     private void chooseLibrary(final List<Plex.Section> libs) {
         root.removeAllViews();
@@ -109,7 +167,10 @@ public class PartyActivity extends ReelActivity {
         head.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
         col.addView(head);
         TextView sub = new TextView(this);
-        sub.setText("Pick the library. " + FILMS + " random films from it go to a vote on everyone's phone.");
+        sub.setText(gameMode == Party.VOTE_MODE ? "Pick the library. " + FILMS + " random films from it go to a vote on everyone's phone."
+                : gameMode == ROULETTE ? "Pick the library. The reel lands on a random film you haven't watched."
+                : gameMode == Party.GUESS ? "Pick the library. Posters sharpen on the TV; everyone races to name the film on their phone."
+                : "Pick the library. Questions about its films; everyone answers on their phone.");
         sub.setTextColor(0x99FFFFFF);
         sub.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.028f);
         sub.setPadding(0, (int) (H * 0.01f), 0, (int) (H * 0.04f));
@@ -119,7 +180,7 @@ public class PartyActivity extends ReelActivity {
             TextView b = button(s.title);
             b.setOnClickListener(v -> {
                 SoundFx.click();
-                options(s);
+                pickLibrary(s);
             });
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     (int) (W * 0.4f), ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -422,15 +483,25 @@ public class PartyActivity extends ReelActivity {
     // ---------------------------------------------------------------- the big reveal
 
     private FireworksView fx;
+    private String againLabel = "Pick again";
+    private Runnable againAction = this::pickAgain;
 
     private void reveal() {
         if (revealed) return;
         final String win = Party.finish();
         final Party.Film film = Party.winnerFilm();
         if (win.isEmpty() || film == null) return;
+        int votes = Party.votesFor(win);
+        againLabel = "Pick again";
+        againAction = this::pickAgain;
+        revealFilm(win, film, "AND THE WINNER IS…",
+                (film.sub.isEmpty() ? "" : film.sub + "   ·   ") + votes + (votes == 1 ? " vote" : " votes"));
+    }
+
+    /** The big reveal for any film: fireworks and a build-up, then the poster with Open and a second button. */
+    private void revealFilm(final String win, final Party.Film film, String header, final String subLine) {
         revealed = true;
         handler.removeCallbacks(tick);
-        final int votes = Party.votesFor(win);
         root.removeAllViews();
         root.setBackgroundColor(0xFF05050A);
 
@@ -440,7 +511,7 @@ public class PartyActivity extends ReelActivity {
         fx.start(false);
 
         final TextView suspense = new TextView(this);
-        suspense.setText("AND THE WINNER IS…");
+        suspense.setText(header);
         suspense.setTextColor(Color.WHITE);
         suspense.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.07f);
         suspense.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
@@ -461,11 +532,11 @@ public class PartyActivity extends ReelActivity {
         handler.postDelayed(() -> {
             if (isDestroyed()) return;
             suspense.animate().alpha(0f).setDuration(300).withEndAction(() -> root.removeView(suspense)).start();
-            showWinner(win, film, votes);
+            showWinner(win, film, subLine);
         }, 3200);
     }
 
-    private void showWinner(final String win, Party.Film film, int votes) {
+    private void showWinner(final String win, Party.Film film, String subLine) {
         fx.autoLaunch(true);
         for (int i = 0; i < 7; i++) {
             final int k = i;
@@ -495,7 +566,7 @@ public class PartyActivity extends ReelActivity {
         title.setPadding((int) (W * 0.05f), (int) (H * 0.02f), (int) (W * 0.05f), 0);
         col.addView(title, new LinearLayout.LayoutParams((int) (W * 0.8f), ViewGroup.LayoutParams.WRAP_CONTENT));
         TextView sub = new TextView(this);
-        sub.setText((film.sub.isEmpty() ? "" : film.sub + "   ·   ") + votes + (votes == 1 ? " vote" : " votes"));
+        sub.setText(subLine);
         sub.setTextColor(0xFFE8833A);
         sub.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.034f);
         sub.setGravity(Gravity.CENTER);
@@ -510,11 +581,11 @@ public class PartyActivity extends ReelActivity {
             startActivity(i);
             finish();
         });
-        final TextView again = button("Pick again");
+        final TextView again = button(againLabel);
         again.setGravity(Gravity.CENTER);
         again.setOnClickListener(v -> {
             SoundFx.click();
-            pickAgain();
+            againAction.run();
         });
         LinearLayout buttons = new LinearLayout(this);
         buttons.setOrientation(LinearLayout.HORIZONTAL);
@@ -544,6 +615,100 @@ public class PartyActivity extends ReelActivity {
         sub.animate().alpha(1f).setStartDelay(900).setDuration(500).start();
         open.animate().alpha(1f).setStartDelay(1200).setDuration(500).start();
         open.requestFocus();
+    }
+
+    // ---------------------------------------------------------------- movie roulette
+
+    /** Spins a slot-machine reel of titles that slows and lands on an unwatched film from the library. */
+    private void spin(final Plex.Section s) {
+        message("Loading the reel…");
+        Plex.async(() -> {
+            List<Plex.Item> pool = Plex.items(Plex.paged("/library/sections/" + s.key + "/all?unwatched=1&sort=random", 40));
+            if (pool.size() < 5) pool = Plex.items(Plex.paged("/library/sections/" + s.key + "/all?sort=random", 40));
+            List<Party.Film> out = new ArrayList<>();
+            for (Plex.Item it : pool) {
+                out.add(new Party.Film(it.key, it.displayTitle(), it.year > 0 ? String.valueOf(it.year) : "", it.poster()));
+            }
+            return out;
+        }, new Plex.Callback<List<Party.Film>>() {
+            @Override
+            public void ok(List<Party.Film> films) {
+                if (isDestroyed()) return;
+                if (films.size() < 2) {
+                    message("Not enough films in that library.");
+                    return;
+                }
+                spinReel(films);
+            }
+
+            @Override
+            public void fail(Exception e) {
+                if (!isDestroyed()) message("Couldn't load films: " + e.getMessage());
+            }
+        });
+    }
+
+    private void spinReel(final List<Party.Film> films) {
+        revealed = false;
+        root.removeAllViews();
+        root.setBackgroundColor(0xFF05050A);
+        FrameLayout box = new FrameLayout(this);
+        box.setBackground(UiUtil.rounded(0x22FFFFFF, H * 0.03f));
+        final TextView title = new TextView(this);
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.09f);
+        title.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+        title.setGravity(Gravity.CENTER);
+        title.setMaxLines(2);
+        title.setPadding((int) (W * 0.03f), 0, (int) (W * 0.03f), 0);
+        box.addView(title, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER));
+        FrameLayout.LayoutParams blp = new FrameLayout.LayoutParams((int) (W * 0.8f), (int) (H * 0.32f), Gravity.CENTER);
+        root.addView(box, blp);
+        TextView head = new TextView(this);
+        head.setText("MOVIE ROULETTE");
+        head.setTextColor(0xFFE8833A);
+        head.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.05f);
+        head.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+        head.setLetterSpacing(0.15f);
+        FrameLayout.LayoutParams hlp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL | Gravity.TOP);
+        hlp.topMargin = (int) (H * 0.18f);
+        root.addView(head, hlp);
+
+        final java.util.Random rnd = new java.util.Random();
+        final Party.Film landed = films.get(rnd.nextInt(films.size()));
+        // Ticks slow down like a real reel: quick at first, then longer and longer gaps
+        final List<Long> delays = new ArrayList<>();
+        for (double d = 55; d < 480; d *= 1.14) delays.add((long) d);
+        long at = 400;
+        for (int i = 0; i < delays.size(); i++) {
+            at += delays.get(i);
+            final boolean last = i == delays.size() - 1;
+            handler.postDelayed(() -> {
+                if (isDestroyed()) return;
+                Party.Film f = last ? landed : films.get(rnd.nextInt(films.size()));
+                title.setText(f.title);
+                title.setScaleX(1.08f);
+                title.setScaleY(1.08f);
+                title.animate().scaleX(1f).scaleY(1f).setDuration(120).start();
+                SoundFx.move();
+                if (last) title.setTextColor(0xFFE8833A);
+            }, at);
+        }
+        handler.postDelayed(() -> {
+            if (isDestroyed()) return;
+            againLabel = "Spin again";
+            againAction = () -> {
+                handler.removeCallbacksAndMessages(null);
+                if (fx != null) fx.stop();
+                fx = null;
+                revealed = false;
+                root.setBackgroundColor(UiUtil.BG);
+                spin(section);
+            };
+            revealFilm(landed.key, landed, "TONIGHT'S FILM IS…", landed.sub);
+        }, at + 900);
     }
 
     /** After a reveal: ten new films from the same library, the same code, a fresh vote. */

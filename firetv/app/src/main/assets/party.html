@@ -45,7 +45,7 @@
 <body>
 <canvas id="fx"></canvas>
 <main>
-  <h1>Pick tonight's film</h1>
+  <h1 id="h">Pick tonight's film</h1>
   <div class="sub" id="sub"></div>
   <div id="adder" class="hide">
     <input id="q" type="search" placeholder="Add a film from the library" autocomplete="off">
@@ -55,6 +55,7 @@
   <div class="clock hide" id="clock"></div>
   <div class="win hide" id="win">The winner is<img id="winImg" alt=""><b id="winT"></b><div class="sub" id="winV"></div></div>
   <div id="list"></div>
+  <div id="game" class="hide"></div>
 </main>
 <script>
 const P = new URLSearchParams(location.search).get('p') || '';
@@ -78,6 +79,7 @@ function fmt(ms) {
 
 function render(s) {
   if (!s) return;
+  if (s.mode) { renderGame(s); return; }
   last = s; gotAt = performance.now();
   if (s.phase !== DONE) boomed = false;
   const canAdd = s.canAdd && s.addsLeft > 0;
@@ -148,6 +150,82 @@ function frame() {
   requestAnimationFrame(frame);
 }
 frame();
+
+// ---------------------------------------------------------------- guess the film / movie quiz
+const COLORS = ['#e0524d', '#3d8bfd', '#e8b13a', '#3fb27f'];
+let myName = '', joining = false, boomedGame = false;
+try { myName = localStorage.getItem('reelName') || ''; } catch (e) {}
+
+async function joinAs(name) {
+  joining = true;
+  try { localStorage.setItem('reelName', name); } catch (e) {}
+  myName = name;
+  const r = await call('/party/join', '&n=' + encodeURIComponent(name));
+  joining = false;
+  if (r) renderGame(r);
+}
+
+function boardHtml(s, n) {
+  return '<div class="list">' + (s.board || []).slice(0, n).map((b, i) =>
+    '<div class="item"><span class="t">' + (i + 1) + '. ' + esc(b.name) + '</span><span class="ms">' + b.score + '</span></div>').join('') + '</div>';
+}
+
+function renderGame(s) {
+  last = s; gotAt = performance.now();
+  ['adder', 'list', 'win', 'clock'].forEach(id => $(id).classList.add('hide'));
+  $('game').classList.remove('hide');
+  $('h').textContent = s.mode === 1 ? 'Guess the film' : 'Movie quiz night';
+  $('sub').textContent = '';
+  const g = $('game');
+  if (!s.name) {
+    if (myName && !joining) { joinAs(myName); return; }
+    if (!document.getElementById('nm')) {
+      g.innerHTML = '<div class="sub">Pick a name for the scoreboard</div><input id="nm" maxlength="14" placeholder="Your name" autocomplete="off" style="width:100%;padding:12px 14px;font:inherit;color:var(--text);background:var(--card);border:1px solid var(--line);border-radius:12px;outline:none;margin-bottom:10px"><button class="vote" id="go" style="width:100%;padding:14px">Join</button>';
+      $('go').onclick = () => { const v = $('nm').value.trim(); if (v) joinAs(v); };
+    }
+    return;
+  }
+  if (s.gPhase === 0) {
+    g.innerHTML = '<div class="sub">Hi ' + esc(s.name) + '! Waiting for the host to start… ' + s.players + (s.players === 1 ? ' player' : ' players') + ' in.</div>' + boardHtml(s, 8);
+    return;
+  }
+  if (s.gPhase === 3) {
+    g.innerHTML = '<div class="win">Game over<b>You finished #' + s.myRank + '</b><div class="sub">' + s.myScore + ' points</div></div>' + boardHtml(s, 8);
+    if (!boomedGame) { boomedGame = true; burst(); }
+    return;
+  }
+  boomedGame = false;
+  const asking = s.gPhase === 1, correct = s.correct;
+  let html = '<div class="sub">Round ' + (s.round + 1) + ' of ' + s.total + ' · ' + s.myScore + ' points</div>';
+  if (asking) html += '<div class="clock" id="gclock"></div>';
+  html += '<div style="font-size:19px;margin:6px 0 14px;font-weight:600">' + esc(s.prompt) + '</div>';
+  (s.options || []).forEach((o, i) => {
+    let st = 'background:' + COLORS[i] + ';color:#fff;';
+    if (!asking) {
+      if (i === correct) st = 'background:#2faa63;color:#fff;';
+      else st = 'background:#2a2b31;color:#777;' + (i === s.myChoice ? 'outline:2px solid #e0524d;' : '');
+    } else if (s.myChoice >= 0 && i !== s.myChoice) st += 'opacity:.35;';
+    html += '<button data-i="' + i + '" style="' + st + 'width:100%;padding:16px;margin:6px 0;font-size:17px;border:0;text-align:left"' + (asking && s.myChoice < 0 ? '' : ' disabled') + '>' + esc(o) + (i === s.myChoice ? '  ✓' : '') + '</button>';
+  });
+  if (asking) html += '<div class="sub">' + (s.myChoice >= 0 ? 'Locked in — waiting for the others (' + s.answered + '/' + s.players + ')' : s.answered + '/' + s.players + ' answered') + '</div>';
+  else html += '<div class="sub" style="font-size:18px;color:' + (s.myPoints ? '#3fb27f' : '#e0524d') + '">' + (s.myChoice < 0 ? 'Too slow!' : s.myPoints ? '+' + s.myPoints + ' points' : 'Not this time') + '</div>' + boardHtml(s, 5);
+  g.innerHTML = html;
+  g.querySelectorAll('button[data-i]').forEach(b => b.onclick = async () => {
+    g.querySelectorAll('button').forEach(x => x.disabled = true);
+    const r = await call('/party/answer', '&r=' + s.round + '&i=' + b.dataset.i);
+    if (r) renderGame(r);
+  });
+  clockGame();
+}
+
+function clockGame() {
+  const c = $('gclock');
+  if (!c || !last || last.gPhase !== 1) return;
+  const left = Math.max(0, last.left - (performance.now() - gotAt));
+  c.textContent = Math.ceil(left / 1000);
+  c.classList.toggle('low', left < 5000);
+}
+setInterval(clockGame, 250);
 
 let findTimer = null, findSeq = 0;
 $('q').addEventListener('input', () => { clearTimeout(findTimer); findTimer = setTimeout(find, 350); });

@@ -191,6 +191,18 @@ final class PhoneRemote {
                 } else if (path.equals("/party/vote")) {
                     boolean ok = Party.vote(ip, q.get("key"));
                     reply(out, 200, "application/json; charset=utf-8", Party.stateJson(ip).replaceFirst("^\\{", "{\"ok\":" + ok + ","));
+                } else if (path.equals("/party/join")) {
+                    boolean ok = Party.join(ip, q.get("n"));
+                    reply(out, 200, "application/json; charset=utf-8", Party.stateJson(ip).replaceFirst("^\\{", "{\"ok\":" + ok + ","));
+                } else if (path.equals("/party/answer")) {
+                    int r = -1, c = -1;
+                    try {
+                        r = Integer.parseInt(q.get("r"));
+                        c = Integer.parseInt(q.get("i"));
+                    } catch (Exception ignored) {
+                    }
+                    boolean ok = Party.answer(ip, r, c);
+                    reply(out, 200, "application/json; charset=utf-8", Party.stateJson(ip).replaceFirst("^\\{", "{\"ok\":" + ok + ","));
                 } else if (path.equals("/party/search")) {
                     reply(out, 200, "application/json; charset=utf-8", partySearch(q.get("q")));
                 } else if (path.equals("/party/add")) {
