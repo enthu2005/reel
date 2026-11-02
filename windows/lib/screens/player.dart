@@ -465,6 +465,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   void dispose() {
     app.watching.value = false;
+    app.exitMini(); // leaving the player always gives the window back
     final it = _item;
     _lastSeen = DateTime.now();
     // Channel viewing is just TV in the background: it never marks things watched or fills Continue Watching
@@ -500,7 +501,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   // ------------------------------------------------------------ controls
 
   void _showOsd({bool stay = false}) {
-    if (!mounted) return;
+    if (!mounted || app.isMini.value) return;
     setState(() => _osd = true);
     _hide?.cancel();
     if (!stay) {
@@ -519,6 +520,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _togglePlay() {
     _player.playOrPause();
     _showOsd();
+  }
+
+  /// Shrinks to the small always-on-top window: only the picture, no controls.
+  void _goMini() {
+    _hide?.cancel();
+    setState(() {
+      _osd = false;
+      _panel = false;
+      _info = false;
+      _queueOpen = false;
+      _chanOpen = false;
+    });
+    app.enterMini();
   }
 
   void _exitPlayer() {
@@ -1289,6 +1303,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   KeyEventResult _onKey(FocusNode n, KeyEvent e) {
     final k = e.logicalKey;
+    if (app.isMini.value) {
+      // the small window: Esc, P or Enter bring the big one back, Space pauses
+      if (e is KeyDownEvent) {
+        if (k == LogicalKeyboardKey.escape ||
+            k == LogicalKeyboardKey.keyP ||
+            k == LogicalKeyboardKey.enter) {
+          app.exitMini();
+        } else if (k == LogicalKeyboardKey.space) {
+          _player.playOrPause();
+        }
+      }
+      return KeyEventResult.handled;
+    }
     if (e is KeyDownEvent && !_still) _touched();
     if (_still) {
       // Only Enter answers; the rest of the keyboard is held until then (Esc still leaves)
@@ -1466,6 +1493,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
     if (k == LogicalKeyboardKey.keyF) {
       app.toggleFullscreen();
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.keyP) {
+      if (e is KeyDownEvent) _goMini();
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.keyM) {
@@ -1658,6 +1689,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         }),
                         SizedBox(width: h * 0.02),
                       ],
+                      _actionHint(h, Icons.picture_in_picture_alt_rounded,
+                          'Mini player (P)', _goMini),
+                      SizedBox(width: h * 0.02),
                       _actionHint(
                           h, Icons.info_outline_rounded, 'Info (I)', _toggleInfo),
                     ]),
@@ -1874,6 +1908,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
             if (_info) _infoPanel(h, w),
             if (_chanOpen && widget.channel > 0) _channelList(h, w),
             if (_banner && widget.channel > 0) _channelBanner(h, w),
+            // the small window: click pauses, double-click gives the big one back
+            ValueListenableBuilder<bool>(
+              valueListenable: app.isMini,
+              builder: (c, mini, _) => mini
+                  ? Positioned.fill(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => _player.playOrPause(),
+                        onDoubleTap: app.exitMini,
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
+
             if (_still) _stillCard(h, w),
           ]),
         ),

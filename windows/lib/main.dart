@@ -121,6 +121,40 @@ Future<void> setFullscreen(bool on) async {
   isFullscreen.value = on;
 }
 
+/// The small always-on-top player window (picture in picture): true while the window is shrunk.
+final ValueNotifier<bool> isMini = ValueNotifier(false);
+Rect? _beforeMini;
+bool _fullBeforeMini = false;
+
+/// Shrinks the window to a small corner window that stays on top of everything else.
+Future<void> enterMini() async {
+  if (isMini.value) return;
+  _fullBeforeMini = await windowManager.isFullScreen();
+  if (_fullBeforeMini) {
+    await setFullscreen(false);
+    await Future.delayed(const Duration(milliseconds: 300));
+  }
+  _beforeMini = await windowManager.getBounds();
+  isMini.value = true;
+  await windowManager.setMinimumSize(const Size(320, 180));
+  await windowManager.setAspectRatio(16 / 9);
+  await windowManager.setAlwaysOnTop(true);
+  await windowManager.setSize(const Size(480, 270));
+  await windowManager.setAlignment(Alignment.bottomRight);
+}
+
+/// Back to the size and place the window had, and full screen if it was.
+Future<void> exitMini() async {
+  if (!isMini.value) return;
+  isMini.value = false;
+  await windowManager.setAlwaysOnTop(false);
+  await windowManager.setAspectRatio(0);
+  await windowManager.setMinimumSize(const Size(960, 540));
+  final b = _beforeMini;
+  if (b != null) await windowManager.setBounds(b);
+  if (_fullBeforeMini) await setFullscreen(true);
+}
+
 Future<void> toggleFullscreen() async {
   await setFullscreen(!await windowManager.isFullScreen());
 }
