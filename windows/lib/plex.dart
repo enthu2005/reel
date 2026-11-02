@@ -539,6 +539,9 @@ class Plex {
     return Map<String, dynamic>.from(jsonDecode(body) as Map);
   }
 
+  /// One request to the server, as decoded JSON (for the self-test).
+  static Future<Map<String, dynamic>> getJson(String path) => _get(path);
+
   static String paged(String path, int size) =>
       '$path${path.contains('?') ? '&' : '?'}X-Plex-Container-Start=0&X-Plex-Container-Size=$size';
 

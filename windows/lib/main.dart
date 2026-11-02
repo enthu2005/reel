@@ -12,6 +12,7 @@ import 'prefs.dart';
 import 'screens/home.dart';
 import 'sound.dart';
 import 'screens/login.dart';
+import 'selftest.dart';
 import 'screens/profiles.dart';
 import 'warmup.dart';
 import 'ui/preview.dart';
@@ -53,7 +54,7 @@ class _PageWatcher extends NavigatorObserver {
       _check();
 }
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   Log.start();
   // anything that goes wrong is written to the log (%LOCALAPPDATA%\\Reel\\reel.log) instead of vanishing
@@ -78,6 +79,15 @@ Future<void> main() async {
       'posters: ${Prefs.imgOriginal ? 'original files' : 'resized by the server'}');
   Log.w('T prefs ready');
   await Plex.init();
+  if (args.contains('--selftest')) {
+    await Plex.whenReady();
+    for (final a in args) {
+      if (a.startsWith('--only=')) SelfTest.only = a.substring(7);
+    }
+    await SelfTest.run();
+    await Log.flush();
+    exit(0);
+  }
   unawaited(Warmup.run());
 
   const opts = WindowOptions(
