@@ -593,13 +593,13 @@ class PosterCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      _Tilt(
-                        active: f,
-                        radius: radius,
-                        child: AnimatedScale(
+                      AnimatedScale(
                         scale: f ? (wide ? 1.06 : 1.1) : 1,
                         duration: const Duration(milliseconds: 180),
                         curve: Curves.easeOutCubic,
+                        child: _Tilt(
+                        active: f,
+                        radius: radius,
                         child: SizedBox(
                           height: cardHeight,
                           child: AnimatedContainer(
@@ -791,9 +791,19 @@ class _CardRowState extends State<CardRow> {
       initialScrollOffset: CardRow._spots[widget.memory] ?? 0);
 
   @override
-  void dispose() {
+  void initState() {
+    super.initState();
+    // Written as it moves: by the time dispose runs the list has already let go of the controller.
     final m = widget.memory;
-    if (m != null && _scroll.hasClients) CardRow._spots[m] = _scroll.offset;
+    if (m != null) {
+      _scroll.addListener(() {
+        if (_scroll.hasClients) CardRow._spots[m] = _scroll.offset;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
     _scroll.dispose();
     super.dispose();
   }

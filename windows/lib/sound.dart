@@ -54,6 +54,9 @@ class Sound {
     return p;
   }
 
+  /// The WAV bytes of one sound (for tests).
+  static Uint8List sample(String name) => _make(name);
+
   static Uint8List _make(String name) {
     switch (name) {
       case 'tick':

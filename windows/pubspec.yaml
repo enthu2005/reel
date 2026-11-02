@@ -1,7 +1,7 @@
 name: reel
 description: Reel for Windows - a Plex client with an Apple TV style look.
 publish_to: 'none'
-version: 1.0.25+24
+version: 1.0.26+24
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -19,6 +19,8 @@ dependencies:
   url_launcher: ^6.3.0
 
 dev_dependencies:
+  flutter_test:
+    sdk: flutter
   flutter_lints: ^4.0.0
 
 flutter:

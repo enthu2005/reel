@@ -89,7 +89,7 @@ class _StreamGraphState extends State<StreamGraph> {
         SizedBox(
           height: h * 0.055,
           width: double.infinity,
-          child: CustomPaint(painter: _Chart(data, col, _n, bars, floor)),
+          child: CustomPaint(painter: ChartPainter(data, col, _n, bars, floor)),
         ),
       ]),
     );
@@ -122,14 +122,14 @@ class _StreamGraphState extends State<StreamGraph> {
   }
 }
 
-class _Chart extends CustomPainter {
+class ChartPainter extends CustomPainter {
   final List<double> d;
   final Color col;
   final int n;
   final bool bars;
   final double floor; // the chart is never scaled tighter than this, so tiny wobbles stay tiny
 
-  _Chart(this.d, this.col, this.n, this.bars, this.floor);
+  ChartPainter(this.d, this.col, this.n, this.bars, this.floor);
 
   @override
   void paint(Canvas c, Size s) {
@@ -175,5 +175,5 @@ class _Chart extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _Chart o) => true;
+  bool shouldRepaint(covariant ChartPainter o) => true;
 }
