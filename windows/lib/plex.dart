@@ -911,8 +911,33 @@ class Plex {
   }
 
   static Future<List<PlexItem>> all(String sectionKey,
-          {String sort = 'titleSort'}) =>
-      items(paged('/library/sections/$sectionKey/all?sort=$sort', 3000));
+          {String sort = 'titleSort', String extra = ''}) =>
+      items(paged('/library/sections/$sectionKey/all?sort=$sort$extra', 3000));
+
+  static final Map<String, bool> _doviCache = {};
+
+  /// Which of [list] are Dolby Vision (the listing does not say): looks at each file's details, a few at a time.
+  static Future<List<PlexItem>> onlyDolbyVision(List<PlexItem> list) async {
+    final keep = <PlexItem>[];
+    for (var i = 0; i < list.length; i += 8) {
+      final part = list.skip(i).take(8).toList();
+      final res = await Future.wait(part.map((it) async {
+        final known = _doviCache[it.key];
+        if (known != null) return known;
+        var dv = false;
+        try {
+          final m = await metadata(it.key);
+          dv = m.streamsOf(1).any((x) => x.dovi);
+          _doviCache[it.key] = dv;
+        } catch (_) {}
+        return dv;
+      }));
+      for (var k = 0; k < part.length; k++) {
+        if (res[k]) keep.add(part[k]);
+      }
+    }
+    return keep;
+  }
 
   static Future<List<PlexItem>> relatedInLibrary(PlexItem item) async {
     final section = item.librarySectionKey;

@@ -18,6 +18,7 @@ import '../ui/preview.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 import 'live.dart' show tuneChannel;
+import 'trailer_break.dart';
 
 /// Plays a library item (direct play: the original file, no conversion) or any URL (trailers).
 /// Controls in the style of the new Plex player.
@@ -981,7 +982,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
       final c = Live.byNum(widget.channel);
       if (c != null) {
         _transitioning = true;
-        tuneChannel(context, c, replace: true);
+        // after a short break of trailers (if they are on)
+        trailerBreakThenTune(context, c);
         return;
       }
     }

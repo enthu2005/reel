@@ -261,6 +261,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
   ];
   int _sort = 0;
   int _filter = 0;
+  int _format = 0;
+
+  /// Movie libraries can be narrowed by sound too (each file's audio format is in the listing); shows only by picture.
+  List<String> get _formats => widget.section?.type == 'movie'
+      ? const ['Any', '4K', 'HDR', 'Dolby Vision', 'DTS', 'Dolby Digital+', 'TrueHD']
+      : const ['Any', '4K', 'HDR', 'Dolby Vision'];
   List<PlexItem> _all = [];
   List<PlexItem> _items = [];
   bool _loading = true;
@@ -305,7 +311,23 @@ class _LibraryScreenState extends State<LibraryScreen> {
         r = merged.values.toList()
           ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
       } else {
-        r = await Plex.all(widget.section!.key, sort: _sorts[_sort][1]);
+        final want = _formats[_format.clamp(0, _formats.length - 1)];
+        final extra = want == '4K'
+            ? '&resolution=4k'
+            : (want == 'HDR' || want == 'Dolby Vision' ? '&hdr=1' : '');
+        r = await Plex.all(widget.section!.key, sort: _sorts[_sort][1], extra: extra);
+        if (want == 'DTS') {
+          r = r.where((x) {
+            final c = x.mAudioCodec.toLowerCase();
+            return c == 'dca' || c.startsWith('dts');
+          }).toList();
+        } else if (want == 'Dolby Digital+') {
+          r = r.where((x) => x.mAudioCodec.toLowerCase() == 'eac3').toList();
+        } else if (want == 'TrueHD') {
+          r = r.where((x) => x.mAudioCodec.toLowerCase() == 'truehd').toList();
+        } else if (want == 'Dolby Vision') {
+          r = await Plex.onlyDolbyVision(r);
+        }
       }
       if (!mounted || mine != _token) return;
       setState(() {
@@ -410,6 +432,33 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             weight: FontWeight.w600,
                             color: f ? Colors.black : Colors.white)),
                   ),
+                ),
+              ),
+            // Narrow the library by picture or sound format
+            if (widget.paths == null && widget.section != null)
+              Pressable(
+                onPressed: () {
+                  _format = (_format + 1) % _formats.length;
+                  _load();
+                },
+                scrollAlignment: 0,
+                builder: (c, f) => AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  margin: EdgeInsets.only(left: h * 0.012),
+                  padding: EdgeInsets.symmetric(
+                      horizontal: h * 0.022, vertical: h * 0.01),
+                  decoration: BoxDecoration(
+                    color: f
+                        ? Colors.white
+                        : (_format > 0
+                            ? const Color(0x55E8833A)
+                            : const Color(0x33FFFFFF)),
+                    borderRadius: BorderRadius.circular(h),
+                  ),
+                  child: Text('Format: ${_formats[_format.clamp(0, _formats.length - 1)]}',
+                      style: reelText(h * 0.022,
+                          weight: FontWeight.w600,
+                          color: f ? Colors.black : Colors.white)),
                 ),
               ),
           ]),

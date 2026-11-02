@@ -514,7 +514,84 @@ class _HomeScreenState extends State<HomeScreen> {
       onScreen.addAll(r.items.map((x) => x.key));
       kept.add(r);
     }
+    // the row for the time of year goes first, and is always shown
+    final season = _seasonNow();
+    if (season != null) {
+      try {
+        final r = await _seasonRow(season, secs, rnd);
+        if (r != null) kept.insert(0, r);
+      } catch (_) {}
+    }
     return kept;
+  }
+
+  /// What the date calls for: [row title, genre or '', keyword, keyword ...], or null in an ordinary week.
+  /// Halloween 1 Oct - 2 Nov, Christmas 20 Nov - 1 Jan, Valentine's 1 - 14 Feb.
+  static List<String>? _seasonNow() {
+    final n = DateTime.now();
+    final m = n.month, d = n.day;
+    if (m == 10 || (m == 11 && d <= 2)) {
+      return ['Halloween Horror', 'Horror', 'halloween', 'horror'];
+    }
+    if ((m == 11 && d >= 20) || m == 12 || (m == 1 && d == 1)) {
+      return ['Christmas', '', 'christmas', 'xmas'];
+    }
+    if (m == 2 && d <= 14) {
+      return ["Valentine's Day", 'Romance', 'valentine', 'romance'];
+    }
+    return null;
+  }
+
+  /// The season's row: matching collections, titles and the genre, across the libraries on this tab,
+  /// unwatched first; null if there are fewer than 4.
+  Future<_Row?> _seasonRow(
+      List<String> season, List<PlexSection> secs, Random rnd) async {
+    final found = <String, PlexItem>{};
+    for (final s in secs) {
+      final movie = _tab == 1 || s.type == 'movie';
+      final show = _tab != 1 && s.type == 'show';
+      if (!movie && !show) continue;
+      if (_tab == 2 && !show) continue;
+      try {
+        for (final c in await Plex.collections(s.key)) {
+          final name = c[0].toLowerCase();
+          if (!season.skip(2).any(name.contains)) continue;
+          for (final x in await Plex.items(
+              Plex.paged('/library/collections/${c[1]}/children', 60))) {
+            found[x.key] = x;
+          }
+        }
+      } catch (_) {}
+      for (final k in season.skip(2)) {
+        try {
+          for (final x in await Plex.items(Plex.paged(
+              '/library/sections/${s.key}/all?title=${Uri.encodeQueryComponent(k)}',
+              40))) {
+            found[x.key] = x;
+          }
+        } catch (_) {}
+      }
+      if (season[1].isNotEmpty) {
+        try {
+          for (final g in await Plex.genresOf(s.key)) {
+            if (g[1].toLowerCase() != season[1].toLowerCase()) continue;
+            for (final x in await Plex.items(Plex.paged(
+                '${g[0]}${g[0].contains('?') ? '&' : '?'}sort=random', 40))) {
+              found[x.key] = x;
+            }
+            break;
+          }
+        } catch (_) {}
+      }
+    }
+    final all = found.values.toList()..shuffle(rnd);
+    final sorted = [
+      ...all.where((x) => !x.isWatched),
+      ...all.where((x) => x.isWatched)
+    ];
+    if (sorted.length < 4) return null;
+    return _Row(season[0], sorted.take(30).toList(),
+        landscape: true, titles: true);
   }
 
   /// A row of the library's titles with this person in them, unwatched first; skipped if under 4.

@@ -132,6 +132,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
               () {
             setState(() => Prefs.autoPlayNext = !Prefs.autoPlayNext);
           }),
+          _row(h, 'Trailers on Live TV', Prefs.liveTrailers ? 'On' : 'Off',
+              'Between one programme and the next on a Live channel, show up to three trailers of what is coming up. Each one can be skipped, or skip them all.',
+              () {
+            setState(() => Prefs.liveTrailers = !Prefs.liveTrailers);
+          }),
           _row(h, 'Still watching?', Prefs.stillOn ? 'On' : 'Off',
               'Autoplay pauses and asks "Still watching?" when several episodes in a row have started on their own with no key pressed, and it is also late at night or has been playing a long time. Turn it off to let autoplay run all night.',
               () {
