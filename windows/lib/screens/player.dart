@@ -778,6 +778,39 @@ class _PlayerScreenState extends State<PlayerScreen> {
     tuneChannel(context, all[(at + delta) % all.length], replace: true);
   }
 
+  /// The picture at [at] and the name of its chapter, shown above the time while scrubbing.
+  List<Widget> _scrubPreview(PlexItem it, Duration at, double h, double w) {
+    final url = Plex.thumbAt(it, at.inMilliseconds);
+    var chapter = '';
+    for (final c in it.chapters) {
+      if (c.$1 <= at.inMilliseconds) chapter = c.$2;
+    }
+    final tw = h * 0.2 * 16 / 9;
+    return [
+      if (url != null)
+        Container(
+          width: tw,
+          height: h * 0.2,
+          margin: EdgeInsets.only(bottom: h * 0.008),
+          decoration: BoxDecoration(
+              color: Colors.black,
+              borderRadius: BorderRadius.circular(h * 0.008),
+              border: Border.all(color: Colors.white, width: 2)),
+          clipBehavior: Clip.antiAlias,
+          child: NetImage(url, decodeWidth: 320, fade: false),
+        ),
+      if (chapter.isNotEmpty)
+        Container(
+          margin: EdgeInsets.only(bottom: h * 0.008),
+          constraints: BoxConstraints(maxWidth: tw * 1.4),
+          child: Text(chapter,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: reelText(h * 0.021, weight: FontWeight.w600)),
+        ),
+    ];
+  }
+
   Widget _channelBanner(double h, double w) {
     final ch = Live.byNum(widget.channel);
     if (ch == null) return const SizedBox.shrink();
@@ -1689,21 +1722,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           Align(
                             alignment:
                                 Alignment((frac * 2 - 1).clamp(-1.0, 1.0), 0),
-                            child: Container(
-                              margin: EdgeInsets.only(bottom: h * 0.015),
-                              padding: EdgeInsets.symmetric(
-                                  horizontal: h * 0.016, vertical: h * 0.005),
-                              decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(h)),
-                              child: Text(
-                                  _trickDir == 0
-                                      ? _time(shown)
-                                      : '${_time(shown)}   ${_trickDir > 0 ? '▶▶' : '◀◀'} ${2 << _trickLvl}×',
-                                  style: reelText(h * 0.024,
-                                      weight: FontWeight.w600,
-                                      color: Colors.black)),
-                            ),
+                            child: Column(mainAxisSize: MainAxisSize.min, children: [
+                              // the scene at that point (the server's seek-bar pictures), and its chapter
+                              if (it != null && widget.channel == 0) ..._scrubPreview(it, shown, h, w),
+                              Container(
+                                margin: EdgeInsets.only(bottom: h * 0.015),
+                                padding: EdgeInsets.symmetric(
+                                    horizontal: h * 0.016, vertical: h * 0.005),
+                                decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(h)),
+                                child: Text(
+                                    _trickDir == 0
+                                        ? _time(shown)
+                                        : '${_time(shown)}   ${_trickDir > 0 ? '▶▶' : '◀◀'} ${2 << _trickLvl}×',
+                                    style: reelText(h * 0.024,
+                                        weight: FontWeight.w600,
+                                        color: Colors.black)),
+                              ),
+                            ]),
                           ),
                         SizedBox(
                           height: barH * 4,

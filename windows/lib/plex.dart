@@ -111,6 +111,7 @@ class PlexItem {
   double aspect =
       0; // the film's shape, e.g. 2.39 for a wide film (0 = unknown)
   String? partKey;
+  List<(int, String)> chapters = []; // start (ms) and name
   int mediaBitrate = 0; // kbit/s, the whole file on average
   int partSize = 0; // bytes
   String? librarySectionKey;
@@ -340,6 +341,10 @@ class PlexItem {
       }
     }
     i.duration = _int(m['duration']);
+    for (final c in (m['Chapter'] as List? ?? const [])) {
+      final o = c as Map;
+      i.chapters.add((_int(o['startTimeOffset']), '${o['tag'] ?? ''}'));
+    }
     i.viewOffset = _int(m['viewOffset']);
     i.viewCount = _int(m['viewCount']);
     i.index = _int(m['index']);
@@ -1197,6 +1202,15 @@ class Plex {
   }
 
   static String? directUrl(PlexItem i) => raw(i.partKey);
+
+  /// The picture of the film at [ms] (the server's seek-bar thumbnails), or null if the file has none to ask for.
+  /// Offsets are rounded to 5 seconds so hovering along the bar asks for far fewer pictures.
+  static String? thumbAt(PlexItem i, int ms) {
+    final id = RegExp(r'/library/parts/(\d+)').firstMatch(i.partKey ?? '')?.group(1);
+    if (id == null || server == null) return null;
+    final at = (ms ~/ 5000) * 5000;
+    return '$server/library/parts/$id/indexes/sd/$at?X-Plex-Token=$serverToken';
+  }
 
   // ------------------------------------------------------------ state
 
