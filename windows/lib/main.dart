@@ -76,6 +76,7 @@ Future<void> main() async {
   await Prefs.load();
   Log.w(
       'posters: ${Prefs.imgOriginal ? 'original files' : 'resized by the server'}');
+  Log.w('T prefs ready');
   await Plex.init();
   unawaited(Warmup.run());
 
@@ -92,6 +93,7 @@ Future<void> main() async {
     if (Prefs.startFullscreen) await setFullscreen(true);
   });
   runApp(const ReelApp());
+  WidgetsBinding.instance.addPostFrameCallback((_) => Log.w('T first frame'));
   Future.delayed(const Duration(milliseconds: 900), Sound.chime);
 }
 

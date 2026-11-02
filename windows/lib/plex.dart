@@ -472,7 +472,33 @@ class Plex {
   /// At start-up, look again for the best address in the background: at home that's the local
   /// one, away it's the direct remote one, and only if neither answers, Plex's slow relay.
   static Future<void> init() async {
-    if (isReady) unawaited(findServer().catchError((_) {}));
+    if (isReady) _ready = _checkSaved();
+  }
+
+  static Future<void>? _ready;
+
+  /// Completes once the saved address is known to answer, so the first page never waits on a dead
+  /// address (after changing network, say). If it does not answer quickly, wait a little for the search
+  /// below to find the right one. The search always runs, to keep the choice fresh.
+  static Future<void> whenReady() => _ready ?? Future.value();
+
+  static Future<void> _checkSaved() async {
+    final search = findServer().catchError((_) {});
+    final saved = server;
+    if (saved == null) return;
+    final sw = Stopwatch()..start();
+    try {
+      final r = await _client
+          .get(Uri.parse('$saved/identity'))
+          .timeout(const Duration(milliseconds: 1500));
+      if (r.statusCode == 200 || r.statusCode == 401 || r.statusCode == 403) {
+        Log.w('T saved address answered in ${sw.elapsedMilliseconds}ms');
+        return;
+      }
+    } catch (_) {}
+    Log.w('T saved address did not answer; waiting for the search');
+    await search.timeout(const Duration(seconds: 4), onTimeout: () {});
+    Log.w('T search done after ${sw.elapsedMilliseconds}ms: $server');
   }
 
   static Map<String, String> get headers => {
@@ -492,8 +518,13 @@ class Plex {
     req.headers.addAll(headers);
     // plex.tv always gets the account token; only your server gets the shared-server token
     if (req.url.host.endsWith('plex.tv') && token != null) req.headers['X-Plex-Token'] = token!;
+    final sw = Stopwatch()..start();
     final res = await _client.send(req).timeout(timeout);
+    final first = sw.elapsedMilliseconds;
     final body = await res.stream.bytesToString().timeout(timeout);
+    if (!req.url.host.endsWith('plex.tv')) {
+      Log.w('API ${first}ms+${sw.elapsedMilliseconds - first}ms ${body.length ~/ 1024}KB ${req.url.path}');
+    }
     if (res.statusCode >= 400) {
       final u = Uri.parse(url);
       final what = '${u.host.endsWith('plex.tv') ? 'plex.tv' : 'server'}${u.path}';
@@ -587,8 +618,9 @@ class Plex {
         final req = http.Request('GET', Uri.parse('${candidates[i][0]}/identity'));
         req.headers['Accept'] = 'application/json';
         req.headers['X-Plex-Client-Identifier'] = Prefs.clientId;
-        final res = await _client.send(req).timeout(const Duration(seconds: 6));
-        await res.stream.drain<void>().timeout(const Duration(seconds: 6));
+        final wait = Duration(milliseconds: candidates[i][2] == 'local' ? 2500 : 6000);
+        final res = await _client.send(req).timeout(wait);
+        await res.stream.drain<void>().timeout(wait);
         if (res.statusCode == 200 || res.statusCode == 401 || res.statusCode == 403) {
           ok[i] = true;
           ms[i] = sw.elapsedMilliseconds;

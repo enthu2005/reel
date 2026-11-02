@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../main.dart' show isFullscreen, toggleFullscreen;
+import '../log.dart';
 import '../plex.dart';
 import '../prefs.dart';
 import '../ui/net_image.dart';
@@ -136,6 +137,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _load() async {
     final mine = ++_loadToken;
+    final sw = Stopwatch()..start();
+    Log.w('LOAD start tab $_tab');
     // build the Live guide quietly now, so the Live tab opens at once
     // (after a pause, so it does not compete with the first preview for the server)
     if (Live.cached == null) {
@@ -147,6 +150,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _error = null;
     });
     _needSeerr = false;
+    await Plex.whenReady();
+    if (mine != _loadToken || !mounted) return;
     _gReq = [];
     _gGenres = [];
     _gExtra = [];
@@ -169,6 +174,7 @@ class _HomeScreenState extends State<HomeScreen> {
       } else {
         // Ask for every row at once instead of one after another (much quicker over the internet).
         final sections = await Plex.sections();
+        Log.w('LOAD sections ${sw.elapsedMilliseconds}ms');
         final hiddenSectionKeys =
             sections.where((s) => s.hiddenFromHome).map((s) => s.key).toSet();
         final tabSecs = _tab == 0
@@ -197,6 +203,7 @@ class _HomeScreenState extends State<HomeScreen> {
           // The whole library is a tile that opens its page, not a row of thousands
           if (_tab != 0) _libraryTiles(tabSecs),
         ]);
+        Log.w('LOAD rows ${sw.elapsedMilliseconds}ms');
         for (final p in parts) {
           rows.addAll(p);
         }
@@ -220,6 +227,7 @@ class _HomeScreenState extends State<HomeScreen> {
             .timeout(const Duration(seconds: 3), onTimeout: () => const []);
         if (mine != _loadToken || !mounted) return;
       }
+      Log.w('LOAD shown ${sw.elapsedMilliseconds}ms');
       setState(() {
         _base = rows;
         _rows = _discover ? rows : _compose();
