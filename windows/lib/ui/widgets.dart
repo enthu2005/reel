@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../log.dart';
 import '../plex.dart';
+import '../sound.dart';
 import 'net_image.dart';
 import 'preview.dart';
 import 'motion.dart';
@@ -78,7 +79,10 @@ class _PressableState extends State<Pressable> {
       return KeyEventResult.handled;
     }
     if (e is KeyUpEvent) {
-      if (_downAt != null) widget.onPressed?.call();
+      if (_downAt != null) {
+        Sound.click();
+        widget.onPressed?.call();
+      }
       _downAt = null;
       return KeyEventResult.handled;
     }
@@ -93,7 +97,7 @@ class _PressableState extends State<Pressable> {
       onKeyEvent: _onKey,
       onFocusChange: (f) {
         setState(() => _focused = f);
-        if (f) SystemSound.play(SystemSoundType.click);
+        if (f) Sound.tick();
         widget.onFocusChange?.call(f);
         if (f && widget.scrollAlignment >= 0 && !_byMouse) {
           Scrollable.ensureVisible(context,
@@ -126,6 +130,7 @@ class _PressableState extends State<Pressable> {
           _node.requestFocus();
           Future.delayed(
               const Duration(milliseconds: 80), () => _byMouse = false);
+          Sound.click();
           widget.onPressed?.call();
         },
         onLongPress: widget.onLongPress,
@@ -339,6 +344,84 @@ class IconPill extends StatelessWidget {
 }
 
 /// A poster (or wide still) that lifts and catches the light when focused, with the title underneath.
+/// The focused card leans toward the mouse in 3D, and a soft light follows the pointer across it.
+/// With the keyboard (no mouse over it) it stays flat and keeps the plain sheen.
+class _Tilt extends StatefulWidget {
+  final bool active;
+  final BorderRadius radius;
+  final Widget child;
+
+  const _Tilt({required this.active, required this.radius, required this.child});
+
+  @override
+  State<_Tilt> createState() => _TiltState();
+}
+
+class _TiltState extends State<_Tilt> {
+  Offset? _p; // where the pointer is, -1..1 from the middle of the card
+
+  void _move(PointerEvent e) {
+    if (!widget.active) return;
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.hasSize || box.size.isEmpty) return;
+    final p = Offset(
+      (e.localPosition.dx / box.size.width * 2 - 1).clamp(-1.0, 1.0),
+      (e.localPosition.dy / box.size.height * 2 - 1).clamp(-1.0, 1.0),
+    );
+    setState(() => _p = p);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final on = widget.active && _p != null;
+    return Listener(
+      onPointerHover: _move,
+      onPointerMove: _move,
+      child: MouseRegion(
+        onExit: (_) {
+          if (_p != null) setState(() => _p = null);
+        },
+        child: TweenAnimationBuilder<Offset>(
+          tween: Tween(begin: Offset.zero, end: on ? _p! : Offset.zero),
+          duration: const Duration(milliseconds: 140),
+          curve: Curves.easeOut,
+          child: widget.child,
+          builder: (c, o, child) {
+            final still = o.dx.abs() < 0.01 && o.dy.abs() < 0.01 && !on;
+            if (still) return child!;
+            return Transform(
+              alignment: Alignment.center,
+              transform: Matrix4.identity()
+                ..setEntry(3, 2, 0.0013)
+                ..rotateX(-o.dy * 0.085)
+                ..rotateY(o.dx * 0.10),
+              child: Stack(children: [
+                child!,
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: ClipRRect(
+                      borderRadius: widget.radius,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: RadialGradient(
+                            center: Alignment(o.dx, o.dy),
+                            radius: 0.8,
+                            colors: const [Color(0x40FFFFFF), Color(0x00FFFFFF)],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ]),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
 class PosterCard extends StatelessWidget {
   final PlexItem item;
   final double width;
@@ -510,7 +593,10 @@ class PosterCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      AnimatedScale(
+                      _Tilt(
+                        active: f,
+                        radius: radius,
+                        child: AnimatedScale(
                         scale: f ? (wide ? 1.06 : 1.1) : 1,
                         duration: const Duration(milliseconds: 180),
                         curve: Curves.easeOutCubic,
@@ -601,7 +687,7 @@ class PosterCard extends StatelessWidget {
                             ),
                           ),
                         ),
-                      ),
+                      )),
                       if (textOn)
                         // Slides down a little when the card grows, without changing the layout size.
                         AnimatedSlide(

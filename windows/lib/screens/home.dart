@@ -745,7 +745,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       if (!mounted || _pendingHero != it) return;
       _hero = it;
-      if (art != null && bytes != null && !_spot) _tint(art, bytes);
+      if (art != null && bytes != null) _tint(art, bytes);
     });
   }
 
@@ -1134,6 +1134,33 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ),
+
+        // On the spotlight page the glow sits behind the rows: it takes the colour of the card you are on
+        // and fades to the next one as you move.
+        if (_spot)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: ValueListenableBuilder<Color>(
+                valueListenable: _ambientN,
+                builder: (c, col, _) => TweenAnimationBuilder<Color?>(
+                  tween: ColorTween(end: col),
+                  duration: const Duration(milliseconds: 900),
+                  builder: (c, v, _) => DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: RadialGradient(
+                        center: const Alignment(0, 1.1),
+                        radius: 1.3,
+                        colors: [
+                          (v ?? col).withOpacity(0.5),
+                          (v ?? col).withOpacity(0.0)
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
 
         // Rows (start below the tab bar so nothing slides behind it)
         Positioned(

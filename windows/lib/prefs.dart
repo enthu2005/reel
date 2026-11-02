@@ -51,6 +51,14 @@ class Prefs {
   static bool get profileChosen => _p.getBool('profileChosen') ?? false;
   static set profileChosen(bool v) => _p.setBool('profileChosen', v);
 
+  /// Soft interface sounds (a tick, a click, a whoosh between pages, a start-up chime).
+  static bool get sounds => _p.getBool('sounds') ?? true;
+  static set sounds(bool v) => _p.setBool('sounds', v);
+
+  /// The film's title in big type over its first seconds.
+  static bool get titleCards => _p.getBool('titleCards') ?? true;
+  static set titleCards(bool v) => _p.setBool('titleCards', v);
+
   static bool get quiet => _p.getBool('quiet') ?? false;
   static set quiet(bool v) => _p.setBool('quiet', v);
 

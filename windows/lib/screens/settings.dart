@@ -4,6 +4,8 @@ import '../main.dart' show isFullscreen, navKey, setFullscreen;
 import '../plex.dart';
 import '../prefs.dart';
 import '../seerr.dart';
+import '../sound.dart';
+import 'speedtest.dart';
 import '../ui/net_image.dart';
 import 'discover.dart';
 import '../ui/preview.dart';
@@ -121,6 +123,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _libSummary(Prefs.movieLibraries),
               'Which libraries the Movies tab draws from. Press Enter to choose.',
               () => _pickLibraries('Movies libraries', home: false)),
+          _row(h, 'Sound effects', Prefs.sounds ? 'On' : 'Off',
+              'Soft ticks and clicks as you move around, a whoosh between pages and a chime when Reel starts. Never while a film plays.',
+              () {
+            setState(() => Prefs.sounds = !Prefs.sounds);
+            if (Prefs.sounds) Sound.click();
+          }),
+          _row(h, 'Title cards', Prefs.titleCards ? 'On' : 'Off',
+              'When a film or episode starts from the beginning, its name appears in big type for a few seconds, like an opening credit.',
+              () {
+            setState(() => Prefs.titleCards = !Prefs.titleCards);
+          }),
+          _row(h, 'Speed to your server', 'Test',
+              'Measures how fast the server can send to this PC: the link between them (your network at home), not your internet. Says which qualities will play smoothly.',
+              () {
+            navKey.currentState?.push(
+                MaterialPageRoute(builder: (_) => const SpeedTestScreen()));
+          }),
           _row(h, 'Video previews', Prefs.previews ? 'On' : 'Off',
               'Rest on a card and its trailer or a scene plays inside it, then carries on behind the title page.',
               () {

@@ -15,6 +15,8 @@ import '../prefs.dart';
 import '../ui/channel_logo.dart';
 import '../ui/net_image.dart';
 import '../ui/preview.dart';
+import '../ui/stream_graph.dart';
+import '../ui/title_card.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 import 'live.dart' show tuneChannel;
@@ -192,6 +194,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
     _subs.add(_player.stream.position.listen((p) {
       if (!mounted) return;
+      if (!_cardDone && p > Duration.zero && p < const Duration(seconds: 3)) _openCard();
       setState(() => _pos = p);
       _checkUpNext();
     }));
@@ -381,6 +384,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   String _why = '';
   bool _info = false;
   bool _banner = false;
+  bool _graph = false; // the live stream chart (G)
+  bool _card = false; // the opening title card
+  bool _cardDone = false;
   final _infoScroll = ScrollController();
   Map<String, String> _stats = {};
 
@@ -418,6 +424,34 @@ class _PlayerScreenState extends State<PlayerScreen> {
       } catch (_) {}
     }
     if (mounted && _info) setState(() => _stats = m);
+  }
+
+  /// The film's name in big type over its first seconds (not for a resume, a channel or a trailer).
+  void _openCard() {
+    _cardDone = true;
+    final it = _item;
+    if (it == null ||
+        !Prefs.titleCards ||
+        widget.channel > 0 ||
+        widget.startMs > 0 ||
+        it.viewOffset > 0 ||
+        app.isMini.value) {
+      return;
+    }
+    setState(() => _card = true);
+  }
+
+  String get _cardLine {
+    final it = _item;
+    if (it == null) return '';
+    if (it.type == 'episode') {
+      return [
+        if (it.parentIndex > 0) 'Season ${it.parentIndex}',
+        'Episode ${it.index}',
+        it.title
+      ].join('  ·  ');
+    }
+    return it.year > 0 ? '${it.year}' : '';
   }
 
   Future<void> _toggleInfo() async {
@@ -1482,6 +1516,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (e is KeyDownEvent) _toggleInfo();
       return KeyEventResult.handled;
     }
+    if (k == LogicalKeyboardKey.keyG) {
+      setState(() => _graph = !_graph);
+      return KeyEventResult.handled;
+    }
     if (k == LogicalKeyboardKey.arrowDown) {
       if (widget.channel > 0) {
         _openChannels();
@@ -1496,7 +1534,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.keyP) {
-      if (e is KeyDownEvent) _goMini();
+      _goMini();
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.keyM) {
@@ -1691,6 +1729,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       ],
                       _actionHint(h, Icons.picture_in_picture_alt_rounded,
                           'Mini player (P)', _goMini),
+                      SizedBox(width: h * 0.02),
+                      _actionHint(h, Icons.show_chart_rounded, 'Stream graph (G)',
+                          () => setState(() => _graph = !_graph)),
                       SizedBox(width: h * 0.02),
                       _actionHint(
                           h, Icons.info_outline_rounded, 'Info (I)', _toggleInfo),
@@ -1906,6 +1947,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
             if (_panel) _trackPanel(h, w),
             if (_info) _infoPanel(h, w),
+            if (_graph && !app.isMini.value)
+              Positioned(
+                  left: w * 0.03,
+                  top: h * 0.12,
+                  child: IgnorePointer(child: StreamGraph(player: _player))),
+            if (_card)
+              Positioned.fill(
+                child: TitleCard(
+                    title: _item?.displayTitle ?? '',
+                    line: _cardLine,
+                    onDone: () {
+                      if (mounted) setState(() => _card = false);
+                    }),
+              ),
             if (_chanOpen && widget.channel > 0) _channelList(h, w),
             if (_banner && widget.channel > 0) _channelBanner(h, w),
             // the small window: click pauses, double-click gives the big one back

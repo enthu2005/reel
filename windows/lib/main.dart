@@ -10,6 +10,7 @@ import 'log.dart';
 import 'plex.dart';
 import 'prefs.dart';
 import 'screens/home.dart';
+import 'sound.dart';
 import 'screens/login.dart';
 import 'screens/profiles.dart';
 import 'warmup.dart';
@@ -34,9 +35,17 @@ class _PageWatcher extends NavigatorObserver {
   }
 
   @override
-  void didPush(Route<dynamic> route, Route<dynamic>? previous) => _check();
+  void didPush(Route<dynamic> route, Route<dynamic>? previous) {
+    if (previous != null) Sound.whoosh();
+    _check();
+  }
+
   @override
-  void didPop(Route<dynamic> route, Route<dynamic>? previous) => _check();
+  void didPop(Route<dynamic> route, Route<dynamic>? previous) {
+    Sound.whoosh();
+    _check();
+  }
+
   @override
   void didRemove(Route<dynamic> route, Route<dynamic>? previous) => _check();
   @override
@@ -83,6 +92,7 @@ Future<void> main() async {
     if (Prefs.startFullscreen) await setFullscreen(true);
   });
   runApp(const ReelApp());
+  Future.delayed(const Duration(milliseconds: 900), Sound.chime);
 }
 
 /// Closing the window must end the whole app: stop the preview player, then exit the process,
