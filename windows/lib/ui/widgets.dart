@@ -665,6 +665,10 @@ class CardRow extends StatefulWidget {
   final List<PlexItem> items;
   final bool landscape;
   final bool titles;
+
+  /// Gives the row a memory: where it was scrolled to is kept (by this name) while it is built away
+  /// and back again, so coming back to a row finds it where you left it.
+  final String? memory;
   final void Function(PlexItem) onPressed;
   final void Function(PlexItem)? onFocused;
   final void Function(PlexItem)? onLongPress;
@@ -674,6 +678,7 @@ class CardRow extends StatefulWidget {
   final Duration previewDelay;
 
   static final Expando<bool> _warmed = Expando();
+  static final Map<String, double> _spots = {};
 
   const CardRow({
     super.key,
@@ -688,6 +693,7 @@ class CardRow extends StatefulWidget {
     this.previewDelay = Motion.previewDelay,
     this.landscape = true,
     this.titles = false,
+    this.memory,
   });
 
   @override
@@ -695,10 +701,13 @@ class CardRow extends StatefulWidget {
 }
 
 class _CardRowState extends State<CardRow> {
-  final _scroll = ScrollController();
+  late final _scroll = ScrollController(
+      initialScrollOffset: CardRow._spots[widget.memory] ?? 0);
 
   @override
   void dispose() {
+    final m = widget.memory;
+    if (m != null && _scroll.hasClients) CardRow._spots[m] = _scroll.offset;
     _scroll.dispose();
     super.dispose();
   }

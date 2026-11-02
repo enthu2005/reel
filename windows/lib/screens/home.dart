@@ -1181,6 +1181,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           return RepaintBoundary(
                             child: CardRow(
                               key: ValueKey('${_tab}_${r.title}'),
+                              memory: '${_tab}_${r.title}',
                               autofocusFirst: !_spot && ri == 0,
                               big: r.big,
                               previewDelay: r.previewDelay,
