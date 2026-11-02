@@ -158,6 +158,12 @@ class Prefs {
   /// the order of the guide (ids; anything missing follows in the usual order).
   static String get liveCustom => _p.getString('liveCustom') ?? '[]';
   static set liveCustom(String v) => _p.setString('liveCustom', v);
+  /// Your changed copies of the standard channels (id -> recipe), as JSON.
+  static String get liveOver => _p.getString('liveOver') ?? '{}';
+  static set liveOver(String v) => _p.setString('liveOver', v);
+  /// Films the movie roulette has already landed on, per library (scope -> keys), as JSON.
+  static String get rouletteSeen => _p.getString('rouletteSeen') ?? '{}';
+  static set rouletteSeen(String v) => _p.setString('rouletteSeen', v);
   static List<String> get liveHidden => _p.getStringList('liveHidden') ?? const [];
   static set liveHidden(List<String> v) => _p.setStringList('liveHidden', v);
   static List<String> get liveOrder => _p.getStringList('liveOrder') ?? const [];

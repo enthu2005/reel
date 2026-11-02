@@ -19,7 +19,7 @@ class LiveEditScreen extends StatefulWidget {
   State<LiveEditScreen> createState() => _LiveEditScreenState();
 }
 
-enum _Step { list, kind, pick, name }
+enum _Step { list, kind, pick, name, edit, rename, libs }
 
 class _Source {
   final String key;
@@ -34,6 +34,10 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
   bool _changed = false;
 
   _Step _step = _Step.list;
+  CustomChannel? _def; // the channel being edited (renamed, given new contents or other libraries)
+  bool _changing = false; // choosing new contents for [_def], not adding a channel
+  List<PlexSection> _libChoices = [];
+  final Set<String> _libPicked = {};
   String _kind = '';
   String _query = '';
   List<_Source> _sources = [];
@@ -94,6 +98,23 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
 
   void _refresh() => setState(() => _channels = Live.allInOrder());
 
+  /// Builds the channels again after an edit and goes back to the list.
+  void _reload({_Step step = _Step.list}) {
+    _changed = true;
+    setState(() {
+      _step = step;
+      _loading = true;
+    });
+    Live.load().then((_) {
+      if (mounted) {
+        setState(() {
+          _channels = Live.allInOrder();
+          _loading = false;
+        });
+      }
+    });
+  }
+
   bool _hidden(LiveChannel c) => Prefs.liveHidden.contains(c.id);
 
   // ------------------------------------------------------------ add a channel
@@ -144,6 +165,22 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
     _genres.clear();
     _type = 'movie';
     _name.clear();
+    final d = _def;
+    if (_changing && d != null) {
+      // start from what the channel plays now
+      if (kind == 'genres' && d.kind == 'genres') {
+        _type = d.type;
+        _genres.addAll(d.genres.map((g) => _genreChoices.firstWhere(
+            (c) => c.toLowerCase() == g.toLowerCase(),
+            orElse: () => g)));
+      } else if (kind == 'shows' && d.kind == 'shows') {
+        for (var i = 0; i < d.refs.length; i++) {
+          _picked.add(_Source(d.refs[i], i < d.refTitles.length ? d.refTitles[i] : '', ''));
+        }
+      } else if (kind == 'search' && d.kind == 'search') {
+        _queryCtl.text = d.ref;
+      }
+    }
     if (kind == 'genres' || kind == 'search') {
       setState(() => _step = _Step.pick);
     } else {
@@ -152,7 +189,55 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
     }
   }
 
+  /// New contents for an existing channel: its name, number and libraries stay as they are.
+  void _applyChange(CustomChannel e) {
+    switch (_kind) {
+      case 'genres':
+        if (_genres.isEmpty) return;
+        e.genres = _genres.toList();
+        e.type = _type;
+        e.ref = '';
+        e.refTitle = '';
+        e.refs = [];
+        e.refTitles = [];
+      case 'search':
+        final q = _queryCtl.text.trim();
+        if (q.isEmpty) return;
+        e.ref = q;
+        e.refTitle = '';
+        e.genres = [];
+        e.refs = [];
+        e.refTitles = [];
+      case 'shows':
+        if (_picked.isEmpty) return;
+        e.refs = [for (final p in _picked) p.key];
+        e.refTitles = [for (final p in _picked) p.title];
+        e.ref = '';
+        e.refTitle = '';
+        e.genres = [];
+      default:
+        final c = _chosen;
+        if (c == null) return;
+        e.ref = c.key;
+        e.refTitle = c.title;
+        e.genres = [];
+        e.refs = [];
+        e.refTitles = [];
+    }
+    e.kind = _kind;
+    if (_kind != 'genres') e.libs = [];
+    Live.saveDefinition(e);
+    _changing = false;
+    _def = null;
+    _reload();
+  }
+
   void _toName() {
+    final d = _def;
+    if (_changing && d != null) {
+      _applyChange(d);
+      return;
+    }
     if (_kind == 'genres') {
       if (_genres.isEmpty) return;
       final g = _genres.toList();
@@ -175,6 +260,8 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
   }
 
   void _create() {
+    _def = null;
+    _changing = false;
     final name = _name.text.trim();
     if (name.isEmpty) return;
     final id = 'c:${DateTime.now().millisecondsSinceEpoch}';
@@ -198,6 +285,40 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
         });
       }
     });
+  }
+
+  void _applyRename() {
+    final d = _def;
+    final n = _name.text.trim();
+    if (d == null || n.isEmpty) return;
+    d.name = n;
+    Live.saveDefinition(d);
+    _def = null;
+    _reload();
+  }
+
+  Future<void> _openLibs(CustomChannel d) async {
+    final secs = Plex.enabledSections(await Plex.sections())
+        .where((s) => s.type == d.type)
+        .toList();
+    if (!mounted) return;
+    setState(() {
+      _libChoices = secs;
+      _libPicked
+        ..clear()
+        ..addAll(d.libs);
+      _step = _Step.libs;
+    });
+  }
+
+  void _saveLibs() {
+    final d = _def;
+    if (d == null) return;
+    // everything ticked (or nothing) means "all of them"
+    d.libs = _libPicked.length >= _libChoices.length ? [] : _libPicked.toList();
+    Live.saveDefinition(d);
+    _def = null;
+    _reload();
   }
 
   // ------------------------------------------------------------ pieces
@@ -246,11 +367,10 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
   }
 
   Widget _row(double h, double w, LiveChannel c, int i) {
-    final custom = c.custom
-        ? Live.customChannels().where((x) => x.id == c.id).firstOrNull
-        : null;
     final hidden = _hidden(c);
+    final def = Live.definition(c.id);
     return Container(
+      key: ValueKey('ch_${c.id}'),
       margin: EdgeInsets.only(bottom: h * 0.01),
       padding: EdgeInsets.symmetric(horizontal: h * 0.02, vertical: h * 0.012),
       decoration: BoxDecoration(
@@ -273,7 +393,9 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
             Text(
                 hidden
                     ? 'Hidden from the guide'
-                    : (custom?.describe ?? 'Built-in'),
+                    : (def == null
+                        ? 'Built-in'
+                        : '${c.custom ? '' : (Live.changed(c.id) ? 'Changed: ' : 'Standard: ')}${def.describe}'),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: reelText(h * 0.02, color: Reel.text2)),
@@ -295,6 +417,14 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
           Live.setHidden(c.id, !hidden);
           _changed = true;
           _refresh();
+        }),
+        SizedBox(width: h * 0.01),
+        _btn(h, 'Edit', def == null ? null : () {
+          setState(() {
+            _def = def;
+            _changing = false;
+            _step = _Step.edit;
+          });
         }),
         SizedBox(width: h * 0.01),
         if (c.custom)
@@ -328,6 +458,116 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
                   _row(h, w, _channels[i], i),
               ]),
       ),
+    ]);
+  }
+
+  Widget _editStep(double h, double w) {
+    final d = _def;
+    if (d == null) return const SizedBox.shrink();
+    Widget action(String label, String note, VoidCallback onTap, {bool first = false}) =>
+        Padding(
+          padding: EdgeInsets.only(bottom: h * 0.014),
+          child: Pressable(
+            autofocus: first,
+            onPressed: onTap,
+            scrollAlignment: 0.5,
+            builder: (c, f) => AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              width: w * 0.5,
+              padding: EdgeInsets.all(h * 0.022),
+              decoration: BoxDecoration(
+                  color: f ? Colors.white : Reel.card,
+                  borderRadius: BorderRadius.circular(h * 0.016)),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(label,
+                    style: reelText(h * 0.028,
+                        weight: FontWeight.w700,
+                        color: f ? Colors.black : Colors.white)),
+                if (note.isNotEmpty)
+                  Text(note,
+                      style: reelText(h * 0.021,
+                          color: f ? const Color(0xFF444444) : Reel.text2)),
+              ]),
+            ),
+          ),
+        );
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(d.name, style: reelText(h * 0.03, weight: FontWeight.w600)),
+      Text(d.describe, style: reelText(h * 0.022, color: Reel.text2)),
+      SizedBox(height: h * 0.02),
+      Expanded(
+        child: ListView(clipBehavior: Clip.hardEdge, children: [
+          action('Rename', 'Now called "${d.name}".', () {
+            _name.text = d.name;
+            setState(() => _step = _Step.rename);
+          }, first: true),
+          action('Change what it plays', 'Pick new contents. Its name and place in the guide stay.', () {
+            _changing = true;
+            setState(() => _step = _Step.kind);
+          }),
+          if (d.kind == 'genres')
+            action('Libraries it uses',
+                d.libs.isEmpty ? 'All of them. Choose only some.' : '${d.libs.length} picked.',
+                () => _openLibs(d)),
+          if (d.builtin && Live.changed(d.id))
+            action('Put back as it came', 'Forget your changes to this standard channel.', () {
+              Live.resetDefinition(d.id);
+              _def = null;
+              _reload();
+            }),
+        ]),
+      ),
+    ]);
+  }
+
+  Widget _renameStep(double h, double w) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('Name this channel', style: reelText(h * 0.03, weight: FontWeight.w600)),
+      SizedBox(height: h * 0.02),
+      SizedBox(
+        width: w * 0.5,
+        child: TextField(
+          controller: _name,
+          autofocus: true,
+          onSubmitted: (_) => _applyRename(),
+          style: reelText(h * 0.032, weight: FontWeight.w500),
+          cursorColor: Colors.white,
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: Reel.card,
+            border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(h * 0.02),
+                borderSide: BorderSide.none),
+            contentPadding:
+                EdgeInsets.symmetric(horizontal: h * 0.02, vertical: h * 0.02),
+          ),
+        ),
+      ),
+      SizedBox(height: h * 0.025),
+      PillButton('Save', primary: true, onPressed: _applyRename),
+    ]);
+  }
+
+  Widget _libsStep(double h, double w) {
+    final d = _def;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('Libraries for ${d?.name ?? ''}',
+          style: reelText(h * 0.03, weight: FontWeight.w600)),
+      SizedBox(height: h * 0.012),
+      Text('Only look in the libraries you tick. None ticked means all of them.',
+          style: reelText(h * 0.022, color: Reel.text2)),
+      SizedBox(height: h * 0.02),
+      Wrap(spacing: h * 0.012, runSpacing: h * 0.012, children: [
+        for (var i = 0; i < _libChoices.length; i++)
+          _chip(h, _libChoices[i].title, _libPicked.contains(_libChoices[i].key), () {
+            setState(() {
+              final k = _libChoices[i].key;
+              _libPicked.contains(k) ? _libPicked.remove(k) : _libPicked.add(k);
+            });
+          }, autofocus: i == 0),
+      ]),
+      SizedBox(height: h * 0.025),
+      PillButton('Save', primary: true, onPressed: _saveLibs),
     ]);
   }
 
@@ -608,11 +848,22 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
       case _Step.list:
         return false;
       case _Step.kind:
-        setState(() => _step = _Step.list);
+        if (_changing) {
+          _changing = false;
+          setState(() => _step = _Step.edit);
+        } else {
+          setState(() => _step = _Step.list);
+        }
       case _Step.pick:
         setState(() => _step = _Step.kind);
       case _Step.name:
         setState(() => _step = _Step.pick);
+      case _Step.edit:
+        _def = null;
+        setState(() => _step = _Step.list);
+      case _Step.rename:
+      case _Step.libs:
+        setState(() => _step = _Step.edit);
     }
     return true;
   }
@@ -640,6 +891,9 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
                 _Step.kind => _kindStep(h, w),
                 _Step.pick => _pickStep(h, w),
                 _Step.name => _nameStep(h, w),
+                _Step.edit => _editStep(h, w),
+                _Step.rename => _renameStep(h, w),
+                _Step.libs => _libsStep(h, w),
               },
             ),
           ]),

@@ -23,6 +23,7 @@ import 'live.dart';
 import '../seerr.dart';
 import '../ui/net_image.dart' show ImageLoader;
 import 'player.dart';
+import 'roulette.dart';
 import 'search.dart';
 import 'settings.dart';
 
@@ -59,6 +60,7 @@ class _HomeScreenState extends State<HomeScreen> {
     'Libraries',
     'Discover',
     'Live',
+    'Roulette',
     'Search',
     'Settings'
   ];
@@ -992,6 +994,11 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_tabs[i] == 'Live') {
       await Navigator.of(context)
           .push(MaterialPageRoute(builder: (_) => const LiveScreen()));
+      return;
+    }
+    if (_tabs[i] == 'Roulette') {
+      await Navigator.of(context)
+          .push(MaterialPageRoute(builder: (_) => const RouletteScreen()));
       return;
     }
     if (_tabs[i] == 'Search') {

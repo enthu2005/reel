@@ -616,7 +616,7 @@ class _DetailScreenState extends State<DetailScreen> {
                           ),
                         if (_similar.isNotEmpty)
                           CardRow(
-                            title: 'Movies Like This',
+                            title: it.type == 'show' ? 'Similar in your libraries' : 'Movies Like This',
                             items: _similar,
                             landscape: true,
                             titles: true,

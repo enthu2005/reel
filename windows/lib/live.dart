@@ -48,21 +48,29 @@ class LiveChannel {
 class CustomChannel {
   final String id;
   String name;
-  final String kind; // 'collection', 'show', 'shows', 'genres' or 'search'
-  final String ref; // the collection's / show's key
-  final String refTitle; // for showing in the editor
-  final String type; // genres: 'movie' or 'show'
-  final List<String> genres;
-  final List<String> refs; // 'shows': the keys and titles of the shows mixed
-  final List<String> refTitles;
+  String kind; // 'collection', 'show', 'shows', 'genres' or 'search'
+  String ref; // the collection's / show's key
+  String refTitle; // for showing in the editor
+  String type; // genres: 'movie' or 'show'
+  List<String> genres;
+  List<String> refs; // 'shows': the keys and titles of the shows mixed
+  List<String> refTitles;
+  List<String> libs; // library keys it may use (empty = every enabled library)
+  bool builtin; // one of the standard channels (kept as a changed copy once you edit it)
 
   CustomChannel(this.id, this.name, this.kind,
       {this.ref = '',
       this.refTitle = '',
       this.type = 'movie',
-      this.genres = const [],
-      this.refs = const [],
-      this.refTitles = const []});
+      List<String>? genres,
+      List<String>? refs,
+      List<String>? refTitles,
+      List<String>? libs,
+      this.builtin = false})
+      : genres = genres ?? [],
+        refs = refs ?? [],
+        refTitles = refTitles ?? [],
+        libs = libs ?? [];
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -74,6 +82,8 @@ class CustomChannel {
         'genres': genres,
         'refs': refs,
         'refTitles': refTitles,
+        'libs': libs,
+        'builtin': builtin,
       };
 
   static CustomChannel fromJson(Map m) => CustomChannel(
@@ -86,6 +96,8 @@ class CustomChannel {
         genres: [for (final g in (m['genres'] as List? ?? const [])) '$g'],
         refs: [for (final g in (m['refs'] as List? ?? const [])) '$g'],
         refTitles: [for (final g in (m['refTitles'] as List? ?? const [])) '$g'],
+        libs: [for (final g in (m['libs'] as List? ?? const [])) '$g'],
+        builtin: m['builtin'] == true,
       );
 
   String get describe => switch (kind) {
@@ -160,6 +172,61 @@ class Live {
     Prefs.liveOrder = [for (final x in Prefs.liveOrder) if (x != id) x];
   }
 
+  static CustomChannel _standard(List<String> def) => CustomChannel(
+      def[0], def[0], 'genres',
+      type: def[2],
+      genres: [for (final g in def[1].split(',')) g.trim()],
+      builtin: true);
+
+  static Map<String, dynamic> _overrides() {
+    try {
+      return Map<String, dynamic>.from(jsonDecode(Prefs.liveOver) as Map);
+    } catch (_) {
+      return {};
+    }
+  }
+
+  /// Every channel's recipe: the standard ones (or your changed copy of them), then the ones you made.
+  static List<CustomChannel> definitions() {
+    final over = _overrides();
+    return [
+      for (final def in _lineup)
+        over[def[0]] is Map
+            ? CustomChannel.fromJson(over[def[0]] as Map)
+            : _standard(def),
+      ...customChannels(),
+    ];
+  }
+
+  static CustomChannel? definition(String id) {
+    for (final c in definitions()) {
+      if (c.id == id) return c;
+    }
+    return null;
+  }
+
+  /// True when a standard channel has been changed from how it came.
+  static bool changed(String id) => _overrides().containsKey(id);
+
+  /// Saves a changed recipe (name, what it plays, which libraries) for a standard or own channel.
+  static void saveDefinition(CustomChannel c) {
+    if (c.builtin) {
+      final over = _overrides();
+      over[c.id] = c.toJson();
+      Prefs.liveOver = jsonEncode(over);
+      invalidate();
+      return;
+    }
+    _saveCustom([for (final x in customChannels()) x.id == c.id ? c : x]);
+  }
+
+  /// Puts a standard channel back as it came.
+  static void resetDefinition(String id) {
+    final over = _overrides()..remove(id);
+    Prefs.liveOver = jsonEncode(over);
+    invalidate();
+  }
+
   /// Forget what was built, so the next load builds the channels again.
   static void invalidate() {
     _builtAt = DateTime.fromMillisecondsSinceEpoch(0);
@@ -229,23 +296,19 @@ class Live {
     for (final s in Plex.enabledSections(await Plex.sections())) {
       final movie = s.type == 'movie';
       if (!movie && s.type != 'show') continue;
-      (movie ? movies : shows).addAll(await Plex.rawAll(s.key));
+      final all = await Plex.rawAll(s.key);
+      for (final m in all) {
+        m['_lib'] = s.key; // which library it came from, for channels limited to some libraries
+      }
+      (movie ? movies : shows).addAll(all);
     }
     int byKey(Map a, Map b) =>
         '${a['ratingKey']}'.compareTo('${b['ratingKey']}');
     movies.sort(byKey);
     shows.sort(byKey);
     final out = <LiveChannel>[];
-    for (final def in _lineup) {
-      final c = LiveChannel(0, def[0], def[0]);
-      await _fromGenres(c, def[1].split(','), def[2] == 'movie', movies, shows);
-      for (final p in c.loop) {
-        c.total += p.durMs;
-      }
-      if (c.total > 0) out.add(c);
-    }
-    for (final cc in customChannels()) {
-      final c = LiveChannel(0, cc.id, cc.name, custom: true);
+    for (final cc in definitions()) {
+      final c = LiveChannel(0, cc.id, cc.name, custom: !cc.builtin);
       try {
         switch (cc.kind) {
           case 'collection':
@@ -264,11 +327,11 @@ class Live {
                       'title': i < cc.refTitles.length ? cc.refTitles[i] : ''
                     }
                 ],
-                Random(_hash(cc.name)),
+                Random(_hash(cc.id)),
                 maxShows: 12);
           default:
             await _fromGenres(c, cc.genres.map((g) => g.toLowerCase()).toList(),
-                cc.type == 'movie', movies, shows);
+                cc.type == 'movie', movies, shows, cc.libs);
         }
       } catch (_) {}
       for (final p in c.loop) {
@@ -287,9 +350,10 @@ class Live {
       List<String> words,
       bool movie,
       List<Map<String, dynamic>> movies,
-      List<Map<String, dynamic>> shows) async {
-    final rnd = Random(_hash(c.name));
-    final pool = _match(movie ? movies : shows, words)..shuffle(rnd);
+      List<Map<String, dynamic>> shows,
+      List<String> libs) async {
+    final rnd = Random(_hash(c.id));
+    final pool = _match(movie ? movies : shows, words, libs)..shuffle(rnd);
     if (movie) {
       for (final m in pool) {
         if (c.loop.length >= 150) break;
@@ -308,7 +372,7 @@ class Live {
     if (items.first.type == 'show') {
       await _buildShows(c, [
         for (final s in items) {'ratingKey': s.key, 'title': s.title}
-      ], Random(_hash(c.name)));
+      ], Random(_hash(c.id)));
       return;
     }
     final movies = items.where((m) => m.type == 'movie').toList()
@@ -325,7 +389,7 @@ class Live {
   /// A saved smart search ("80s horror rated 7+"): whatever it finds today, films and shows mixed together.
   static Future<void> _fromSearch(LiveChannel c, String query) async {
     final items = await SmartSearch.run(SmartSearch.parse(query), limit: 300);
-    final rnd = Random(_hash(c.name));
+    final rnd = Random(_hash(c.id));
     final lists = <List<LiveProg>>[];
     var shows = 0;
     for (final it in items) {
@@ -371,9 +435,10 @@ class Live {
   }
 
   static List<Map<String, dynamic>> _match(
-      List<Map<String, dynamic>> src, List<String> words) {
+      List<Map<String, dynamic>> src, List<String> words, List<String> libs) {
     final out = <Map<String, dynamic>>[];
     for (final m in src) {
+      if (libs.isNotEmpty && !libs.contains('${m['_lib']}')) continue;
       final g = m['Genre'] as List?;
       if (g == null) continue;
       var hit = false;
