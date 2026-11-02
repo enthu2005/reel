@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show ProcessInfo;
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -11,6 +12,7 @@ import '../live.dart';
 import '../main.dart' as app;
 import '../plex.dart';
 import '../prefs.dart';
+import '../ui/channel_logo.dart';
 import '../ui/net_image.dart';
 import '../ui/preview.dart';
 import '../ui/theme.dart';
@@ -329,7 +331,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
         if (mounted) _player.seek(Duration(milliseconds: widget.startMs));
       });
     }
-    if (widget.channel > 0) _watchChannelStart();
+    if (widget.channel > 0) {
+      _watchChannelStart();
+      // a short banner: the channel's number, name, what is on now and what is next
+      setState(() => _banner = true);
+      Future.delayed(const Duration(milliseconds: 4500), () {
+        if (mounted) setState(() => _banner = false);
+      });
+    }
 
     if (_item != null && widget.channel == 0) {
       _report =
@@ -370,6 +379,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       -1; // index of the same-language track to switch to once the file is open
   String _why = '';
   bool _info = false;
+  bool _banner = false;
   final _infoScroll = ScrollController();
   Map<String, String> _stats = {};
 
@@ -765,6 +775,52 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (at < 0) at = 0;
     _transitioning = true;
     tuneChannel(context, all[(at + delta) % all.length], replace: true);
+  }
+
+  Widget _channelBanner(double h, double w) {
+    final ch = Live.byNum(widget.channel);
+    if (ch == null) return const SizedBox.shrink();
+    final now = DateTime.now();
+    final up = Live.window(ch, now, now.add(const Duration(hours: 4)));
+    return Positioned(
+      left: w * 0.04,
+      top: h * 0.16,
+      child: IgnorePointer(
+        child: TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0, end: 1),
+          duration: const Duration(milliseconds: 300),
+          builder: (c, t, child) => Opacity(opacity: t, child: child),
+          child: Container(
+            padding: EdgeInsets.symmetric(horizontal: h * 0.05, vertical: h * 0.025),
+            decoration: BoxDecoration(
+                color: const Color(0xE61C1C1E),
+                borderRadius: BorderRadius.circular(h * 0.025)),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              ChannelLogo(ch.name, size: h * 0.1),
+              SizedBox(width: h * 0.025),
+              Text('${ch.num}',
+                  style: reelText(h * 0.085,
+                      weight: FontWeight.w600, color: Reel.accent)),
+              SizedBox(width: h * 0.04),
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(ch.name, style: reelText(h * 0.036, weight: FontWeight.w600)),
+                for (var i = 0; i < up.length && i < 2; i++)
+                  ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: w * 0.4),
+                    child: Text(
+                        '${i == 0 ? 'Now  ' : 'Next  '}${up[i].prog.title}${up[i].prog.code.isEmpty ? '' : '  ·  ${up[i].prog.code}'}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: reelText(h * 0.026,
+                            weight: FontWeight.w500,
+                            color: i == 0 ? Colors.white : const Color(0xB3FFFFFF))),
+                  ),
+              ]),
+            ]),
+          ),
+        ),
+      ),
+    );
   }
 
   void _closeChannels() {
@@ -1778,6 +1834,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             if (_panel) _trackPanel(h, w),
             if (_info) _infoPanel(h, w),
             if (_chanOpen && widget.channel > 0) _channelList(h, w),
+            if (_banner && widget.channel > 0) _channelBanner(h, w),
             if (_still) _stillCard(h, w),
           ]),
         ),
@@ -2272,6 +2329,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
       tick(est >= avgMbps * 1.3,
           est >= avgMbps * 1.3 ? 'Bandwidth sufficient' : 'Bandwidth is tight for this file');
     }
+    // what picture is really being played, judged from the stream mpv is decoding
+    final gamma = num('video-params/gamma');
+    if (gamma.isNotEmpty) {
+      final dv = v != null && v.isNotEmpty && v.first.dovi;
+      final hdrFile = dv || (v != null && v.isNotEmpty && v.first.colorTrc.isNotEmpty && v.first.colorTrc != 'bt709');
+      if (gamma == 'pq') {
+        tick(true, dv ? 'Playing as HDR10 (the Dolby Vision layer is not in use)' : 'Playing in HDR10');
+      } else if (gamma == 'hlg') {
+        tick(true, 'Playing in HLG HDR');
+      } else {
+        tick(!hdrFile, hdrFile ? 'Playing in SDR: the HDR in the file is tone-mapped for this screen' : 'Playing in SDR (the file is not HDR)');
+      }
+    }
     tick(!_stereo, _stereo ? 'Sound converted by the server' : 'DIRECT PLAY${avgMbps > 0 ? ' — ${avgMbps.toStringAsFixed(1)} Mbps' : ''}');
     final rows = <List<String>>[
       ['Title', widget.title ?? it?.displayTitle ?? ''],
@@ -2281,6 +2351,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         ['Director', it.directors.map((d) => d.name).join(', ')],
       if (it != null && it.cast.isNotEmpty)
         ['Cast', it.cast.take(8).map((c) => c.name).join(', ')],
+      ['Memory', '${(ProcessInfo.currentRss / 1048576).round()} MB used by Reel (peak ${(ProcessInfo.maxRss / 1048576).round()} MB)'],
       ['Position', '${_time(_pos)} of ${_time(_dur)}'],
       ['Buffered ahead', '${dur(ahead)}${_buffering ? '   (buffering…)' : ''}'],
       if (speed != null)

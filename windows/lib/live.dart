@@ -13,7 +13,17 @@ class LiveProg {
   final String title;
   final String sub;
   final int durMs;
-  LiveProg(this.key, this.title, this.sub, this.durMs);
+  final int season; // episodes only
+  final int episode;
+  LiveProg(this.key, this.title, this.sub, this.durMs,
+      {this.season = 0, this.episode = 0});
+
+  /// "S2 E5", or "" for a film.
+  String get code => season > 0 && episode > 0 ? 'S$season E$episode' : '';
+
+  /// "Season 2 · Episode 5", or "" for a film.
+  String get longCode =>
+      season > 0 && episode > 0 ? 'Season $season · Episode $episode' : '';
 }
 
 class LiveSlot {
@@ -353,7 +363,8 @@ class Live {
     for (final e in await Plex.allEpisodes(showKey)) {
       if (e.duration < _minProg || e.parentIndex <= 0) continue; // skip specials
       eps.add(LiveProg(e.key, showTitle,
-          'S${e.parentIndex} · E${e.index}  ${e.title}', e.duration));
+          'S${e.parentIndex} · E${e.index}  ${e.title}', e.duration,
+          season: e.parentIndex, episode: e.index));
       if (eps.length >= cap) break;
     }
     return _epCache['$showKey/$cap'] = eps;

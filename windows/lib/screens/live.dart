@@ -9,6 +9,7 @@ import '../live.dart';
 import '../plex.dart';
 import '../prefs.dart';
 import '../ui/theme.dart';
+import '../ui/channel_logo.dart';
 import '../ui/widgets.dart';
 import 'live_edit.dart';
 import 'player.dart';
@@ -178,9 +179,21 @@ class _LiveScreenState extends State<LiveScreen> {
     }
   }
 
-  static int _windowStart() {
-    final n = DateTime.now().millisecondsSinceEpoch;
-    return n - n % _halfHour;
+  /// The guide starts at this very minute: what has already been on is not shown, and the programme on now
+  /// sits at the left.
+  static int _windowStart() => DateTime.now().millisecondsSinceEpoch;
+
+  /// For each channel, when the programme drawn as "on now" began: when one moves on, the guide is drawn again.
+  final Map<int, int> _shownNow = {};
+  String _focusedSid = '';
+
+  bool _rolledOver() {
+    if (_shownNow.length != _channels.length) return true;
+    for (var i = 0; i < _channels.length; i++) {
+      final s = Live.nowOn(_channels[i]);
+      if (s != null && s.start.millisecondsSinceEpoch != _shownNow[i]) return true;
+    }
+    return false;
   }
 
   @override
@@ -198,11 +211,22 @@ class _LiveScreenState extends State<LiveScreen> {
     }).catchError((e) {
       if (mounted) setState(() => _message = "Couldn't build the guide: $e");
     });
-    _tick = Timer.periodic(const Duration(seconds: 20), (_) {
+    _tick = Timer.periodic(const Duration(seconds: 5), (_) {
       if (!mounted) return;
+      if (_channels.isNotEmpty && !_rolledOver()) {
+        // nothing moved on: only the clock and the line for "now" change, the grid stays where it is
+        setState(() => _now = DateTime.now());
+        return;
+      }
       setState(() {
         _now = DateTime.now();
         _t0 = _windowStart();
+      });
+      // the programme the highlight was on has finished and gone: carry on from what is on now in that row
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_inGrid) return;
+        final n = _slotNodes[_focusedSid];
+        if (n == null || n.context == null) _focusNow(_focusRow);
       });
     });
   }
@@ -235,7 +259,10 @@ class _LiveScreenState extends State<LiveScreen> {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: reelText(h * 0.042, weight: FontWeight.w700)),
-      Text(s.prog.sub,
+      Text(
+          s.prog.season > 0
+              ? '${s.prog.longCode}   ·   ${s.prog.sub.replaceFirst(RegExp(r'^S\d+ · E\d+\s+'), '')}'
+              : s.prog.sub,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: reelText(h * 0.026, color: const Color(0xE6FFFFFF))),
@@ -334,7 +361,9 @@ class _LiveScreenState extends State<LiveScreen> {
             SizedBox(
               height: h * 0.045,
               child: Stack(children: [
-                for (var t = _t0; t < _t0 + _windowMs; t += _halfHour)
+                for (var t = _t0 - _t0 % _halfHour + _halfHour;
+                    t < _t0 + _windowMs;
+                    t += _halfHour)
                   Positioned(
                     left: nameW + (t - _t0) * ppm,
                     top: 0,
@@ -372,19 +401,25 @@ class _LiveScreenState extends State<LiveScreen> {
                       width: nameW,
                       child: Padding(
                         padding: EdgeInsets.only(left: w * 0.006, right: w * 0.01),
-                        child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('${ch.num}',
-                                  style: reelText(h * 0.032,
-                                      weight: FontWeight.w600,
-                                      color: Reel.accent)),
-                              Text(ch.name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: reelText(h * 0.022)),
-                            ]),
+                        child: Row(children: [
+                          ChannelLogo(ch.name, size: rowH * 0.72),
+                          SizedBox(width: w * 0.008),
+                          Expanded(
+                            child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('${ch.num}',
+                                      style: reelText(h * 0.028,
+                                          weight: FontWeight.w600,
+                                          color: Reel.accent)),
+                                  Text(ch.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: reelText(h * 0.02)),
+                                ]),
+                          ),
+                        ]),
                       ),
                     ),
                     SizedBox(
@@ -401,7 +436,10 @@ class _LiveScreenState extends State<LiveScreen> {
                             final live = s.start.millisecondsSinceEpoch <= nowMs &&
                                 nowMs < s.end.millisecondsSinceEpoch;
                             final sid = '${ci}_${s.start.millisecondsSinceEpoch}';
-                            if (live) _nowId[ci] = sid;
+                            if (live) {
+                              _nowId[ci] = sid;
+                              _shownNow[ci] = s.start.millisecondsSinceEpoch;
+                            }
                             final bw = ((b - a) * ppm - gap * 2).clamp(1.0, gridW);
                             return Positioned(
                               left: (a - _t0) * ppm + gap,
@@ -417,6 +455,7 @@ class _LiveScreenState extends State<LiveScreen> {
                                   if (f) {
                                     _inGrid = true;
                                     _focusRow = ci;
+                                    _focusedSid = sid;
                                     setState(() {
                                       _dCh = ch;
                                       _dSlot = s;
@@ -442,9 +481,16 @@ class _LiveScreenState extends State<LiveScreen> {
                                   ),
                                   child: Text(
                                       s.prog.title +
-                                          (s.prog.sub.isEmpty
-                                              ? ''
-                                              : '\n${s.prog.sub}'),
+                                          // a short block keeps at least the season and episode
+                                          () {
+                                            final second = bw < w * 0.1 &&
+                                                    s.prog.code.isNotEmpty
+                                                ? s.prog.code
+                                                : s.prog.sub;
+                                            return second.isEmpty
+                                                ? ''
+                                                : '\n$second';
+                                          }(),
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
                                       style: reelText(h * 0.022,
