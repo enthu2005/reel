@@ -15,10 +15,33 @@ android {
         versionName '0.1'
     }
 
+    // The release key lives outside the repo (never commit it): %USERPROFILE%\.reel-keys\keystore.properties
+    def keyProps = new Properties()
+    def keyFile = new File(System.getProperty('user.home'), '.reel-keys/keystore.properties')
+    if (keyFile.exists()) keyFile.withInputStream { keyProps.load(it) }
+
+    signingConfigs {
+        release {
+            if (keyProps['storeFile']) {
+                storeFile file(keyProps['storeFile'])
+                storePassword keyProps['storePassword']
+                keyAlias keyProps['keyAlias']
+                keyPassword keyProps['keyPassword']
+            }
+        }
+    }
+
     buildTypes {
         release {
-            minifyEnabled false
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (keyProps['storeFile']) signingConfig signingConfigs.release
         }
+    }
+
+    lint {
+        checkReleaseBuilds false // the lint-vital step crashes inside the Android Gradle plugin here
     }
 
     compileOptions {
