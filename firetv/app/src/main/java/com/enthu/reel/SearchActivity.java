@@ -40,6 +40,7 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
     private TextView message;
     private TextView smartNote;
     private View firstKeyView;
+    private View lastKeyView; // the keyboard key that had focus last, where Left from the results goes back to
     private RecyclerView grid;
     private int token = 0;
     private Runnable pending;
@@ -144,6 +145,13 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
         sLp.topMargin = (int) (H * 0.08f);
         sLp.rightMargin = (int) (W * 0.03f);
         root.addView(suggBox, sLp);
+        // The suggestions sit above the first row of posters: they scroll away with it instead of floating over later rows
+        grid.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrolled(RecyclerView rv, int dx, int dy) {
+                suggBox.setTranslationY(-rv.computeVerticalScrollOffset());
+            }
+        });
 
         smartNote = new TextView(this);
         smartNote.setTextColor(0xCCE8833A);
@@ -188,7 +196,10 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
         t.setOnFocusChangeListener((v, f) -> {
             t.setBackground(UiUtil.rounded(f ? 0xFFFFFFFF : 0x14FFFFFF, r));
             t.setTextColor(f ? 0xFF000000 : Color.WHITE);
-            if (f) SoundFx.move();
+            if (f) {
+                lastKeyView = t;
+                SoundFx.move();
+            }
         });
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(width, (int) (H * 0.085f));
         lp.setMargins(3, 0, 3, 0);
@@ -282,6 +293,20 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
 
     @Override
     public boolean dispatchKeyEvent(android.view.KeyEvent e) {
+        // Left from the first column of the results goes back to the keyboard
+        if (e.getKeyCode() == android.view.KeyEvent.KEYCODE_DPAD_LEFT) {
+            View f = getCurrentFocus();
+            if (f != null && grid != null && f != grid && grid.findContainingItemView(f) != null) {
+                RecyclerView.ViewHolder vh = grid.findContainingViewHolder(f);
+                if (vh != null && vh.getBindingAdapterPosition() % 3 == 0) {
+                    if (e.getAction() == android.view.KeyEvent.ACTION_DOWN) {
+                        View back = lastKeyView != null ? lastKeyView : firstKeyView;
+                        if (back != null) back.requestFocus();
+                    }
+                    return true;
+                }
+            }
+        }
         if (preview != null && preview.handleKey(e)) return true;
         // The search / voice keys some remotes have
         int k = e.getKeyCode();
@@ -429,6 +454,7 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
         int n = suggBox.getChildCount();
         int top = (int) (H * 0.08f) + (n == 0 ? 0 : n * (H / SUGG_ROW_H_DIV + (int) (H * 0.008f)) + (int) (H * 0.02f));
         grid.setPadding(grid.getPaddingLeft(), top, grid.getPaddingRight(), grid.getPaddingBottom());
+        suggBox.setTranslationY(-grid.computeVerticalScrollOffset());
     }
 
     private void type(String c) {
