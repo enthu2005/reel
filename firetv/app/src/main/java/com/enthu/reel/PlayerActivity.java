@@ -763,6 +763,13 @@ public class PlayerActivity extends Activity {
         return true;
     }
 
+    /** A Blu-ray style .m2ts / .mts file (the player's reader fails on these with "container unsupported"). */
+    private boolean isBlurayTs() {
+        if (item == null || item.part == null) return false;
+        String file = item.part.optString("file", "").toLowerCase(Locale.ROOT);
+        return file.endsWith(".m2ts") || file.endsWith(".mts");
+    }
+
     private boolean needsAc3(Plex.Stream s) {
         if (s == null || s.codec == null) return false;
         String c = s.codec.toLowerCase(Locale.ROOT);
@@ -1418,7 +1425,7 @@ public class PlayerActivity extends Activity {
 
     private void begin(final long positionMs, final boolean wantTranscode) {
         autoToneMap();
-        final boolean willTranscode = wantTranscode || quality != 0 || needsAc3(curAudio);
+        final boolean willTranscode = wantTranscode || quality != 0 || needsAc3(curAudio) || isBlurayTs();
         final int want = burnId();
         if (!willTranscode || item == null || item.partKey == null || lastPartSub == want) {
             beginNow(positionMs, wantTranscode);
@@ -1457,6 +1464,14 @@ public class PlayerActivity extends Activity {
     }
 
     private void beginNow(long positionMs, boolean transcode) {
+        // Blu-ray .m2ts files (192-byte packets) are not something the player can read: ask Plex to convert them straight away
+        // (the picture is copied, only the sound is converted) instead of failing first with "container unsupported"
+        if (!transcode && isBlurayTs()) {
+            transcode = true;
+            // Plex's Dolby Digital Plus (Atmos) output flips between 4 and 6 channels, which re-opens the sound output
+            // every fraction of a second and leaves the picture crawling: ask for plain Dolby Digital 5.1 instead
+            ac3 = true;
+        }
         if (transcode || quality != 0 || needsAc3(curAudio)) {
             // Reusing one session id across restarts made Plex mix up the old and new streams.
             Plex.stopTranscode(session);
