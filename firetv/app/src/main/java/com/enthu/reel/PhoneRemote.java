@@ -67,8 +67,8 @@ final class PhoneRemote {
         if (token == null) {
             // Made once and kept for good, so a phone's bookmark or home-screen shortcut keeps working
             token = sp.getString("remoteToken", null);
-            if (token == null || token.isEmpty()) {
-                byte[] b = new byte[4];
+            if (token == null || token.length() < 16) { // older builds made a short 8-character code
+                byte[] b = new byte[12];
                 new SecureRandom().nextBytes(b);
                 StringBuilder sb = new StringBuilder();
                 for (byte x : b) sb.append(String.format("%02x", x));

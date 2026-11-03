@@ -27,6 +27,8 @@ final class YouTubeEmbed {
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     static WebView create(Activity act, String videoId, float volume, final Events ev) {
         final Handler main = new Handler(Looper.getMainLooper());
+        // The id comes from the Plex server's trailer data and goes into the page's script: only a real id may pass
+        if (videoId == null || !videoId.matches("[A-Za-z0-9_-]{6,32}")) videoId = "";
         WebView wv = new WebView(act);
         wv.setBackgroundColor(0xFF000000);
         wv.setFocusable(false);

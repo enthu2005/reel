@@ -66,6 +66,7 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
         queryView.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.045f);
         queryView.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
         queryView.setSingleLine(true);
+        queryView.setEllipsize(android.text.TextUtils.TruncateAt.START); // a long query shows its end, where you're typing
         queryView.setPadding((int) (H * 0.025f), (int) (H * 0.02f), (int) (H * 0.025f), (int) (H * 0.02f));
         queryView.setBackground(UiUtil.rounded(0x22FFFFFF, H * 0.03f));
         left.addView(queryView, new LinearLayout.LayoutParams(
@@ -440,7 +441,7 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
 
     private void changed() {
         if (query.length() == 0) {
-            queryView.setText("Search titles, shows and actors");
+            queryView.setText("Search titles and actors");
             queryView.setTextColor(0x66FFFFFF);
         } else {
             queryView.setText(query.toString());
