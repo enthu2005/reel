@@ -1709,22 +1709,30 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                     ? Plex.movieSections(allSections) : Plex.visibleSections(allSections);
 
             if (whichTab == TAB_HOME) {
-                List<Plex.Item> onDeck = Plex.items(Plex.paged("/library/onDeck", 20));
+                // Continue Watching, Recently Added and server activity are asked for at the same time
+                List<java.util.concurrent.Callable<List<Plex.Item>>> homeJobs = new ArrayList<>();
+                homeJobs.add(() -> Plex.items(Plex.paged("/library/onDeck", 20)));
+                homeJobs.add(() -> recentlyAdded(sections));
+                homeJobs.add(() -> {
+                    try {
+                        return Plex.sessions();
+                    } catch (Exception e) {
+                        return new ArrayList<Plex.Item>(); // Some accounts can't see server activity; skip the row.
+                    }
+                });
+                List<List<Plex.Item>> homeRes = Plex.parallel(homeJobs);
+                List<Plex.Item> onDeck = homeRes.get(0);
                 if (!onDeck.isEmpty()) out.rows.add(new Row("Continue Watching", onDeck, true));
 
                 // Recently Added comes straight after Continue Watching
-                List<Plex.Item> recent = recentlyAdded(sections);
+                List<Plex.Item> recent = homeRes.get(1);
                 if (!recent.isEmpty()) {
                     out.rows.add(new Row("Recently Added", recent, false));
                     recents.add(recent);
                 }
 
-                try {
-                    List<Plex.Item> live = Plex.sessions();
-                    if (!live.isEmpty()) out.rows.add(new Row("Currently Watching", live, true));
-                } catch (Exception ignored) {
-                    // Some accounts can't see server activity; skip the row.
-                }
+                List<Plex.Item> live = homeRes.get(2);
+                if (!live.isEmpty()) out.rows.add(new Row("Currently Watching", live, true));
                 // What you're partway through is worth a spot in the banner too
                 if (!onDeck.isEmpty()) recents.add(onDeck);
             } else {
@@ -1752,21 +1760,26 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 }
                 // The whole library is a button (a tile that opens its page), not a row of thousands
                 List<Plex.Item> tiles = new ArrayList<>();
+                List<java.util.concurrent.Callable<Void>> tileJobs = new ArrayList<>();
                 for (Plex.Section s : tabSections) {
-                    Plex.Item t = new Plex.Item();
+                    final Plex.Item t = new Plex.Item();
                     t.key = "lib:" + s.key;
                     t.type = "genre"; // drawn as a name tile
                     t.title = s.title.toLowerCase().startsWith("all ") ? s.title : "All " + s.title;
                     t.summary = s.type; // so the page knows what it's opening
-                    try {
-                        List<Plex.Item> one = Plex.items(Plex.paged(
-                                "/library/sections/" + s.key + "/all?sort=random", 1));
-                        if (!one.isEmpty()) t.thumb = one.get(0).art != null ? one.get(0).art : one.get(0).thumb;
-                    } catch (Exception ignored) {
-                        // no picture: the tile still opens
-                    }
+                    final String randomPath = Plex.paged("/library/sections/" + s.key + "/all?sort=random", 1);
+                    tileJobs.add(() -> {
+                        try {
+                            List<Plex.Item> one = Plex.items(randomPath);
+                            if (!one.isEmpty()) t.thumb = one.get(0).art != null ? one.get(0).art : one.get(0).thumb;
+                        } catch (Exception ignored) {
+                            // no picture: the tile still opens
+                        }
+                        return null;
+                    });
                     tiles.add(t);
                 }
+                Plex.parallel(tileJobs);
                 if (!tiles.isEmpty()) out.rows.add(new Row("Libraries", tiles, true));
             }
 
@@ -1780,14 +1793,19 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                 }
             }
             // Fetch full details so titles can show as logos
-            for (Plex.Item it : out.spotlight) {
+            List<java.util.concurrent.Callable<Void>> logoJobs = new ArrayList<>();
+            for (final Plex.Item it : out.spotlight) {
                 if (it.logo != null) continue;
-                try {
-                    it.logo = Plex.metadata(it.key).logo;
-                } catch (Exception ignored) {
-                    // keep the text title
-                }
+                logoJobs.add(() -> {
+                    try {
+                        it.logo = Plex.metadata(it.key).logo;
+                    } catch (Exception ignored) {
+                        // keep the text title
+                    }
+                    return null;
+                });
             }
+            Plex.parallel(logoJobs);
             return out;
         };
         final Plex.Callback<Loaded> cb = new Plex.Callback<Loaded>() {
@@ -2302,8 +2320,13 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     private static List<Plex.Item> recentlyAdded(List<Plex.Section> libs) throws Exception {
         List<Plex.Item> all = new ArrayList<>();
         Set<String> seen = new HashSet<>();
+        List<java.util.concurrent.Callable<List<Plex.Item>>> jobs = new ArrayList<>();
         for (Plex.Section s : libs) {
-            for (Plex.Item it : Plex.items(Plex.paged("/library/sections/" + s.key + "/all?sort=addedAt:desc", 40))) {
+            final String path = Plex.paged("/library/sections/" + s.key + "/all?sort=addedAt:desc", 40);
+            jobs.add(() -> Plex.items(path));
+        }
+        for (List<Plex.Item> part : Plex.parallel(jobs)) {
+            for (Plex.Item it : part) {
                 if (seen.add(it.key)) all.add(it);
             }
         }

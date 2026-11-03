@@ -407,6 +407,37 @@ public final class Plex {
         });
     }
 
+    // Side requests of one job (e.g. one per library) run together instead of one after another.
+    private static final ExecutorService PAR = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "reel-par");
+        t.setDaemon(true);
+        return t;
+    });
+
+    /** Runs the jobs at the same time and returns their results in order; the first failure is rethrown. */
+    public static <T> List<T> parallel(List<? extends Callable<T>> jobs) throws Exception {
+        final boolean cacheOnly = Boolean.TRUE.equals(CACHE_ONLY.get());
+        List<java.util.concurrent.Future<T>> fs = new ArrayList<>();
+        for (final Callable<T> j : jobs) {
+            fs.add(PAR.submit(() -> {
+                if (cacheOnly) CACHE_ONLY.set(Boolean.TRUE);
+                try {
+                    return j.call();
+                } finally {
+                    CACHE_ONLY.remove();
+                }
+            }));
+        }
+        List<T> out = new ArrayList<>();
+        try {
+            for (java.util.concurrent.Future<T> f : fs) out.add(f.get());
+        } catch (java.util.concurrent.ExecutionException e) {
+            for (java.util.concurrent.Future<T> f : fs) f.cancel(true);
+            throw e.getCause() instanceof Exception ? (Exception) e.getCause() : e;
+        }
+        return out;
+    }
+
     // ------------------------------------------------------------- HTTP
 
     private static String http(String method, String url, int timeoutMs) throws Exception {
