@@ -22,6 +22,15 @@ import java.nio.ByteBuffer;
 final class IecDtsHdSink extends ForwardingAudioSink {
     /** Set by the player before each film: use the raw stream for DTS-HD tracks. */
     static volatile boolean enabled = false;
+    /**
+     * Set by the player before each film: also send Dolby Digital Plus as a raw IEC 61937 stream (2 ch, 192 kHz),
+     * so the Fire TV's own Dolby decoder (which turns plain Dolby Digital Plus into PCM when the picture can't be
+     * tunnelled, e.g. H.264) is out of the way and the receiver gets the stream untouched.
+     */
+    static volatile boolean eac3Raw = false;
+    /** Set when the HDMI output refused the raw Dolby Digital Plus stream; the normal path is used after that. */
+    private static volatile boolean eac3Broken = false;
+    private static volatile boolean ac3Broken = false; // same for plain Dolby Digital
 
     private static final String TAG = "ReelPlayer";
     private static final int ENCODING_IEC61937 = 13; // AudioFormat.ENCODING_IEC61937 (API 23)
@@ -35,6 +44,9 @@ final class IecDtsHdSink extends ForwardingAudioSink {
     private final AudioSink inner;
     private @Nullable Listener listener;
     private boolean iec;
+    private boolean eac3;      // the raw stream being sent is Dolby (Digital Plus or Digital); otherwise DTS-HD
+    private boolean ac3;       // ... and it is plain Dolby Digital (48 kHz carrier) rather than Digital Plus (192 kHz)
+    private boolean tunneled;  // the player asked for tunnelled playback: the Fire TV then handles the sound itself
     private boolean playing;
     private boolean endOfStream;
     private boolean started;
@@ -89,8 +101,33 @@ final class IecDtsHdSink extends ForwardingAudioSink {
         return sb.length() == 0 ? "  none reported\n" : sb.toString();
     }
 
-    private static boolean wanted(Format f) {
-        return enabled && f != null && MimeTypes.AUDIO_DTS_HD.equals(f.sampleMimeType);
+    private static boolean isEac3(@Nullable Format f) {
+        return f != null && (MimeTypes.AUDIO_E_AC3.equals(f.sampleMimeType)
+                || MimeTypes.AUDIO_E_AC3_JOC.equals(f.sampleMimeType));
+    }
+
+    private static boolean isAc3(@Nullable Format f) {
+        return f != null && MimeTypes.AUDIO_AC3.equals(f.sampleMimeType);
+    }
+
+    private boolean wanted(Format f) {
+        if (f == null) return false;
+        if (enabled && MimeTypes.AUDIO_DTS_HD.equals(f.sampleMimeType)) return true;
+        return eac3Raw && !tunneled && ((isEac3(f) && !eac3Broken) || (isAc3(f) && !ac3Broken));
+    }
+
+    private String kind() {
+        return ac3 ? "AC3" : eac3 ? "E-AC3" : "DTS-HD";
+    }
+
+    @Override public void enableTunnelingV21() {
+        tunneled = true;
+        super.enableTunnelingV21();
+    }
+
+    @Override public void disableTunneling() {
+        tunneled = false;
+        super.disableTunneling();
     }
 
     @Override public void setListener(Listener l) {
@@ -112,9 +149,13 @@ final class IecDtsHdSink extends ForwardingAudioSink {
         releaseTrack();
         format = inputFormat;
         iec = wanted(inputFormat);
+        eac3 = iec && (isEac3(inputFormat) || isAc3(inputFormat));
+        ac3 = iec && isAc3(inputFormat);
         endOfStream = false;
         if (iec) {
-            Log.d(TAG, "DTS-HD: sending the raw IEC 61937 stream (8 ch, 192 kHz), like Kodi");
+            Log.d(TAG, ac3 ? "Dolby Digital: sending the raw IEC 61937 stream (2 ch, 48 kHz), like Kodi"
+                    : eac3 ? "Dolby Digital Plus: sending the raw IEC 61937 stream (2 ch, 192 kHz), like Kodi"
+                    : "DTS-HD: sending the raw IEC 61937 stream (8 ch, 192 kHz), like Kodi");
             super.reset();
         } else {
             super.configure(inputFormat, specifiedBufferSize, outputChannels);
@@ -178,7 +219,25 @@ final class IecDtsHdSink extends ForwardingAudioSink {
     public boolean handleBuffer(ByteBuffer buffer, long presentationTimeUs, int encodedAccessUnitCount)
             throws InitializationException, WriteException {
         if (!iec) return super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount);
-        if (track == null) createTrack();
+        if (track == null) {
+            try {
+                createTrack();
+            } catch (InitializationException e) {
+                if (!eac3) throw e;
+                // The HDMI output won't take this raw Dolby stream: use the normal path instead
+                if (ac3) ac3Broken = true; else eac3Broken = true;
+                Log.d(TAG, "raw " + kind() + " refused (" + e + "), using the normal path from now on");
+                iec = false;
+                eac3 = false;
+                ac3 = false;
+                try {
+                    super.configure(format, 0, null);
+                } catch (ConfigurationException ce) {
+                    throw e;
+                }
+                return super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount);
+            }
+        }
         if (pending != null) {
             writePending();
             if (pending != null) return false;
@@ -190,7 +249,7 @@ final class IecDtsHdSink extends ForwardingAudioSink {
         byte[] burst = pack(frame, meta);
         if (burst == null) {
             if (skipped++ < 5) {
-                Log.d(TAG, "raw DTS-HD: skipped a frame of " + frame.length + " bytes, reason " + meta[0]
+                Log.d(TAG, "raw " + kind() + ": skipped a frame of " + frame.length + " bytes, reason " + meta[0]
                         + " (-1 no core sync, -3 too big, below -3 = period " + (-2 - meta[0]) + "), first bytes "
                         + (frame.length >= 4 ? String.format("%02x %02x %02x %02x", frame[0], frame[1], frame[2], frame[3]) : "(short)"));
             }
@@ -207,7 +266,7 @@ final class IecDtsHdSink extends ForwardingAudioSink {
         writePending();
         packed++;
         if (packed <= 3 || packed % 500 == 0) {
-            Log.d(TAG, "raw DTS-HD burst #" + packed + ": frame " + frame.length + " bytes -> burst " + burst.length
+            Log.d(TAG, "raw " + kind() + " burst #" + packed + ": frame " + frame.length + " bytes -> burst " + burst.length
                     + " bytes, " + meta[0] + " us, written " + writtenDurationUs / 1000 + " ms, played "
                     + playedUs() / 1000 + " ms, started " + started + ", playing " + playing
                     + ", pending " + (pending != null));
@@ -242,9 +301,12 @@ final class IecDtsHdSink extends ForwardingAudioSink {
     private void createTrack() throws InitializationException {
         Exception last = null;
         int lastSize = 0;
-        for (int mask : MASKS) {
-            int min = AudioTrack.getMinBufferSize(RATE, mask, ENCODING_IEC61937);
-            int size = Math.max(min > 0 ? min : 0, 32768 * 6);
+        // Dolby Digital Plus goes out as 2 channels at 4x the sample rate (IEC 61937-3), DTS-HD as 8 channels
+        final int[] masks = eac3 ? new int[]{AudioFormat.CHANNEL_OUT_STEREO} : MASKS;
+        final int rate = ac3 ? AC3_RATE : RATE;
+        for (int mask : masks) {
+            int min = AudioTrack.getMinBufferSize(rate, mask, ENCODING_IEC61937);
+            int size = Math.max(min > 0 ? min : 0, ac3 ? AC3_BURST * 16 : eac3 ? EAC3_BURST * 8 : 32768 * 6);
             lastSize = size;
             try {
                 AudioAttributes aa = new AudioAttributes.Builder()
@@ -253,7 +315,7 @@ final class IecDtsHdSink extends ForwardingAudioSink {
                         .build();
                 AudioFormat af = new AudioFormat.Builder()
                         .setEncoding(ENCODING_IEC61937)
-                        .setSampleRate(RATE)
+                        .setSampleRate(rate)
                         .setChannelMask(mask)
                         .build();
                 AudioTrack t = new AudioTrack.Builder()
@@ -275,15 +337,16 @@ final class IecDtsHdSink extends ForwardingAudioSink {
                 skipped = 0;
                 writtenDurationUs = 0;
                 playedBeforeNs = 0;
-                Log.d(TAG, "raw DTS-HD AudioTrack opened (mask " + mask + "), buffer " + size + " bytes");
+                Log.d(TAG, "raw " + kind() + " AudioTrack opened (mask " + mask + "), buffer "
+                        + size + " bytes");
                 return;
             } catch (Exception e) {
                 last = e;
-                Log.d(TAG, "raw DTS-HD AudioTrack refused (mask " + mask + "): " + e);
+                Log.d(TAG, "raw " + kind() + " AudioTrack refused (mask " + mask + "): " + e);
             }
         }
         Log.d(TAG, "HDMI outputs the Fire TV reports:\n" + hdmiInfo(context));
-        throw new InitializationException(AudioTrack.STATE_UNINITIALIZED, RATE, MASKS[0], lastSize, format,
+        throw new InitializationException(AudioTrack.STATE_UNINITIALIZED, rate, masks[0], lastSize, format,
                 false, last);
     }
 
@@ -336,6 +399,8 @@ final class IecDtsHdSink extends ForwardingAudioSink {
      */
     @Nullable
     private byte[] pack(byte[] f, long[] meta) {
+        if (ac3) return packAc3(f, meta);
+        if (eac3) return packEac3(f, meta);
         if (f.length < 12 || (f[0] & 0xFF) != 0x7F || (f[1] & 0xFF) != 0xFE
                 || (f[2] & 0xFF) != 0x80 || (f[3] & 0xFF) != 0x01) {
             meta[0] = -1; // no DTS core sync at the start
@@ -390,6 +455,94 @@ final class IecDtsHdSink extends ForwardingAudioSink {
             out[8 + i + 1] = src[i];
         }
         meta[0] = (long) samples * 1_000_000L / coreRate;
+        return out;
+    }
+
+    /** One IEC 61937 Dolby Digital burst: 1536 stereo frames at 48 kHz, i.e. one frame of sound (32 ms). */
+    private static final int AC3_RATE = 48000;
+    private static final int AC3_BURST = 1536 * 4;
+
+    /**
+     * Wraps one Dolby Digital frame in an IEC 61937 burst, the same way Kodi's CAEPackIEC61937::PackAC3 does.
+     * Only 48 kHz frames are handled. meta[0] gets the duration in microseconds.
+     */
+    @Nullable
+    private byte[] packAc3(byte[] f, long[] meta) {
+        if (f.length < 8 || (f[0] & 0xFF) != 0x0B || (f[1] & 0xFF) != 0x77) {
+            meta[0] = -1; // no AC-3 sync word at the start
+            return null;
+        }
+        if (((f[4] & 0xFF) >> 6) != 0) {
+            meta[0] = -4; // not 48 kHz
+            return null;
+        }
+        if (f.length + 8 > AC3_BURST) {
+            meta[0] = -3;
+            return null;
+        }
+        int bsmod = f[5] & 0x07;
+        byte[] out = burstBuf != null && burstBuf.length == AC3_BURST ? burstBuf : new byte[AC3_BURST];
+        java.util.Arrays.fill(out, (byte) 0);
+        burstBuf = out;
+        out[0] = 0x72;
+        out[1] = (byte) 0xF8;
+        out[2] = 0x1F;
+        out[3] = 0x4E;
+        out[4] = 0x01; // data type 1: Dolby Digital
+        out[5] = (byte) bsmod;
+        int bits = f.length * 8; // length in bits
+        out[6] = (byte) (bits & 0xFF);
+        out[7] = (byte) ((bits >> 8) & 0xFF);
+        for (int i = 0; i + 1 < f.length; i += 2) {
+            out[8 + i] = f[i + 1];
+            out[8 + i + 1] = f[i];
+        }
+        if ((f.length & 1) != 0) out[8 + f.length] = f[f.length - 1];
+        meta[0] = 32_000L;
+        return out;
+    }
+
+    /** One IEC 61937-3 Dolby Digital Plus burst: 6144 stereo frames at 192 kHz, i.e. one 1536 sample frame (32 ms). */
+    private static final int EAC3_BURST = 6144 * 4;
+
+    /**
+     * Wraps one Dolby Digital Plus access unit (an independent frame, plus any dependent ones such as the Atmos
+     * data) in an IEC 61937 burst, the same way Kodi's CAEPackIEC61937::PackEAC3 does. Only 48 kHz frames of six
+     * blocks (1536 samples) are handled, which is what films carry. meta[0] gets the duration in microseconds.
+     */
+    @Nullable
+    private byte[] packEac3(byte[] f, long[] meta) {
+        if (f.length < 8 || (f[0] & 0xFF) != 0x0B || (f[1] & 0xFF) != 0x77) {
+            meta[0] = -1; // no E-AC3 sync word at the start
+            return null;
+        }
+        int fscod = (f[4] & 0xFF) >> 6;
+        int numblkscod = fscod == 3 ? 3 : (f[4] >> 4) & 3;
+        if (fscod != 0 || numblkscod != 3) {
+            meta[0] = -4; // not 48 kHz with six blocks per frame
+            return null;
+        }
+        if (f.length + 8 > EAC3_BURST) {
+            meta[0] = -3;
+            return null;
+        }
+        byte[] out = burstBuf != null && burstBuf.length == EAC3_BURST ? burstBuf : new byte[EAC3_BURST];
+        java.util.Arrays.fill(out, (byte) 0);
+        burstBuf = out;
+        out[0] = 0x72;
+        out[1] = (byte) 0xF8;
+        out[2] = 0x1F;
+        out[3] = 0x4E;
+        out[4] = 0x15; // data type 21: Dolby Digital Plus
+        out[5] = 0x00;
+        out[6] = (byte) (f.length & 0xFF); // length in bytes
+        out[7] = (byte) ((f.length >> 8) & 0xFF);
+        for (int i = 0; i + 1 < f.length; i += 2) {
+            out[8 + i] = f[i + 1];
+            out[8 + i + 1] = f[i];
+        }
+        if ((f.length & 1) != 0) out[8 + f.length - 1 + 1] = f[f.length - 1]; // odd last byte goes in the low half
+        meta[0] = 32_000L;
         return out;
     }
 }

@@ -47,8 +47,14 @@ Plex connection (`lib/plex.dart`, `lib/net.dart`):
 - Errors name the failing request (`HTTP 404 (server/library/sections)`) and go to `%LOCALAPPDATA%\Reel\reel.log`.
 - Never hardcode anyone's server address or token in the code or installer.
 
-Fire TV app: already uses the shared-server token. Big buffer ("Extra large buffer") reads through an on-disk
-cache that a background thread fills ahead, paced by a setting (default 25 Mbit/s) so other viewers are not starved.
+Fire TV app: already uses the shared-server token. The on-disk "Extra large buffer" was removed on purpose (it stopped
+simple files from playing); do not bring it back. Playback uses ExoPlayer's normal memory buffer only.
+
+Fire TV audio (Cube, Arcam AVR): on Surround Sound "Best Available" the Fire TV decodes plain Dolby Digital / Digital Plus to PCM
+when the picture can't be tunnelled (its H.264 decoder has no tunnelling), which drops out. Reel's setting "Dolby Digital /
+Digital Plus output" sends those raw (IecDtsHdSink) and skips tunnelling for those tracks. Atmos tracks keep the Fire TV's own
+path. TrueHD Atmos: the AVR only showed Atmos after an audioserver restart; a hand-made MAT stream showed plain TrueHD. No clean
+fix was found, so do not retry the TrueHD wrapper. The device log level is INFO, so use Log.i for diagnostics.
 
 ## Working rules
 

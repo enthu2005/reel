@@ -357,6 +357,17 @@ public class SettingsActivity extends ReelActivity {
                     render(false);
                 });
 
+        boolean eacRaw = prefs.getBoolean("eac3Raw", false);
+        row("Dolby Digital / Digital Plus output", eacRaw ? "Raw stream (like Kodi)" : "Standard",
+                "Raw stream sends Dolby Digital and Dolby Digital Plus (not Atmos) to the receiver untouched, the way "
+                        + "Kodi does. Use it when the Fire TV's Surround Sound is on Best Available and your receiver "
+                        + "shows PCM (or drops out) on those files, which the Fire TV does to any picture it can't "
+                        + "tunnel. Standard uses the Fire TV's own path. Press to change.",
+                v -> {
+                    prefs.edit().putBoolean("eac3Raw", !prefs.getBoolean("eac3Raw", false)).apply();
+                    render(false);
+                });
+
         // The library list comes from the server, so fetch it off the main thread, then redraw
         List<Plex.Section> libraryChoices = new ArrayList<>();
         if (sectionsCache != null) {
@@ -408,31 +419,6 @@ public class SettingsActivity extends ReelActivity {
             row("Screensaver libraries", saverValue,
                     "Which libraries the screensaver takes its artwork from. Until you choose, it uses only your movie libraries.",
                     v -> chooseLibraries(libraryChoices, "screensaverLibraries", "Libraries for the screensaver", movieKeys));
-        }
-
-        boolean bigBuf = prefs.getBoolean("bigBuffer", false);
-        row("Extra large buffer", bigBuf ? "On (up to 3 GB)" : "Off",
-                "While a film plays as it is, Reel keeps downloading ahead into storage on the Fire TV, up to 3 GB, "
-                        + "so a slow patch on the network or a big 4K file doesn't make it stall. It's cleared when you "
-                        + "start another film. It does nothing when Plex is converting the video. Press to change.",
-                v -> {
-                    boolean now = !prefs.getBoolean("bigBuffer", false);
-                    prefs.edit().putBoolean("bigBuffer", now).apply();
-                    if (!now) BigBuffer.clear(this);
-                    render(false);
-                });
-
-        if (bigBuf) {
-            int mbit = prefs.getInt("bigBufferMbit", 25);
-            row("Buffer download speed", mbit <= 0 ? "No limit" : "Up to " + mbit + " Mbit/s",
-                    "How fast the extra large buffer may download in the background. A lower limit leaves more of your "
-                            + "server's upload free for other people streaming from it. Press to change.",
-                    v -> {
-                        int cur = prefs.getInt("bigBufferMbit", 25);
-                        int next = cur == 10 ? 25 : cur == 25 ? 40 : cur == 40 ? 0 : 10;
-                        prefs.edit().putInt("bigBufferMbit", next).apply();
-                        render(false);
-                    });
         }
 
         boolean tun = prefs.getBoolean("tunneled", false);

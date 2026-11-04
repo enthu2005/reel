@@ -5,7 +5,6 @@ import android.net.Uri;
 import androidx.media3.datasource.DataSource;
 import androidx.media3.datasource.DataSpec;
 import androidx.media3.datasource.TransferListener;
-import androidx.media3.datasource.cache.Cache;
 
 import java.io.IOException;
 import java.util.List;
@@ -18,15 +17,12 @@ import java.util.Map;
  *    mishandles the one at the very end of each piece and throws IllegalArgumentException, so the film stops after the
  *    first piece and the buffer never grows. The picture already plays as its HDR10 base layer, so the block is only
  *    relabelled (as a harmless SEI note), which lets the reader carry on. Nothing else in the stream is touched.
- * 2. If a [cache] is given, a piece the store holds only part of is thrown away before it is opened. The pieces are
- *    made on the fly, so finishing a half-stored one from a second download could join two different versions.
  */
 final class TsFix implements DataSource {
     private static final int PKT = 188;
     private static final int SUFFIX_SEI = 40; // an HEVC NAL type the reader tolerates
 
     private final DataSource inner;
-    private final Cache cache;
 
     // per opened piece
     private boolean patching;
@@ -44,9 +40,8 @@ final class TsFix implements DataSource {
     private int skipLeft;
     private static volatile int lastVideoPid = -1;
 
-    TsFix(DataSource inner, Cache cache) {
+    TsFix(DataSource inner) {
         this.inner = inner;
-        this.cache = cache;
     }
 
     @Override
@@ -56,7 +51,6 @@ final class TsFix implements DataSource {
 
     @Override
     public long open(DataSpec spec) throws IOException {
-        if (cache != null) BigBuffer.dropIfIncomplete(cache, spec.key != null ? spec.key : spec.uri.toString());
         // A load that was cut short (a timeout) is resumed half-way through the same piece: that part is patched too,
         // from the next whole packet on, using the video stream number seen earlier
         skipLeft = (int) ((PKT - (spec.position % PKT)) % PKT);

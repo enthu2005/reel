@@ -512,10 +512,7 @@ public class PlayerActivity extends Activity {
             Plex.async(() -> {
                 Plex.Item m = Plex.metadata(next.key);
                 preloaded = m;
-                if (m.partKey != null && BigBuffer.enabled(PlayerActivity.this)) {
-                    // Extra large buffer on: keep the first minutes of it on the device, so the next episode starts at once
-                    BigBuffer.prefetchStart(PlayerActivity.this, Plex.directUrl(m), 96L * 1024 * 1024);
-                } else if (m.partKey != null) {
+                if (m.partKey != null) {
                     java.net.HttpURLConnection c = (java.net.HttpURLConnection)
                             new java.net.URL(Plex.directUrl(m)).openConnection();
                     c.setRequestProperty("Range", "bytes=0-4194303");
@@ -1181,7 +1178,7 @@ public class PlayerActivity extends Activity {
 
     /** The converted stream through the Dolby Vision fix (see TsFix). */
     private static androidx.media3.datasource.DataSource.Factory tsFixed(final androidx.media3.datasource.DataSource.Factory f) {
-        return () -> new TsFix(f.createDataSource(), null);
+        return () -> new TsFix(f.createDataSource());
     }
 
     private String lastHlsUrl; // the converted stream's address, for the buffer on disk
@@ -1416,8 +1413,15 @@ public class PlayerActivity extends Activity {
     /** Tunnelled playback asks the Fire TV for a direct, hardware-synced sound output, which it refuses
      *  to open for 5.1 sound that the app has to decode itself (AAC, FLAC, PCM...). */
     private boolean tunnelBreaksSound() {
-        if (curAudio == null || curAudio.codec == null || curAudio.channels <= 2) return false;
+        if (curAudio == null || curAudio.codec == null) return false;
         String c = curAudio.codec.toLowerCase(Locale.ROOT);
+        // The Fire TV turns plain Dolby Digital and Dolby Digital Plus (not Atmos) into PCM on the tunnelled path,
+        // so with the raw Dolby stream switched on those tracks play untunnelled and go out as a raw stream instead.
+        boolean atmos = curAudio.displayTitle != null && curAudio.displayTitle.toLowerCase(Locale.ROOT).contains("atmos");
+        if ((c.equals("ac3") || (c.equals("eac3") && !atmos))
+                && getSharedPreferences("reel_ui", MODE_PRIVATE).getBoolean("eac3Raw", false)
+                && !DtsCoreExtractors.stripToCore) return true;
+        if (curAudio.channels <= 2) return false;
         return c.contains("aac") || c.contains("flac") || c.contains("pcm") || c.contains("opus")
                 || c.contains("vorbis") || c.contains("mp3") || c.contains("mp2") || c.contains("alac")
                 || c.contains("wma");
@@ -1523,6 +1527,13 @@ public class PlayerActivity extends Activity {
         IecDtsHdSink.enabled = !DtsCoreExtractors.stripToCore && DtsCoreExtractors.trackIsDtsHd
                 && getSharedPreferences("reel_ui", MODE_PRIVATE).getBoolean("dtsHdRaw", true);
         android.util.Log.d("ReelPlayer", "DTS-HD raw IEC 61937 stream: " + IecDtsHdSink.enabled);
+        // Dolby Digital Plus as a raw stream (only when the sound isn't being cut down to Dolby Digital / DTS core)
+        // An Atmos track keeps the Fire TV's own path: the raw stream here doesn't carry the Atmos layer through
+        boolean atmosTrack = curAudio != null && curAudio.displayTitle != null
+                && curAudio.displayTitle.toLowerCase(Locale.ROOT).contains("atmos");
+        IecDtsHdSink.eac3Raw = !DtsCoreExtractors.stripToCore && !atmosTrack
+                && getSharedPreferences("reel_ui", MODE_PRIVATE).getBoolean("eac3Raw", false);
+        android.util.Log.d("ReelPlayer", "Dolby Digital Plus raw IEC 61937 stream: " + IecDtsHdSink.eac3Raw);
         android.util.Log.d("ReelPlayer", "DTS-HD cut to DTS core: " + DtsCoreExtractors.stripToCore
                 + " (compat " + compat + ", audioMode " + audioMode() + ")");
         android.util.Log.d("ReelPlayer", "Dolby Vision mode " + dvMode + ", TV does Dolby Vision: " + tvDv
@@ -1575,22 +1586,18 @@ public class PlayerActivity extends Activity {
         // Holding a huge buffer starves the decoder (green lines, stutter, "low memory" in the system log),
         // so keep it modest: about 20 to 30 seconds of a big 4K film, a little more of anything smaller.
         long heap = Runtime.getRuntime().maxMemory();
-        final boolean keepFull = BigBuffer.enabled(this) && (transcode || (item != null && item.partKey != null));
-        // With the extra large buffer the memory part may be bigger (it is topped up from the on-device store).
-        long cap = keepFull
-                ? Math.max(96L * 1024 * 1024, Math.min(heap / 3, 224L * 1024 * 1024))
-                : Math.max(64L * 1024 * 1024, Math.min(heap / 4, 96L * 1024 * 1024));
+        long cap = Math.max(64L * 1024 * 1024, Math.min(heap / 4, 96L * 1024 * 1024));
         bufferCapMb = (int) (cap / (1024 * 1024));
-        // Normally the player fills to 60 s, stops, and only starts again when it has dropped to 30 s (so the
-        // buffer saws between 60 and 30). With the extra large buffer the data is already on the device, so keep
-        // topping the memory buffer up all the time instead: it stays full.
+        // The player fills to 60 s, stops, and only starts again when it has dropped to 30 s (so the
+        // buffer saws between 60 and 30).
         loadCtl = new androidx.media3.exoplayer.DefaultLoadControl.Builder()
-                .setBufferDurationsMs(keepFull ? 300_000 : 30_000, keepFull ? 300_000 : 60_000, 2_500, 5_000)
+                .setBufferDurationsMs(30_000, 60_000, 2_500, 5_000)
                 .setTargetBufferBytes((int) cap)
                 .setPrioritizeTimeOverSizeThresholds(false)
                 .build();
         pb.setLoadControl(loadCtl);
         if (transcode) {
+            waitPiece = null;
             // Plex reads its client profile from a header; send it on every request to the transcoder.
             java.util.Map<String, String> hdr = new java.util.HashMap<>();
             hdr.put("X-Plex-Client-Profile-Extra", Plex.profileExtra(ac3));
@@ -1600,10 +1607,8 @@ public class PlayerActivity extends Activity {
             // Copying a big 4K stream takes Plex a while to start and sends fast bursts over the internet:
             // wait longer and retry more before giving up (the defaults are 8 seconds and 3 retries).
             // DefaultDataSource also opens local files (re-timed subtitles), the rest goes over http.
-            // With the extra large buffer on, what the converted stream sends also goes through the on-device store
-            androidx.media3.datasource.DataSource.Factory hlsSource = BigBuffer.enabled(this)
-                    ? BigBuffer.factory(this, hdr)
-                    : tsFixed(new androidx.media3.datasource.DefaultDataSource.Factory(this,
+            androidx.media3.datasource.DataSource.Factory hlsSource = tsFixed(
+                    new androidx.media3.datasource.DefaultDataSource.Factory(this,
                             new androidx.media3.datasource.DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
                                     .setConnectTimeoutMs(30000)
                                     .setReadTimeoutMs(60000)
@@ -1613,20 +1618,10 @@ public class PlayerActivity extends Activity {
                             new androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(8)));
         }
         else {
-            // Setting "Extra large buffer": read through a store on the device that a background task fills ahead
-            final boolean big = BigBuffer.enabled(this) && item != null && item.partKey != null;
-            androidx.media3.datasource.DataSource.Factory direct = big
-                    ? BigBuffer.factory(this, key)
-                    : new androidx.media3.datasource.DefaultDataSource.Factory(this,
-                            new androidx.media3.datasource.DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
-                                    .setConnectTimeoutMs(30000)
-                                    .setReadTimeoutMs(60000));
-            if (big) {
-                if (bigBuffer == null) bigBuffer = new BigBuffer();
-                bigBuffer.start(this, key, Plex.directUrl(item), item.duration);
-                handler.removeCallbacks(bigTick);
-                handler.post(bigTick);
-            }
+            androidx.media3.datasource.DataSource.Factory direct = new androidx.media3.datasource.DefaultDataSource.Factory(this,
+                    new androidx.media3.datasource.DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
+                            .setConnectTimeoutMs(30000)
+                            .setReadTimeoutMs(60000));
             pb.setMediaSourceFactory(new androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
                     direct,
                     new DtsCoreExtractors())
@@ -1679,18 +1674,6 @@ public class PlayerActivity extends Activity {
         handler.postDelayed(frameWatch, 4000);
         view.setPlayer(player);
         player.setMediaItem(buildItem(transcode));
-        if (transcode && BigBuffer.enabled(this) && lastHlsUrl != null) {
-            // Plex is converting: keep the buffer on the disk too, by fetching the converted stream ahead of the playhead
-            java.util.Map<String, String> bh = new java.util.HashMap<>();
-            bh.put("X-Plex-Client-Profile-Extra", Plex.profileExtra(ac3));
-            bh.put("X-Plex-Client-Identifier", Plex.clientId());
-            bh.put("X-Plex-Product", "Reel");
-            bh.put("X-Plex-Client-Profile-Name", "Konvergo");
-            if (bigBuffer == null) bigBuffer = new BigBuffer();
-            bigBuffer.startHls(this, lastHlsUrl, bh);
-            handler.removeCallbacks(bigTick);
-            handler.post(bigTick);
-        }
         if (!transcode && positionMs > 0) player.seekTo(positionMs);
         // Exactly one subtitle source at a time: a track the player draws, or one Plex burns in, never both.
         // Without this the player also shows whatever track the file flags as default (an Off choice still
@@ -1805,7 +1788,6 @@ public class PlayerActivity extends Activity {
                     }
                 }
                 if (state == Player.STATE_READY) handler.postDelayed(() -> seekingTo = -1, 300);
-                if (state == Player.STATE_READY && bigBuffer != null) bigBuffer.playerReady();
                 if (state == Player.STATE_READY && transcoding && !baseChecked && player != null) {
                     baseChecked = true;
                     // Some Plex streams already count time from the start of the movie. If so, don't
@@ -1859,14 +1841,21 @@ public class PlayerActivity extends Activity {
             @Override
             public void onLoadStarted(EventTime t, androidx.media3.exoplayer.source.LoadEventInfo li,
                                       androidx.media3.exoplayer.source.MediaLoadData md) {
-                if (md.dataType == C.DATA_TYPE_MEDIA) android.util.Log.d("ReelLoad", "start " + li.uri.getLastPathSegment());
+                if (md.dataType == C.DATA_TYPE_MEDIA) {
+                    android.util.Log.d("ReelLoad", "start " + li.uri.getLastPathSegment());
+                    if (!li.uri.getLastPathSegment().equals(waitPiece)) waitSince = android.os.SystemClock.elapsedRealtime();
+                    waitPiece = li.uri.getLastPathSegment();
+                }
             }
 
             @Override
             public void onLoadCompleted(EventTime t, androidx.media3.exoplayer.source.LoadEventInfo li,
                                         androidx.media3.exoplayer.source.MediaLoadData md) {
-                if (md.dataType == C.DATA_TYPE_MEDIA) android.util.Log.d("ReelLoad", "done " + li.uri.getLastPathSegment()
-                        + " " + (li.bytesLoaded >> 10) + " KB in " + li.loadDurationMs + " ms");
+                if (md.dataType == C.DATA_TYPE_MEDIA) {
+                    android.util.Log.d("ReelLoad", "done " + li.uri.getLastPathSegment()
+                            + " " + (li.bytesLoaded >> 10) + " KB in " + li.loadDurationMs + " ms");
+                    if (li.uri.getLastPathSegment().equals(waitPiece)) waitPiece = null;
+                }
             }
 
             @Override
@@ -2061,29 +2050,14 @@ public class PlayerActivity extends Activity {
         applyFit();
     }
 
-    private BigBuffer bigBuffer;
+    private volatile String waitPiece; // the converted piece the player is loading now (null when none)
+    private volatile long waitSince;
     /** How far ahead a buffer reaches, always in seconds. */
     private static String aheadText(long sec) {
         return sec + " s";
     }
 
-    private final Runnable bigTick = new Runnable() {
-        @Override
-        public void run() {
-            if (bigBuffer == null || player == null) return;
-            bigBuffer.position(bigBuffer.isHls() ? player.getCurrentPosition() : currentMs());
-            bigBuffer.playerAhead(player.getTotalBufferedDuration());
-            bigBuffer.playerLoading(player.isLoading());
-            handler.postDelayed(this, 500);
-        }
-    };
-
     private void releasePlayer() {
-        handler.removeCallbacks(bigTick);
-        if (bigBuffer != null) {
-            bigBuffer.stop();
-            bigBuffer = null;
-        }
         trickDir = 0;
         handler.removeCallbacks(trickTick);
         handler.removeCallbacks(frameWatch);
@@ -3334,24 +3308,17 @@ public class PlayerActivity extends Activity {
     private org.json.JSONObject remoteBuffer() throws org.json.JSONException {
         org.json.JSONObject b = new org.json.JSONObject();
         long ramSec = player.getTotalBufferedDuration() / 1000;
-        long rate = bigBuffer != null && !transcoding ? bigBuffer.bytesPerSecond() : 0;
-        if (rate <= 0) {
-            Format vf = player.getVideoFormat();
-            Format af = player.getAudioFormat();
-            rate = ((vf != null && vf.bitrate > 0 ? vf.bitrate : 0) + (af != null && af.bitrate > 0 ? af.bitrate : 0)) / 8;
-        }
+        Format vf = player.getVideoFormat();
+        Format af = player.getAudioFormat();
+        long rate = ((vf != null && vf.bitrate > 0 ? vf.bitrate : 0) + (af != null && af.bitrate > 0 ? af.bitrate : 0)) / 8;
         b.put("ramSec", ramSec);
         b.put("ramMb", rate > 0 ? Math.min(ramSec * rate >> 20, 99999) : 0);
         b.put("capMb", bufferCapMb);
-        boolean disk = BigBuffer.enabled(this) && bigBuffer != null;
-        b.put("disk", disk);
-        b.put("diskSec", disk && bigBuffer != null ? Math.max(0, bigBuffer.aheadSeconds() - ramSec) : 0);
-        b.put("diskGb", disk ? Math.round(BigBuffer.usedBytes() / 1073741824.0 * 100) / 100.0 : 0);
-        double mbps = bigBuffer != null && disk ? bigBuffer.downloadMbps() : 0;
-        if (mbps <= 0) {
-            mbps = androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.getSingletonInstance(this)
-                    .getBitrateEstimate() / 1_000_000.0;
-        }
+        b.put("disk", false);
+        b.put("diskSec", 0);
+        b.put("diskGb", 0);
+        double mbps = androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.getSingletonInstance(this)
+                .getBitrateEstimate() / 1_000_000.0;
         b.put("mbps", Math.round(mbps * 10) / 10.0);
         return b;
     }
@@ -3506,25 +3473,9 @@ public class PlayerActivity extends Activity {
         }
         out.add(new String[]{"STORAGE AND BUFFER", ""});
         try {
-            out.add(new String[]{"Disk store", BigBuffer.describeStore(this)});
             android.os.StatFs sf = new android.os.StatFs(getCacheDir().getAbsolutePath());
             out.add(new String[]{"Free space", mb(sf.getAvailableBytes()) + " of " + mb(sf.getTotalBytes())});
         } catch (RuntimeException ignored) {
-        }
-        if (bigBuffer != null && BigBuffer.enabled(this)) {
-            if (bigBuffer.isHls()) {
-                out.add(new String[]{"Disk filler", bigBuffer.status() + "  (converted stream: "
-                        + bigBuffer.hlsSegmentsStored() + " pieces, " + mb(bigBuffer.hlsStoredBytes()) + " fetched so far, "
-                        + bigBuffer.aheadSeconds() + " s ahead of the playhead)"});
-                out.add(new String[]{"Read from disk", mb(BigBuffer.servedFromDisk) + " given to the player from the disk store"
-                        + (bigBuffer.playerLoadingNow() ? "  (memory still filling from the network)"
-                        : "  (memory full: the disk is filling)")});
-            } else {
-                out.add(new String[]{"Disk filler", bigBuffer.status() + "  (" + mb(bigBuffer.ahead()) + " fetched ahead of "
-                        + mb(bigBuffer.fileLength()) + ")"});
-                out.add(new String[]{"File data rate", mb(bigBuffer.bytesPerSecond()) + "/s average"});
-            }
-            out.add(new String[]{"Memory buffer cap", bufferCapMb + " MB  (" + (bufferCapMb > 100 ? "extra large" : "normal") + ")"});
         }
         if (player != null) {
             String[] states = {"idle", "buffering", "ready", "ended"};
@@ -3597,8 +3548,12 @@ public class PlayerActivity extends Activity {
         String mime = v.sampleMimeType == null ? "" : v.sampleMimeType;
         int trc = v.colorInfo == null ? C.COLOR_TRANSFER_SDR : v.colorInfo.colorTransfer;
         boolean outDv = mime.contains("dolby-vision");
-        boolean outPq = trc == C.COLOR_TRANSFER_ST2084;
-        boolean outHlg = trc == C.COLOR_TRANSFER_HLG;
+        // Some mkv files carry no colour tags the player can read, but the hardware decoder still takes the HDR from
+        // the video itself. When Plex plays the file as it is, trust Plex's description of it.
+        boolean untagged = trc != C.COLOR_TRANSFER_ST2084 && trc != C.COLOR_TRANSFER_HLG;
+        boolean direct = !transcoding && quality == 0;
+        boolean outPq = trc == C.COLOR_TRANSFER_ST2084 || (untagged && direct && srcPq);
+        boolean outHlg = trc == C.COLOR_TRANSFER_HLG || (untagged && direct && srcHlg && !srcPq);
         boolean dvTv = displaySupportsDolbyVision(this);
         boolean hdrTv = tvHdr10(this);
         String how = transcoding ? " (via the Plex converter)" : "";
@@ -3717,43 +3672,26 @@ public class PlayerActivity extends Activity {
 
         sb.append("Dropped   ").append(dropped).append(" frames\n");
         sb.append("Underruns ").append(underruns).append('\n');
-        // Buffer, in two simple lines: what's waiting in memory, and what's waiting on the Fire TV's storage
+        // Buffer: what's waiting in memory
         long ramSec = player.getTotalBufferedDuration() / 1000;
         // ...with the memory it takes in brackets (seconds x the file's data rate; the player doesn't report it)
-        long rate = bigBuffer != null && !transcoding ? bigBuffer.bytesPerSecond() : 0;
-        if (rate <= 0) {
-            Format vf = player.getVideoFormat();
-            Format af = player.getAudioFormat();
-            long bits = (vf != null && vf.bitrate > 0 ? vf.bitrate : 0) + (af != null && af.bitrate > 0 ? af.bitrate : 0);
-            rate = bits / 8;
-        }
+        Format vf = player.getVideoFormat();
+        Format af = player.getAudioFormat();
+        long rate = ((vf != null && vf.bitrate > 0 ? vf.bitrate : 0) + (af != null && af.bitrate > 0 ? af.bitrate : 0)) / 8;
         sb.append("Buffer RAM   ").append(aheadText(ramSec)).append(" ahead");
         if (rate > 0) {
             sb.append("  (~").append(Math.min(ramSec * rate >> 20, 99999)).append(" MB of ")
                     .append(bufferCapMb).append(" MB)");
         }
         sb.append('\n');
-        if (BigBuffer.enabled(this) && bigBuffer != null) {
-            // The store counts everything fetched ahead; what's already loaded into memory isn't "on disk" any more
-            long diskSec = bigBuffer == null ? 0 : Math.max(0, bigBuffer.aheadSeconds() - ramSec);
-            sb.append("Buffer disk  ").append(aheadText(diskSec)).append(" ahead  (")
-                    .append(String.format(Locale.US, "%.2f", BigBuffer.usedBytes() / 1073741824.0)).append(" GB)\n");
-        } else if (BigBuffer.enabled(this)) {
-            // The setting is on, but this film isn't playing as it is, so there is nothing to store ahead
-            sb.append("Buffer disk  not used: Plex is converting this film (")
-                    .append(quality != 0 ? "a lower video quality is chosen"
-                            : ac3 ? "its sound is being converted"
-                            : "direct play failed" + (lastError.isEmpty() ? "" : ", " + lastError))
-                    .append("), so the memory buffer is limited to ").append(bufferCapMb).append(" MB\n");
-        } else {
-            sb.append("Buffer disk  off (Settings > Extra large buffer)\n");
+        String stuck = waitPiece;
+        long stuckSec = (android.os.SystemClock.elapsedRealtime() - waitSince) / 1000;
+        if (transcoding && stuck != null && stuckSec >= 5 && ramSec < 3) {
+            sb.append("Waiting for Plex: piece ").append(stuck).append(" for ").append(stuckSec).append(" s (it hasn't sent it yet)\n");
         }
-        // Download speed: the disk filler's own pace when it's running, otherwise the player's estimate
-        double mbps = bigBuffer != null && BigBuffer.enabled(this) ? bigBuffer.downloadMbps() : 0;
-        if (mbps <= 0) {
-            long est = androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.getSingletonInstance(this).getBitrateEstimate();
-            mbps = est / 1_000_000.0;
-        }
+        // Download speed: the player's estimate
+        double mbps = androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.getSingletonInstance(this)
+                .getBitrateEstimate() / 1_000_000.0;
         sb.append("Download     ").append(mbps > 0 ? String.format(Locale.US, "%.1f Mbit/s", mbps) : "measuring...").append('\n');
         try {
             Runtime rt = Runtime.getRuntime();
