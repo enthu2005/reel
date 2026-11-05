@@ -55,6 +55,9 @@ final class TvRecommendations {
         }
         Plex.async(() -> {
             List<Plex.Item> deck = Plex.items(Plex.paged("/library/onDeck", MAX));
+            if (Build.VERSION.SDK_INT >= 26) publishWatchNext(app, deck);
+            // Fire OS 8 shows the Watch Next row above; its launcher ignores recommendation notifications
+            if (Build.VERSION.SDK_INT >= 30) return deck.size();
             NotificationManager nm = (NotificationManager) app.getSystemService(Context.NOTIFICATION_SERVICE);
             if (nm == null) return 0;
             if (Build.VERSION.SDK_INT >= 26) {
@@ -101,6 +104,65 @@ final class TvRecommendations {
         int before = p.getInt("homeRowCount", 0);
         if (nm != null) for (int i = 0; i < Math.max(before, MAX); i++) nm.cancel(BASE_ID + i);
         p.edit().putInt("homeRowCount", 0).apply();
+        if (Build.VERSION.SDK_INT >= 26) {
+            try {
+                app.getContentResolver().delete(android.media.tv.TvContract.WatchNextPrograms.CONTENT_URI, null, null);
+            } catch (Throwable e) {
+                android.util.Log.w("ReelHome", "couldn't clear Watch Next: " + e);
+            }
+        }
+    }
+
+    /**
+     * The Android TV "Watch Next" row, which Fire OS 8's home screen shows: one entry per Up Next title, started
+     * through reel://play?key=...&start=... (see the manifest). Runs on a background thread (it reads pictures' addresses only).
+     */
+    @android.annotation.TargetApi(26)
+    private static void publishWatchNext(Context app, List<Plex.Item> deck) {
+        try {
+            android.content.ContentResolver cr = app.getContentResolver();
+            cr.delete(android.media.tv.TvContract.WatchNextPrograms.CONTENT_URI, null, null); // ours only
+            int done = 0;
+            long now = System.currentTimeMillis();
+            for (int i = 0; i < deck.size() && i < MAX; i++) {
+                Plex.Item it = deck.get(i);
+                boolean episode = "episode".equals(it.type);
+                String path = episode ? (it.thumb != null ? it.thumb : it.art) : (it.art != null ? it.art : it.thumb);
+                if (path == null) path = it.poster();
+                android.content.ContentValues v = new android.content.ContentValues();
+                v.put(android.media.tv.TvContract.WatchNextPrograms.COLUMN_TYPE, episode
+                        ? android.media.tv.TvContract.WatchNextPrograms.TYPE_TV_EPISODE
+                        : android.media.tv.TvContract.WatchNextPrograms.TYPE_MOVIE);
+                v.put(android.media.tv.TvContract.WatchNextPrograms.COLUMN_WATCH_NEXT_TYPE, it.viewOffset > 0
+                        ? android.media.tv.TvContract.WatchNextPrograms.WATCH_NEXT_TYPE_CONTINUE
+                        : android.media.tv.TvContract.WatchNextPrograms.WATCH_NEXT_TYPE_NEXT);
+                v.put(android.media.tv.TvContract.WatchNextPrograms.COLUMN_LAST_ENGAGEMENT_TIME_UTC_MILLIS, now - i * 1000L);
+                v.put(android.media.tv.TvContract.WatchNextPrograms.COLUMN_TITLE, episode && it.gpTitle != null ? it.gpTitle : it.displayTitle());
+                if (episode) {
+                    v.put(android.media.tv.TvContract.WatchNextPrograms.COLUMN_EPISODE_TITLE, it.title);
+                    if (it.parentIndex > 0) v.put(android.media.tv.TvContract.WatchNextPrograms.COLUMN_SEASON_DISPLAY_NUMBER, String.valueOf(it.parentIndex));
+                    if (it.index > 0) v.put(android.media.tv.TvContract.WatchNextPrograms.COLUMN_EPISODE_DISPLAY_NUMBER, String.valueOf(it.index));
+                }
+                if (it.summary != null && !it.summary.isEmpty()) {
+                    v.put(android.media.tv.TvContract.WatchNextPrograms.COLUMN_SHORT_DESCRIPTION, it.summary);
+                }
+                if (path != null) {
+                    v.put(android.media.tv.TvContract.WatchNextPrograms.COLUMN_POSTER_ART_URI, Plex.img(path, 640, 360));
+                    v.put(android.media.tv.TvContract.WatchNextPrograms.COLUMN_POSTER_ART_ASPECT_RATIO,
+                            android.media.tv.TvContract.WatchNextPrograms.ASPECT_RATIO_16_9);
+                }
+                if (it.duration > 0) v.put(android.media.tv.TvContract.WatchNextPrograms.COLUMN_DURATION_MILLIS, (int) it.duration);
+                if (it.viewOffset > 0) v.put(android.media.tv.TvContract.WatchNextPrograms.COLUMN_LAST_PLAYBACK_POSITION_MILLIS, (int) it.viewOffset);
+                Intent play = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse("reel://play?key=" + android.net.Uri.encode(it.key)
+                        + "&start=" + it.viewOffset)).setPackage(app.getPackageName());
+                v.put(android.media.tv.TvContract.WatchNextPrograms.COLUMN_INTENT_URI, play.toUri(Intent.URI_INTENT_SCHEME));
+                v.put(android.media.tv.TvContract.WatchNextPrograms.COLUMN_INTERNAL_PROVIDER_ID, "reel:" + it.key);
+                if (cr.insert(android.media.tv.TvContract.WatchNextPrograms.CONTENT_URI, v) != null) done++;
+            }
+            android.util.Log.i("ReelHome", "Watch Next: " + done + " of " + deck.size() + " published");
+        } catch (Throwable e) {
+            android.util.Log.w("ReelHome", "Watch Next failed: " + e);
+        }
     }
 
     /** Runs on a background thread (it downloads the picture). */

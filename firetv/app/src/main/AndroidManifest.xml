@@ -4,6 +4,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
 
     <uses-feature
         android:name="android.software.leanback"
@@ -133,7 +134,15 @@
         <activity
             android:name=".PlayerActivity"
             android:configChanges="keyboard|keyboardHidden|navigation|screenSize|smallestScreenSize|screenLayout|orientation|uiMode"
-            android:exported="false"
-            android:screenOrientation="landscape" />
+            android:exported="true"
+            android:screenOrientation="landscape">
+            <!-- reel://play?key=...&start=...: how the Fire TV home screen starts a title from the Up Next row -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="reel" android:host="play" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>

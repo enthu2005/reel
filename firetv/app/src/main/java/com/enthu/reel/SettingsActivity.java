@@ -97,6 +97,14 @@ public class SettingsActivity extends ReelActivity {
                     if (ev.getAction() == android.view.KeyEvent.ACTION_DOWN) list.getChildAt(0).requestFocus();
                     return true;
                 }
+                // At the top or bottom of the category list, stay put (focus used to wander off into the panel)
+                boolean first = index == 0 && keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP;
+                boolean last = index == CATEGORIES.length - 1 && keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN;
+                if (first || last) {
+                    if (ev.getAction() == android.view.KeyEvent.ACTION_DOWN && ev.getRepeatCount() == 0) SoundFx.edge();
+                    return true;
+                }
+                if (keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT) return true;
                 return false;
             });
             c.setOnFocusChangeListener((v, f) -> {
@@ -170,6 +178,34 @@ public class SettingsActivity extends ReelActivity {
         paintCategories();
         show(false);
         catViews.get(0).requestFocus();
+    }
+
+    /**
+     * Up / Down inside the panel move between its lines and stop at the first and last one: before, pressing Down on
+     * the last line searched for the nearest thing below it, which was a category on the left ("Home and browsing").
+     * Left goes back to the category you are in; Right does nothing.
+     */
+    @Override
+    public boolean dispatchKeyEvent(android.view.KeyEvent e) {
+        View f = getCurrentFocus();
+        int kc = e.getKeyCode();
+        if (f != null && f.getParent() == list && (kc == android.view.KeyEvent.KEYCODE_DPAD_UP
+                || kc == android.view.KeyEvent.KEYCODE_DPAD_DOWN || kc == android.view.KeyEvent.KEYCODE_DPAD_LEFT
+                || kc == android.view.KeyEvent.KEYCODE_DPAD_RIGHT)) {
+            if (e.getAction() == android.view.KeyEvent.ACTION_DOWN) {
+                if (kc == android.view.KeyEvent.KEYCODE_DPAD_LEFT) {
+                    catViews.get(category).requestFocus();
+                } else if (kc != android.view.KeyEvent.KEYCODE_DPAD_RIGHT) {
+                    int step = kc == android.view.KeyEvent.KEYCODE_DPAD_DOWN ? 1 : -1;
+                    int i = list.indexOfChild(f) + step;
+                    while (i >= 0 && i < list.getChildCount() && !list.getChildAt(i).isFocusable()) i += step;
+                    if (i >= 0 && i < list.getChildCount()) list.getChildAt(i).requestFocus();
+                    else if (e.getRepeatCount() == 0) SoundFx.edge();
+                }
+            }
+            return true;
+        }
+        return super.dispatchKeyEvent(e);
     }
 
     private void paintCategories() {
@@ -329,8 +365,9 @@ public class SettingsActivity extends ReelActivity {
                         + "Each one can be skipped, or skip them all.",
                 on -> prefs.edit().putBoolean("liveTrailers", on).apply());
         toggle("Fire TV home row", "homeRow", true,
-                "Shows your Up Next titles in the \"Recommended by your apps\" row on the Fire TV home "
-                        + "screen. Picking one starts playing straight away.",
+                "Sends your Up Next titles to the Fire TV home screen's \"Continue watching\" row (Watch Next). "
+                        + "Picking one starts playing straight away. Fire OS may only show that row for apps it has approved, "
+                        + "so it might not appear on every Fire TV.",
                 () -> {
                     if (prefs.getBoolean("homeRow", true)) TvRecommendations.refresh(this, null);
                     else TvRecommendations.clear(this);

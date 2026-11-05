@@ -1061,8 +1061,16 @@ public class PlayerActivity extends Activity {
         view.requestFocus();
 
         key = getIntent().getStringExtra("key");
+        if (key == null && getIntent().getData() != null) key = getIntent().getData().getQueryParameter("key"); // from the home-screen row
         channelNum = getIntent().getIntExtra("channel", 0);
-        final long startMs = getIntent().getLongExtra("start", 0);
+        long startFromIntent = getIntent().getLongExtra("start", 0);
+        if (getIntent().getData() != null && getIntent().getData().getQueryParameter("start") != null) {
+            try {
+                startFromIntent = Long.parseLong(getIntent().getData().getQueryParameter("start"));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        final long startMs = startFromIntent;
         startedAtMs = startMs;
         if (getIntent().getBooleanExtra("inQueue", false)) {
             queueIndex = getIntent().getIntExtra("queueIndex", queuePos(key));
