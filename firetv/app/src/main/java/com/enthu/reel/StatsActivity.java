@@ -355,6 +355,7 @@ public class StatsActivity extends ReelActivity {
         WatchStats s = stats;
         LinearLayout nums = new LinearLayout(this);
         nums.setOrientation(LinearLayout.HORIZONTAL);
+        nums.setPadding(0, (int) (H * 0.02f), 0, (int) (H * 0.01f));
         nums.addView(bigNumber(hours(s.hours), "hours watched"));
         nums.addView(bigNumber(String.valueOf(s.movies), "films"));
         nums.addView(bigNumber(String.valueOf(s.episodes), "episodes"));
@@ -376,18 +377,36 @@ public class StatsActivity extends ReelActivity {
     private View bigNumber(String n, String label) {
         LinearLayout c = new LinearLayout(this);
         c.setOrientation(LinearLayout.VERTICAL);
-        c.setPadding(0, 0, (int) (W * 0.04f), 0);
+        c.setBackground(UiUtil.rounded(0x1AFFFFFF, H * 0.025f));
         c.addView(text(n, H * 0.07f, Color.WHITE, true));
         c.addView(text(label, H * 0.022f, UiUtil.TEXT2, false));
-        c.setPadding(0, (int) (H * 0.01f), (int) (W * 0.04f), (int) (H * 0.01f));
+        int px = (int) (W * 0.016f);
+        c.setPadding(px, (int) (H * 0.018f), px, (int) (H * 0.018f));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.rightMargin = (int) (W * 0.012f);
+        c.setLayoutParams(lp);
+        return c;
+    }
+
+    /** A rounded card that holds one chart, with its heading. */
+    private LinearLayout card(String heading) {
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+        c.setBackground(UiUtil.rounded(0x14FFFFFF, H * 0.03f));
+        int px = (int) (W * 0.02f);
+        c.setPadding(px, (int) (H * 0.022f), px, (int) (H * 0.022f));
+        TextView h = text(heading, H * 0.032f, Color.WHITE, true);
+        h.setPadding(0, 0, 0, (int) (H * 0.012f));
+        c.addView(h);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams((int) (W * 0.8f), ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = (int) (H * 0.025f);
+        body.addView(c, lp);
         return c;
     }
 
     private void bars(String heading, List<Ranked> rows, boolean actors) {
         if (rows.isEmpty()) return;
-        TextView h = text(heading, H * 0.032f, Color.WHITE, true);
-        h.setPadding(0, (int) (H * 0.03f), 0, (int) (H * 0.01f));
-        body.addView(h);
+        LinearLayout card = card(heading);
         double max = 0;
         for (Ranked r : rows) max = Math.max(max, r.value);
         for (Ranked r : rows) {
@@ -401,7 +420,7 @@ public class StatsActivity extends ReelActivity {
             FrameLayout track = new FrameLayout(this);
             View bar = new View(this);
             bar.setBackground(UiUtil.rounded(0xFFE8833A, H));
-            int full = (int) (W * 0.4f);
+            int full = (int) (W * 0.33f);
             track.addView(bar, new FrameLayout.LayoutParams(Math.max(4, (int) (full * (max <= 0 ? 0 : r.value / max))), (int) (H * 0.014f)));
             line.addView(track, new LinearLayout.LayoutParams(full, (int) (H * 0.014f)));
             String v = actors ? r.count + " titles" : valueText(r);
@@ -409,7 +428,7 @@ public class StatsActivity extends ReelActivity {
             val.setPadding((int) (W * 0.015f), 0, 0, 0);
             line.addView(val);
             line.setPadding(0, (int) (H * 0.006f), 0, (int) (H * 0.006f));
-            body.addView(line);
+            card.addView(line);
         }
     }
 
@@ -419,9 +438,7 @@ public class StatsActivity extends ReelActivity {
     }
 
     private void columns(String heading, double[] data, String[] labels) {
-        TextView h = text(heading, H * 0.032f, Color.WHITE, true);
-        h.setPadding(0, (int) (H * 0.03f), 0, (int) (H * 0.01f));
-        body.addView(h);
+        LinearLayout card = card(heading);
         double max = 0;
         for (double d : data) max = Math.max(max, d);
         LinearLayout row = new LinearLayout(this);
@@ -440,7 +457,7 @@ public class StatsActivity extends ReelActivity {
             c.addView(text(labels[i], H * 0.02f, UiUtil.TEXT2, false));
             row.addView(c, new LinearLayout.LayoutParams(colW, colH + (int) (H * 0.035f)));
         }
-        body.addView(row);
+        card.addView(row);
     }
 
     private static String clockHour(int h) {
