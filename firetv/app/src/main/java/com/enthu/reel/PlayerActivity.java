@@ -745,7 +745,11 @@ public class PlayerActivity extends Activity {
         if (!isDts(c)) return false;
         String p = ((s.profile == null ? "" : s.profile) + " " + (s.displayTitle == null ? "" : s.displayTitle))
                 .toLowerCase(Locale.ROOT);
-        return p.contains("ma") || p.contains("hra") || p.contains("hd") || p.contains(":x") || p.contains("dts-x");
+        // Whole words only: "ma" inside a language name (Malayalam, Marathi...) must not make a plain DTS track HD
+        for (String w : p.split("[^a-z0-9]+")) {
+            if (w.equals("ma") || w.equals("hra") || w.equals("hd")) return true;
+        }
+        return p.contains(":x") || p.contains("dts-x");
     }
 
     /** True when the track can go to the receiver as it is, with no Plex conversion. */
@@ -767,9 +771,25 @@ public class PlayerActivity extends Activity {
         return file.endsWith(".m2ts") || file.endsWith(".mts");
     }
 
+    /** TrueHD at 96 kHz never opens the Fire TV's sound output (the clock then stands still), so it can't play as it is. */
+    private static boolean highRateTrueHd(Plex.Stream s) {
+        return s != null && s.codec != null && s.codec.toLowerCase(Locale.ROOT).contains("truehd") && s.samplingRate > 48000;
+    }
+
+    /** The picture is in a format this Fire TV has no decoder for (VC-1 / WMV): Plex has to convert it. */
+    private boolean videoUnsupported() {
+        if (item == null) return false;
+        for (Plex.Stream v : item.streamsOf(1)) {
+            String c = v.codec == null ? "" : v.codec.toLowerCase(Locale.ROOT);
+            return c.equals("vc1") || c.startsWith("wmv") || c.startsWith("msmpeg4") || c.equals("rv30") || c.equals("rv40");
+        }
+        return false;
+    }
+
     private boolean needsAc3(Plex.Stream s) {
         if (s == null || s.codec == null) return false;
         String c = s.codec.toLowerCase(Locale.ROOT);
+        if (highRateTrueHd(s)) return true;
         if (directFileMode()) {
             if (plainPlayable(s)) return false;
             if (optical()) return true; // optical only carries Dolby Digital / DTS core
@@ -785,7 +805,7 @@ public class PlayerActivity extends Activity {
 
     /** Direct file mode: prefer a track in the file the receiver already accepts, so Plex isn't involved. */
     private Plex.Stream betterDirectTrack(Plex.Stream cur) {
-        if (!directFileMode() || cur == null || !needsAc3(cur)) return cur;
+        if ((!directFileMode() && !highRateTrueHd(cur)) || cur == null || !needsAc3(cur)) return cur;
         Plex.Stream best = null;
         int bestScore = -1;
         for (Plex.Stream o : item.streamsOf(2)) {
@@ -1429,7 +1449,8 @@ public class PlayerActivity extends Activity {
 
     private void begin(final long positionMs, final boolean wantTranscode) {
         autoToneMap();
-        final boolean willTranscode = wantTranscode || quality != 0 || needsAc3(curAudio) || isBlurayTs();
+        final boolean willTranscode = wantTranscode || quality != 0 || needsAc3(curAudio) || isBlurayTs()
+                || videoUnsupported();
         final int want = burnId();
         if (!willTranscode || item == null || item.partKey == null || lastPartSub == want) {
             beginNow(positionMs, wantTranscode);
@@ -1470,6 +1491,11 @@ public class PlayerActivity extends Activity {
     private void beginNow(long positionMs, boolean transcode) {
         // Blu-ray .m2ts files (192-byte packets) are not something the player can read: ask Plex to convert them straight away
         // (the picture is copied, only the sound is converted) instead of failing first with "container unsupported"
+        if (!transcode && videoUnsupported()) {
+            // No decoder for the picture (VC-1): Plex converts it, otherwise only the sound would play
+            transcode = true;
+            if (curAudio != null && curAudio.codec != null && curAudio.codec.toLowerCase(Locale.ROOT).contains("truehd")) ac3 = true;
+        }
         if (!transcode && isBlurayTs()) {
             transcode = true;
             // Plex's Dolby Digital Plus (Atmos) output flips between 4 and 6 channels, which re-opens the sound output
@@ -1524,7 +1550,22 @@ public class PlayerActivity extends Activity {
         DtsCoreExtractors.stripToCore = compat || audioMode() == 2;
         DtsCoreExtractors.trackIsDtsHd = curAudio != null && curAudio.codec != null
                 && isDts(curAudio.codec.toLowerCase(Locale.ROOT)) && isHdDts(curAudio);
-        IecDtsHdSink.enabled = !DtsCoreExtractors.stripToCore && DtsCoreExtractors.trackIsDtsHd
+        // Label each audio track by what it is (a film can carry a DTS-HD MA track and a plain DTS one), so picking the
+        // plain DTS track later doesn't make it go out as DTS-HD
+        boolean anyDtsHd = false;
+        if (item != null) {
+            List<Plex.Stream> au = item.streamsOf(2);
+            boolean[] hd = new boolean[au.size()];
+            for (int i = 0; i < hd.length; i++) {
+                Plex.Stream as = au.get(i);
+                hd[i] = as.codec != null && isDts(as.codec.toLowerCase(Locale.ROOT)) && isHdDts(as);
+                anyDtsHd |= hd[i];
+            }
+            DtsCoreExtractors.dtsHdByAudio = hd;
+        } else {
+            DtsCoreExtractors.dtsHdByAudio = null;
+        }
+        IecDtsHdSink.enabled = !DtsCoreExtractors.stripToCore && (DtsCoreExtractors.trackIsDtsHd || anyDtsHd)
                 && getSharedPreferences("reel_ui", MODE_PRIVATE).getBoolean("dtsHdRaw", true);
         android.util.Log.d("ReelPlayer", "DTS-HD raw IEC 61937 stream: " + IecDtsHdSink.enabled);
         // Dolby Digital Plus as a raw stream (only when the sound isn't being cut down to Dolby Digital / DTS core)
@@ -2124,7 +2165,9 @@ public class PlayerActivity extends Activity {
         for (int i = 0; i < groups.size(); i++) {
             Format f = groups.get(i).getTrackFormat(0);
             int score = 0;
-            if (i == idx) score += 2;
+            // Same place in the file counts most: a DTS-HD track is relabelled as 8 channels for the sound output, so the
+            // channel count alone can't tell it from the 6 channel track next to it
+            if (i == idx) score += 3;
             if (s.channels > 0 && f.channelCount == s.channels) score += 2;
             if (sameLang(s.langCode, f.language)) score += 1;
             if (score > bestScore) {
@@ -2168,10 +2211,13 @@ public class PlayerActivity extends Activity {
         }
         curAudio = s;
         Tracks.Group g = audioGroupFor(s);
+        android.util.Log.i("ReelPlayer", "audio track " + s.id + " " + s.codec + " " + s.channels + "ch -> group "
+                + (g == null ? "none" : g.getTrackFormat(0).sampleMimeType + " " + g.getTrackFormat(0).channelCount
+                + "ch supported " + g.isTrackSupported(0)));
         if (g == null || !g.isTrackSupported(0)) {
             // Not playable as is: try another track in the same language before involving Plex.
             for (Plex.Stream o : item.streamsOf(2)) {
-                if (o.id == s.id || !o.langCode.equals(s.langCode)) continue;
+                if (o.id == s.id || !o.langCode.equals(s.langCode) || highRateTrueHd(o)) continue;
                 Tracks.Group og = audioGroupFor(o);
                 if (og != null && og.isTrackSupported(0)) {
                     curAudio = o;

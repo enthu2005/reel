@@ -69,6 +69,7 @@ public final class Plex {
         public int doviProfile; // 5, 7, 8… (0 = unknown / none)
         public String colorTrc = "";
         public int bitDepth;
+        public int samplingRate; // audio, in Hz (0 = unknown)
         public int height;
         public int bitrate;
         public JSONObject raw; // everything Plex says about this stream, for the nerdy Info page
@@ -1318,6 +1319,7 @@ public final class Plex {
         s.doviProfile = o.optInt("DOVIProfile", 0);
         s.colorTrc = o.optString("colorTrc", "");
         s.bitDepth = o.optInt("bitDepth", 0);
+        s.samplingRate = o.optInt("samplingRate", 0);
         s.height = o.optInt("height", 0);
         s.bitrate = o.optInt("bitrate", 0);
         s.raw = o;

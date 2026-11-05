@@ -32,6 +32,17 @@ public final class DtsCoreExtractors implements ExtractorsFactory {
     /** The chosen audio track is DTS-HD (Master Audio / High Res / DTS:X); set by the player. */
     public static volatile boolean trackIsDtsHd = false;
 
+    /**
+     * For each audio track of the file, in file order: is it DTS-HD? Set by the player. A film can carry a DTS-HD MA
+     * track next to a plain DTS (core) one, and each must be labelled by what it is, not by the track chosen first.
+     */
+    public static volatile boolean[] dtsHdByAudio = null;
+
+    private static boolean isDtsHdTrack(int audioIndex) {
+        boolean[] a = dtsHdByAudio;
+        return a != null && audioIndex >= 0 && audioIndex < a.length ? a[audioIndex] : trackIsDtsHd;
+    }
+
     private final DefaultExtractorsFactory base = new DefaultExtractorsFactory();
 
     /** Subtitle timing offset for subtitles inside the file (+ = later). */
@@ -75,13 +86,14 @@ public final class DtsCoreExtractors implements ExtractorsFactory {
 
     private static final class Wrap implements Extractor {
         private final Extractor d;
+        private int audioTracks; // audio tracks seen so far, in file order
         Wrap(Extractor d) { this.d = d; }
         @Override public boolean sniff(ExtractorInput input) throws IOException { return d.sniff(input); }
         @Override public void init(final ExtractorOutput o) {
             d.init(new ExtractorOutput() {
                 @Override public TrackOutput track(int id, int type) {
                     TrackOutput t = o.track(id, type);
-                    if (type == androidx.media3.common.C.TRACK_TYPE_AUDIO) return new CoreOut(t);
+                    if (type == androidx.media3.common.C.TRACK_TYPE_AUDIO) return new CoreOut(t, audioTracks++);
                     if (type == androidx.media3.common.C.TRACK_TYPE_VIDEO && dvAsHdr10) return new VideoOut(t);
                     if (type == androidx.media3.common.C.TRACK_TYPE_TEXT) return new ShiftOut(t);
                     return t;
@@ -149,8 +161,12 @@ public final class DtsCoreExtractors implements ExtractorsFactory {
         private byte[] buf = new byte[1 << 16];
         private int len = 0;
         private boolean dts = false;
+        private final int audioIndex;
 
-        CoreOut(TrackOutput d) { this.d = d; }
+        CoreOut(TrackOutput d, int audioIndex) {
+            this.d = d;
+            this.audioIndex = audioIndex;
+        }
 
         @Override public void format(Format f) {
             String m = f.sampleMimeType;
@@ -162,7 +178,7 @@ public final class DtsCoreExtractors implements ExtractorsFactory {
                 if (f.sampleRate > 48000) b.setSampleRate(48000);
                 f = b.build();
             }
-            else if (m != null && m.equals(MimeTypes.AUDIO_DTS) && trackIsDtsHd) {
+            else if (m != null && m.equals(MimeTypes.AUDIO_DTS) && isDtsHdTrack(audioIndex)) {
                 // MKV files tag DTS-HD MA as plain DTS. Tell the audio output it is DTS-HD, otherwise it
                 // opens a core-only stream and fails on the 8 channels.
                 android.util.Log.d("ReelPlayer", "DTS-HD track labelled DTS-HD for passthrough");
