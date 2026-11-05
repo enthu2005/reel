@@ -3,6 +3,7 @@ package com.enthu.reel;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -119,10 +120,60 @@ public class PartyActivity extends ReelActivity {
         col.addView(sub);
         String[] labels = {"Vote on films", "Movie roulette", "Guess the film", "Trailer guess", "Emoji plot", "Soundtrack game", "Movie quiz night"};
         final int[] modes = {Party.VOTE_MODE, ROULETTE, Party.GUESS, Party.TRAILER, Party.EMOJI, Party.SOUND, Party.QUIZ};
+        final String[] about = {
+                "Random films from a library go to a vote on everyone's phone. Guests can add films too, and the winner plays.",
+                "A reel spins and lands on a random film you haven't watched yet.",
+                "Posters sharpen on the TV while everyone races to name the film on their phone.",
+                "Trailer clips play on the TV, some with the picture hidden. Name the film on your phone.",
+                "A film is shown as emoji on the TV. Name it on your phone.",
+                "Short clips of the sound only play on the TV. Name the film on your phone.",
+                "Questions about your library's films. Everyone answers on their phone."};
+
+        // Right: a frosted card that explains the game you are on
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable cbg = UiUtil.rounded(0xD9262629, H * 0.04f);
+        cbg.setStroke(Math.max(1, (int) (H * 0.002f)), 0x26FFFFFF);
+        card.setBackground(cbg);
+        int cp = (int) (W * 0.025f);
+        card.setPadding(cp, (int) (H * 0.045f), cp, (int) (H * 0.045f));
+        final TextView cardTitle = new TextView(this);
+        cardTitle.setTextColor(Color.WHITE);
+        cardTitle.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.05f);
+        cardTitle.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+        card.addView(cardTitle);
+        final TextView cardText = new TextView(this);
+        cardText.setTextColor(0xCCFFFFFF);
+        cardText.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.03f);
+        cardText.setLineSpacing(0, 1.15f);
+        cardText.setPadding(0, (int) (H * 0.02f), 0, 0);
+        card.addView(cardText);
+        TextView how = new TextView(this);
+        how.setText("Everyone joins from their phone with a code shown on the TV.");
+        how.setTextColor(0x88FFFFFF);
+        how.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.0245f);
+        how.setPadding(0, (int) (H * 0.04f), 0, 0);
+        card.addView(how);
+        FrameLayout.LayoutParams cardLp = new FrameLayout.LayoutParams((int) (W * 0.36f),
+                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END | Gravity.CENTER_VERTICAL);
+        cardLp.rightMargin = (int) (W * 0.06f);
+        root.addView(card, cardLp);
+        cardTitle.setText(labels[0]);
+        cardText.setText(about[0]);
+
         View first = null;
         for (int i = 0; i < labels.length; i++) {
             final int m = modes[i];
+            final int at = i;
             TextView b = button(labels[i]);
+            final View.OnFocusChangeListener base = b.getOnFocusChangeListener();
+            b.setOnFocusChangeListener((v, f) -> {
+                if (base != null) base.onFocusChange(v, f);
+                if (f) {
+                    cardTitle.setText(labels[at]);
+                    cardText.setText(about[at]);
+                }
+            });
             b.setOnClickListener(v -> {
                 SoundFx.click();
                 gameMode = m;
