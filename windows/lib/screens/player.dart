@@ -180,11 +180,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
       // Without passthrough, mix any surround sound (7.1, DTS-HD, TrueHD) down to 2 channels here on the PC.
       if (!Prefs.passthrough) await np.setProperty('audio-channels', 'stereo');
       if (Prefs.passthrough) {
-        // Send Dolby / DTS untouched to the receiver over HDMI. Needs WASAPI, and the HDMI output chosen
-        // in Settings (the Windows default is often the speakers, which can't take a raw bitstream).
-        await np.setProperty('ao', 'wasapi');
+        // Send Dolby / DTS untouched to the receiver over HDMI, to the output chosen in Settings
+        // (the Windows default is often the speakers, which can't take a raw bitstream).
+        // Each step is guarded: a refused setting must never stop the film from opening.
+        Future<void> set(String k, String v) async {
+          try {
+            await np.setProperty(k, v);
+          } catch (e) {
+            Log.w('passthrough: could not set $k=$v ($e)');
+          }
+        }
+
         if (Prefs.audioDevice.isNotEmpty) {
-          await np.setProperty('audio-device', Prefs.audioDevice);
+          await set('audio-device', Prefs.audioDevice);
         }
         final fmts = [
           if (Prefs.canAc3) 'ac3',
@@ -193,9 +201,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
           if (Prefs.canDtshd) 'dts-hd',
           if (Prefs.canTruehd) 'truehd',
         ].join(',');
-        await np.setProperty('audio-spdif', fmts);
-        await np.setProperty('audio-exclusive', 'yes');
-        Log.w('passthrough: wasapi device='
+        await set('audio-spdif', fmts);
+        await set('audio-exclusive', 'yes');
+        Log.w('passthrough: device='
             '${Prefs.audioDevice.isEmpty ? 'default' : Prefs.audioDevice} formats=$fmts');
       }
     }
