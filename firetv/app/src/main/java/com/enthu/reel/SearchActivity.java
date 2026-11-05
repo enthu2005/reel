@@ -391,10 +391,10 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
         t.setPadding(px, 0, px, 0);
         t.setFocusable(true);
         t.setClickable(true);
-        final float r = H * 0.02f;
-        t.setBackground(UiUtil.rounded(0x14FFFFFF, r));
+        final float r = H * 0.03f;
+        t.setBackground(UiUtil.rounded(0x1FFFFFFF, r));
         t.setOnFocusChangeListener((v, f) -> {
-            t.setBackground(UiUtil.rounded(f ? 0xFFFFFFFF : 0x14FFFFFF, r));
+            t.setBackground(UiUtil.rounded(f ? 0xFFFFFFFF : 0x1FFFFFFF, r));
             t.setTextColor(f ? 0xFF000000 : Color.WHITE);
             if (f) SoundFx.move();
         });
@@ -406,6 +406,20 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
                 ViewGroup.LayoutParams.MATCH_PARENT, H / SUGG_ROW_H_DIV);
         lp.bottomMargin = (int) (H * 0.008f);
         suggBox.addView(t, lp);
+    }
+
+    /** A small grey label above the rows (not selectable). */
+    private void addSuggHeader(String text) {
+        TextView t = new TextView(this);
+        t.setTag("hdr");
+        t.setText(text.toUpperCase());
+        t.setTextColor(0x99FFFFFF);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.021f);
+        t.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+        t.setLetterSpacing(0.08f);
+        t.setGravity(Gravity.CENTER_VERTICAL);
+        t.setPadding((int) (H * 0.022f), 0, 0, 0);
+        suggBox.addView(t, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (int) (H * 0.05f)));
     }
 
     // ---- Search history: the last few things you searched for, shown while the box is empty ----
@@ -436,6 +450,7 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
     private void showHistory() {
         suggBox.removeAllViews();
         List<String> h = history();
+        if (!h.isEmpty()) addSuggHeader("Recent searches");
         for (final String s : h) addSuggRow("↻  " + s, v -> searchFor(s));
         if (!h.isEmpty()) {
             addSuggRow("Clear search history", v -> {
@@ -452,7 +467,9 @@ public class SearchActivity extends ReelActivity implements PosterAdapter.Listen
     /** Pushes the results grid below the suggestions. */
     private void updateGridTop() {
         int n = suggBox.getChildCount();
-        int top = (int) (H * 0.08f) + (n == 0 ? 0 : n * (H / SUGG_ROW_H_DIV + (int) (H * 0.008f)) + (int) (H * 0.02f));
+        boolean hdr = n > 0 && "hdr".equals(suggBox.getChildAt(0).getTag());
+        int rows = hdr ? n - 1 : n;
+        int top = (int) (H * 0.08f) + (n == 0 ? 0 : rows * (H / SUGG_ROW_H_DIV + (int) (H * 0.008f)) + (hdr ? (int) (H * 0.05f) : 0) + (int) (H * 0.02f));
         grid.setPadding(grid.getPaddingLeft(), top, grid.getPaddingRight(), grid.getPaddingBottom());
         suggBox.setTranslationY(-grid.computeVerticalScrollOffset());
     }

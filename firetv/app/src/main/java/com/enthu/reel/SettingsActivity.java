@@ -684,7 +684,7 @@ public class SettingsActivity extends ReelActivity {
         box.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.035f);
         int p = (int) (H * 0.025f);
         box.setPadding(p, p, p, p);
-        box.setBackground(UiUtil.rounded(UiUtil.CARD, H * 0.025f));
+        box.setBackground(UiUtil.rounded(0x26FFFFFF, H * 0.03f));
         box.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
         box.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
         box.setOnEditorActionListener((tv, id, ev) -> {
@@ -713,9 +713,29 @@ public class SettingsActivity extends ReelActivity {
                 }
             });
         });
-        d.setContentView(box);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        int pp = (int) (W * 0.016f);
+        panel.setPadding(pp, (int) (H * 0.03f), pp, (int) (H * 0.03f));
+        GradientDrawable pbg = UiUtil.rounded(0xF22A2A2D, H * 0.04f);
+        pbg.setStroke(Math.max(1, (int) (H * 0.002f)), 0x26FFFFFF);
+        panel.setBackground(pbg);
+        TextView head = new TextView(this);
+        head.setText("Seerr address");
+        head.setTextColor(Color.WHITE);
+        head.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.034f);
+        head.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+        panel.addView(head);
+        TextView hint = new TextView(this);
+        hint.setText("For example http://192.168.1.50:5055 or https://requests.yourdomain.com");
+        hint.setTextColor(UiUtil.TEXT2);
+        hint.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.0235f);
+        hint.setPadding(0, (int) (H * 0.006f), 0, (int) (H * 0.02f));
+        panel.addView(hint);
+        panel.addView(box);
+        d.setContentView(panel);
         if (d.getWindow() != null) {
-            d.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0));
+            d.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0x99000000));
             d.getWindow().setLayout((int) (W * 0.55f), ViewGroup.LayoutParams.WRAP_CONTENT);
             d.getWindow().setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
             d.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
