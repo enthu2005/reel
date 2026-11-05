@@ -44,6 +44,10 @@ public class SettingsActivity extends ReelActivity {
     private TextView panelTitle;
     private TextView caption;
     private int category = 0;
+    // Keeping your place when the panel is redrawn (after pressing OK on a line, or closing a pick list)
+    private boolean rebuilding;
+    private boolean focusInPanel;
+    private int lastRow;
     private final List<TextView> catViews = new ArrayList<>();
     private List<Plex.Section> sectionsCache;
     private boolean sectionsLoading;
@@ -108,7 +112,9 @@ public class SettingsActivity extends ReelActivity {
                 return false;
             });
             c.setOnFocusChangeListener((v, f) -> {
+                if (rebuilding) return; // the redraw dropped focus here for a moment; not a real move
                 if (f) {
+                    focusInPanel = false;
                     SoundFx.move();
                     if (category != index) {
                         category = index;
@@ -221,20 +227,23 @@ public class SettingsActivity extends ReelActivity {
 
     /** Redraws the right-hand panel; keeps the focused row where it was when something was just changed. */
     private void show(boolean keepFocus) {
-        int keep = -1;
-        if (keepFocus) {
-            for (int i = 0; i < list.getChildCount(); i++) if (list.getChildAt(i).hasFocus()) keep = i;
-        }
-        list.removeAllViews();
-        caption.setText("");
-        panelTitle.setText(CATEGORIES[category]);
-        switch (category) {
-            case 0: playback(); break;
-            case 1: audio(); break;
-            case 2: subtitles(); break;
-            case 3: picture(); break;
-            case 4: home(); break;
-            default: account(); break;
+        // Stay on the same line, even when the window had no focus a moment ago (a pick list was open)
+        int keep = keepFocus && focusInPanel ? lastRow : -1;
+        rebuilding = true;
+        try {
+            list.removeAllViews();
+            caption.setText("");
+            panelTitle.setText(CATEGORIES[category]);
+            switch (category) {
+                case 0: playback(); break;
+                case 1: audio(); break;
+                case 2: subtitles(); break;
+                case 3: picture(); break;
+                case 4: home(); break;
+                default: account(); break;
+            }
+        } finally {
+            rebuilding = false;
         }
         if (keep >= 0 && keep < list.getChildCount()) list.getChildAt(keep).requestFocus();
     }
@@ -298,6 +307,10 @@ public class SettingsActivity extends ReelActivity {
                         + "as Dolby Digital instead of PCM.",
                 i -> prefs.edit().putInt("output", i).apply());
 
+        nav("What my receiver supports", receiverSummary(),
+                "Which sound formats the Fire TV says your receiver (or TV) accepts as they are, from what it reports over HDMI or ARC. "
+                        + "Press OK to see the list.",
+                v -> showReceiverCheck());
         toggleLabelled("DTS-HD Master Audio output", "dtsHdRaw", true, "Raw stream", "Standard",
                 "Raw stream sends DTS-HD Master Audio and DTS:X to the receiver untouched, the way Kodi does, so the "
                         + "receiver can show DTS-HD MA. Standard uses the Fire TV's own path, which often only passes "
@@ -309,6 +322,13 @@ public class SettingsActivity extends ReelActivity {
                         + "tunnel. Standard uses the Fire TV's own path.");
         toggle("Interface sounds", "sounds", true, "Soft clicks as you move around and select things.",
                 () -> SoundFx.init(this));
+        choice("Interface sound style", SoundFx.STYLE_NAMES, prefs.getInt("soundStyle", 0),
+                "Pick the sounds you hear as you move around and choose things. You hear a sample when you pick one.",
+                i -> {
+                    prefs.edit().putInt("soundStyle", i).apply();
+                    SoundFx.init(this);
+                    SoundFx.click();
+                });
     }
 
     private void subtitles() {
@@ -557,6 +577,10 @@ public class SettingsActivity extends ReelActivity {
         r.addView(a);
 
         r.setOnFocusChangeListener((view, focused) -> {
+            if (focused && !rebuilding) {
+                focusInPanel = true;
+                lastRow = list.indexOfChild(r);
+            }
             r.setBackground(focused ? UiUtil.rounded(PILL, rad) : null);
             n.setTextColor(focused ? 0xFF000000 : Color.WHITE);
             v.setTextColor(focused ? 0xFF4A4A4A : UiUtil.TEXT2);
@@ -653,6 +677,104 @@ public class SettingsActivity extends ReelActivity {
         d.show();
         if (focusMe != null) focusMe.requestFocus();
         else if (items.getChildCount() > 0) items.getChildAt(0).requestFocus();
+    }
+
+    private static final String[] RX_NAMES = {"Dolby Digital", "Dolby Digital Plus", "Dolby Atmos (in Digital Plus)",
+            "Dolby TrueHD", "DTS", "DTS-HD Master Audio / DTS:X"};
+    private static final int[] RX_ENC = {androidx.media3.common.C.ENCODING_AC3, androidx.media3.common.C.ENCODING_E_AC3,
+            androidx.media3.common.C.ENCODING_E_AC3_JOC, androidx.media3.common.C.ENCODING_DOLBY_TRUEHD,
+            androidx.media3.common.C.ENCODING_DTS, androidx.media3.common.C.ENCODING_DTS_HD};
+
+    private boolean[] receiverSupport() {
+        boolean[] ok = new boolean[RX_ENC.length];
+        try {
+            androidx.media3.exoplayer.audio.AudioCapabilities caps = PlayerActivity.effectiveCaps(this);
+            for (int i = 0; i < ok.length; i++) ok[i] = caps.supportsEncoding(RX_ENC[i]);
+        } catch (Throwable ignored) {
+        }
+        // Optical and ordinary ARC can only carry Dolby Digital and the DTS core, whatever the Fire TV reports
+        if (prefs.getInt("output", 0) == 1) {
+            for (int i = 0; i < ok.length; i++) if (i != 0 && i != 4) ok[i] = false;
+        }
+        return ok;
+    }
+
+    private String receiverSummary() {
+        int n = 0;
+        for (boolean b : receiverSupport()) if (b) n++;
+        return n + " of " + RX_ENC.length;
+    }
+
+    /** A ticked / crossed list of the sound formats the receiver accepts as they are. */
+    private void showReceiverCheck() {
+        final android.app.Dialog d = new android.app.Dialog(this);
+        d.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        int px = (int) (W * 0.018f);
+        panel.setPadding(px, (int) (H * 0.03f), px, (int) (H * 0.03f));
+        GradientDrawable bg = UiUtil.rounded(0xF22A2A2D, H * 0.04f);
+        bg.setStroke(Math.max(1, (int) (H * 0.002f)), 0x26FFFFFF);
+        panel.setBackground(bg);
+        TextView head = new TextView(this);
+        head.setText("What my receiver supports");
+        head.setTextColor(Color.WHITE);
+        head.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.034f);
+        head.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+        panel.addView(head);
+        TextView sub = new TextView(this);
+        sub.setText("As reported by the Fire TV for what is connected right now (" + (prefs.getInt("output", 0) == 0
+                ? "HDMI direct / eARC" : "Optical or ARC") + ")");
+        sub.setTextColor(UiUtil.TEXT2);
+        sub.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.0235f);
+        sub.setPadding(0, (int) (H * 0.006f), 0, (int) (H * 0.018f));
+        panel.addView(sub);
+        boolean[] ok = receiverSupport();
+        for (int i = 0; i < RX_NAMES.length; i++) {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding((int) (W * 0.006f), (int) (H * 0.012f), (int) (W * 0.006f), (int) (H * 0.012f));
+            TextView mark = new TextView(this);
+            mark.setText(ok[i] ? "\u2713" : "\u2717");
+            mark.setTextColor(ok[i] ? 0xFF34C759 : 0xFFFFB340);
+            mark.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.032f);
+            mark.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+            row.addView(mark, new LinearLayout.LayoutParams((int) (W * 0.026f), ViewGroup.LayoutParams.WRAP_CONTENT));
+            TextView nm = new TextView(this);
+            nm.setText(RX_NAMES[i]);
+            nm.setTextColor(Color.WHITE);
+            nm.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.0285f);
+            nm.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+            row.addView(nm, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            TextView st = new TextView(this);
+            st.setText(ok[i] ? "Sent as it is" : "Converted");
+            st.setTextColor(UiUtil.TEXT2);
+            st.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.0245f);
+            row.addView(st);
+            panel.addView(row);
+        }
+        TextView note = new TextView(this);
+        note.setText(prefs.getInt("output", 0) == 1
+                ? "Optical and ordinary ARC can only carry Dolby Digital and the DTS core, so the other sounds are always converted. "
+                + "Use HDMI direct / eARC (Audio output) to send Dolby Digital Plus, Atmos, TrueHD and DTS-HD as they are."
+                : "A cross means the Fire TV says no, so that sound is turned into something the receiver does take. "
+                + "Reel can still send Dolby and DTS untouched when the Raw stream options are on.");
+        note.setTextColor(UiUtil.TEXT3);
+        note.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.0215f);
+        note.setPadding(0, (int) (H * 0.018f), 0, 0);
+        panel.addView(note, new LinearLayout.LayoutParams((int) (W * 0.42f), ViewGroup.LayoutParams.WRAP_CONTENT));
+        panel.setFocusable(true);
+        panel.setOnClickListener(v -> d.dismiss());
+        d.setContentView(panel);
+        d.setOnDismissListener(x -> refresh());
+        if (d.getWindow() != null) {
+            d.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0x99000000));
+            d.getWindow().setLayout(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            d.getWindow().setGravity(Gravity.CENTER);
+        }
+        d.show();
+        panel.requestFocus();
     }
 
     /** The phone remote's QR code, big, with the link. The link never changes, so it can be bookmarked. */

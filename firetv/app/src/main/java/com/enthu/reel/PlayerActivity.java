@@ -676,7 +676,7 @@ public class PlayerActivity extends Activity {
     }
 
     /** Encodings (AudioFormat numbers) the HDMI / ARC outputs say they accept. */
-    private static java.util.Set<Integer> hdmiEncodings(Context c) {
+    static java.util.Set<Integer> hdmiEncodings(Context c) {
         java.util.Set<Integer> out = new java.util.HashSet<>();
         try {
             android.media.AudioManager am = (android.media.AudioManager) c.getSystemService(Context.AUDIO_SERVICE);
@@ -697,7 +697,7 @@ public class PlayerActivity extends Activity {
      * accepts but the summary leaves out, and a channel limit (often 2) that makes a 5.1 Dolby track
      * fail the check, so it was decoded to PCM instead of passed through.
      */
-    private static AudioCapabilities effectiveCaps(Context c) {
+    static AudioCapabilities effectiveCaps(Context c) {
         AudioCapabilities real = AudioCapabilities.getCapabilities(c);
         try {
             java.util.LinkedHashSet<Integer> enc = new java.util.LinkedHashSet<>();
