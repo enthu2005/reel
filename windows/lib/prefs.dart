@@ -65,6 +65,12 @@ class Prefs {
   static bool get passthrough => _p.getBool('passthrough') ?? false;
   static set passthrough(bool v) => _p.setBool('passthrough', v);
 
+  /// Which sound output passthrough goes to (mpv device name such as `wasapi/{guid}`). Empty = Windows default.
+  static String get audioDevice => _p.getString('audioDevice') ?? '';
+  static set audioDevice(String v) => _p.setString('audioDevice', v);
+  static String get audioDeviceName => _p.getString('audioDeviceName') ?? '';
+  static set audioDeviceName(String v) => _p.setString('audioDeviceName', v);
+
   /// Include the lossless formats (TrueHD / Atmos, DTS-HD MA) in passthrough.
   static bool get passthroughHd => _p.getBool('passthroughHd') ?? true;
   static set passthroughHd(bool v) => _p.setBool('passthroughHd', v);

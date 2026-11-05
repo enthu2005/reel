@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:media_kit/media_kit.dart';
 
 import '../main.dart' show isFullscreen, navKey, setFullscreen;
 import '../plex.dart';
@@ -48,6 +49,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
               () {
             setState(() => Prefs.passthrough = !Prefs.passthrough);
           }, autofocus: true),
+          _row(
+              h,
+              'Passthrough output',
+              Prefs.audioDevice.isEmpty
+                  ? 'Windows default'
+                  : (Prefs.audioDeviceName.isEmpty
+                      ? Prefs.audioDevice
+                      : Prefs.audioDeviceName),
+              'The sound output passthrough is sent to. Pick your receiver\'s HDMI output (the one named after your receiver or your graphics card). '
+                  'In Windows Sound settings that output must also allow Dolby / DTS (Properties, Supported Formats). Press Enter to choose.',
+              _pickAudioDevice),
           _row(
               h,
               'Dolby Digital (AC-3)',
@@ -311,6 +323,96 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   static String _libSummary(List<String>? v) =>
       v == null ? 'All' : '${v.length} chosen';
+
+  /// Lists the PC's sound outputs and saves the one chosen for passthrough.
+  Future<void> _pickAudioDevice() async {
+    final p = Player(
+        configuration: const PlayerConfiguration(vo: 'null'));
+    List<AudioDevice> devs;
+    try {
+      devs = await p.stream.audioDevices
+          .firstWhere((l) => l.length > 1)
+          .timeout(const Duration(seconds: 4));
+    } catch (_) {
+      devs = p.state.audioDevices;
+    }
+    await p.dispose();
+    if (!mounted) return;
+    final list = [
+      const AudioDevice('', 'Windows default'),
+      ...devs.where((d) => d.name != 'auto')
+    ];
+    await showDialog<void>(
+      context: context,
+      builder: (dc) {
+        final h = Reel.h(dc);
+        return Dialog(
+          backgroundColor: const Color(0xFF1C1C1E),
+          child: Padding(
+            padding: EdgeInsets.all(h * 0.03),
+            child: SizedBox(
+              width: h * 1.0,
+              child: SingleChildScrollView(
+                child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Passthrough output',
+                          style: reelText(h * 0.034, weight: FontWeight.w700)),
+                      SizedBox(height: h * 0.02),
+                      for (var i = 0; i < list.length; i++)
+                        Padding(
+                          padding: EdgeInsets.only(bottom: h * 0.008),
+                          child: Pressable(
+                            autofocus: list[i].name == Prefs.audioDevice,
+                            scrollAlignment: 0.5,
+                            onPressed: () {
+                              Prefs.audioDevice = list[i].name;
+                              Prefs.audioDeviceName = list[i].name.isEmpty
+                                  ? ''
+                                  : list[i].description;
+                              Navigator.of(dc).pop();
+                              if (mounted) setState(() {});
+                            },
+                            builder: (c, f) => AnimatedContainer(
+                              duration: const Duration(milliseconds: 120),
+                              padding: EdgeInsets.symmetric(
+                                  horizontal: h * 0.02, vertical: h * 0.014),
+                              decoration: BoxDecoration(
+                                color:
+                                    f ? Colors.white : const Color(0x14FFFFFF),
+                                borderRadius: BorderRadius.circular(h * 0.014),
+                              ),
+                              child: Row(children: [
+                                Icon(
+                                    list[i].name == Prefs.audioDevice
+                                        ? Icons.radio_button_checked_rounded
+                                        : Icons.radio_button_unchecked_rounded,
+                                    color: f ? Colors.black : Colors.white,
+                                    size: h * 0.034),
+                                SizedBox(width: h * 0.016),
+                                Expanded(
+                                  child: Text(list[i].description,
+                                      style: reelText(h * 0.026,
+                                          weight: FontWeight.w600,
+                                          color:
+                                              f ? Colors.black : Colors.white)),
+                                ),
+                              ]),
+                            ),
+                          ),
+                        ),
+                      SizedBox(height: h * 0.012),
+                      Text('Esc to close',
+                          style: reelText(h * 0.02, color: Reel.text3)),
+                    ]),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
 
   /// A list of libraries to tick. It stays open, saves on every tick and keeps at least one ticked.
   Future<void> _pickLibraries(String title, {required bool home}) async {

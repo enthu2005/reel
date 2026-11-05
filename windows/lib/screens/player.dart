@@ -12,6 +12,7 @@ import '../live.dart';
 import '../main.dart' as app;
 import '../plex.dart';
 import '../prefs.dart';
+import '../log.dart';
 import '../ui/channel_logo.dart';
 import '../ui/net_image.dart';
 import '../ui/preview.dart';
@@ -179,17 +180,23 @@ class _PlayerScreenState extends State<PlayerScreen> {
       // Without passthrough, mix any surround sound (7.1, DTS-HD, TrueHD) down to 2 channels here on the PC.
       if (!Prefs.passthrough) await np.setProperty('audio-channels', 'stereo');
       if (Prefs.passthrough) {
-        // Send Dolby / DTS untouched to the receiver over HDMI.
-        await np.setProperty(
-            'audio-spdif',
-            [
-              if (Prefs.canAc3) 'ac3',
-              if (Prefs.canEac3) 'eac3',
-              if (Prefs.canDts) 'dts',
-              if (Prefs.canDtshd) 'dts-hd',
-              if (Prefs.canTruehd) 'truehd',
-            ].join(','));
+        // Send Dolby / DTS untouched to the receiver over HDMI. Needs WASAPI, and the HDMI output chosen
+        // in Settings (the Windows default is often the speakers, which can't take a raw bitstream).
+        await np.setProperty('ao', 'wasapi');
+        if (Prefs.audioDevice.isNotEmpty) {
+          await np.setProperty('audio-device', Prefs.audioDevice);
+        }
+        final fmts = [
+          if (Prefs.canAc3) 'ac3',
+          if (Prefs.canEac3) 'eac3',
+          if (Prefs.canDts) 'dts',
+          if (Prefs.canDtshd) 'dts-hd',
+          if (Prefs.canTruehd) 'truehd',
+        ].join(',');
+        await np.setProperty('audio-spdif', fmts);
         await np.setProperty('audio-exclusive', 'yes');
+        Log.w('passthrough: wasapi device='
+            '${Prefs.audioDevice.isEmpty ? 'default' : Prefs.audioDevice} formats=$fmts');
       }
     }
     _subs.add(_player.stream.position.listen((p) {
