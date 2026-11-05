@@ -901,7 +901,10 @@ public class PlayerActivity extends Activity {
     private final Runnable debugTick = new Runnable() {
         @Override
         public void run() {
-            if (infoText != null && panelOpen && tabIndex == TAB_INFO) infoText.setText(debugText());
+            if (panelOpen && tabIndex == TAB_INFO) {
+                for (Runnable u : infoUpdaters) u.run();
+                if (infoText != null) infoText.setText(advancedText());
+            }
             if (overlayOn) overlay.setText(debugText());
             if ((panelOpen && tabIndex == TAB_INFO) || overlayOn) handler.postDelayed(this, 1000);
         }
@@ -3226,6 +3229,10 @@ public class PlayerActivity extends Activity {
 
     /** A line of the settings list: the name on the left, the current choice and an arrow on the right. */
     private View valueRow(String name, String value, View.OnClickListener click) {
+        return valueRow(name, value, true, click);
+    }
+
+    private View valueRow(String name, String value, boolean arrow, View.OnClickListener click) {
         final LinearLayout r = new LinearLayout(this);
         r.setOrientation(LinearLayout.HORIZONTAL);
         r.setGravity(Gravity.CENTER_VERTICAL);
@@ -3248,7 +3255,7 @@ public class PlayerActivity extends Activity {
         v.setMaxWidth((int) (W * 0.12f));
         r.addView(v);
         final TextView a = new TextView(this);
-        a.setText("\u203A");
+        a.setText(arrow ? "\u203A" : "");
         a.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.036f);
         a.setTextColor(0x88FFFFFF);
         a.setPadding((int) (W * 0.006f), 0, (int) (W * 0.004f), 0);
@@ -3483,44 +3490,317 @@ public class PlayerActivity extends Activity {
         });
     }
 
+    // ---- The Info page: a title with badges, then cards (checks, picture, sound, playback, phone, advanced).
+    // Numbers on it update every second while it is open.
+
+    private interface Str { String get(); }
+
+    private final List<Runnable> infoUpdaters = new ArrayList<>();
+
+    private static String codecName(String mime) {
+        if (mime == null || mime.isEmpty()) return "";
+        return mime.contains("dolby-vision") ? "Dolby Vision" : mime.contains("hevc") ? "HEVC"
+                : mime.contains("avc") ? "H.264" : mime.contains("av01") ? "AV1" : mime.contains("vp9") ? "VP9"
+                : mime.replace("video/", "").toUpperCase(Locale.ROOT);
+    }
+
+    private String audioName(Format a) {
+        if (a == null || a.sampleMimeType == null) return "";
+        String m = a.sampleMimeType;
+        boolean atmos = curAudio != null && curAudio.displayTitle != null
+                && curAudio.displayTitle.toLowerCase(Locale.ROOT).contains("atmos");
+        return m.contains("true-hd") ? "TrueHD" + (atmos ? " Atmos" : "")
+                : m.contains("eac3-joc") ? "Dolby Digital Plus Atmos"
+                : m.contains("eac3") ? "Dolby Digital Plus" : m.contains("ac3") ? "Dolby Digital"
+                : m.contains("vnd.dts.hd") ? "DTS-HD" : m.contains("dts") ? "DTS"
+                : m.contains("mp4a") ? "AAC" : m.replace("audio/", "").toUpperCase(Locale.ROOT);
+    }
+
+    private static String channelsName(int n) {
+        return n == 1 ? "Mono" : n == 2 ? "Stereo" : n == 6 ? "5.1" : n == 8 ? "7.1" : n > 0 ? n + " channels" : "";
+    }
+
+    private LinearLayout infoCard(String title) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setBackground(UiUtil.rounded(0x1AFFFFFF, H * 0.022f));
+        int p = (int) (W * 0.010f);
+        card.setPadding(p, (int) (H * 0.016f), p, (int) (H * 0.012f));
+        if (title != null) {
+            TextView t = new TextView(this);
+            t.setText(title.toUpperCase(Locale.ROOT));
+            t.setTextColor(0x99FFFFFF);
+            t.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.0185f);
+            t.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+            t.setLetterSpacing(0.08f);
+            t.setPadding(0, 0, 0, (int) (H * 0.008f));
+            card.addView(t);
+        }
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = (int) (H * 0.014f);
+        lp.leftMargin = (int) (W * 0.004f);
+        lp.rightMargin = (int) (W * 0.004f);
+        list.addView(card, lp);
+        return card;
+    }
+
+    /** A "name ... value" line in a card; the value is refreshed every second. */
+    private void infoRow(LinearLayout card, String key, final Str value) {
+        try {
+            String first = value.get();
+            if (first == null || first.isEmpty()) return; // nothing to say: leave the line out
+        } catch (RuntimeException e) {
+            return;
+        }
+        LinearLayout r = new LinearLayout(this);
+        r.setOrientation(LinearLayout.HORIZONTAL);
+        r.setPadding(0, (int) (H * 0.007f), 0, (int) (H * 0.007f));
+        TextView k = new TextView(this);
+        k.setText(key);
+        k.setTextColor(0xAAFFFFFF);
+        k.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.0245f);
+        r.addView(k, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.38f));
+        final TextView v = new TextView(this);
+        v.setTextColor(0xFFFFFFFF);
+        v.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.0245f);
+        v.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+        v.setGravity(Gravity.END);
+        r.addView(v, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.62f));
+        card.addView(r);
+        final Runnable up = () -> {
+            String s;
+            try {
+                s = value.get();
+            } catch (RuntimeException e) {
+                s = "";
+            }
+            v.setText(s == null || s.isEmpty() ? "–" : s);
+        };
+        up.run();
+        infoUpdaters.add(up);
+    }
+
+    private TextView badge(String text, int bg) {
+        TextView b = new TextView(this);
+        b.setText(text);
+        b.setTextColor(0xFFFFFFFF);
+        b.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.0215f);
+        b.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+        b.setPadding((int) (W * 0.0065f), (int) (H * 0.006f), (int) (W * 0.0065f), (int) (H * 0.006f));
+        b.setBackground(UiUtil.rounded(bg, H * 0.03f));
+        return b;
+    }
+
     private void showInfoTab() {
-        list.addView(makeRow("Show this on the video", overlayOn ? "On" : "Off", overlayOn, false, v -> {
+        infoUpdaters.clear();
+        if (player == null || item == null) {
+            TextView t = new TextView(this);
+            t.setText("Nothing is playing");
+            t.setTextColor(0xAAFFFFFF);
+            t.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.026f);
+            t.setPadding((int) (W * 0.01f), (int) (H * 0.02f), 0, 0);
+            list.addView(t);
+            return;
+        }
+        final Format vf = player.getVideoFormat();
+        final Format af = player.getAudioFormat();
+
+        // The one thing here you can press: the on-video read-out
+        View toggle = valueRow("Show this on the video", overlayOn ? "On" : "Off", false, v -> {
             overlayOn = !overlayOn;
             overlay.setVisibility(overlayOn ? View.VISIBLE : View.GONE);
             showTab(TAB_INFO);
-        }));
+        });
+        list.addView(toggle);
 
-        // Phone remote: scan to follow and control this from a phone on the same Wi-Fi
+        // Title and badges
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.VERTICAL);
+        head.setPadding((int) (W * 0.012f), (int) (H * 0.022f), (int) (W * 0.01f), (int) (H * 0.004f));
+        TextView title = new TextView(this);
+        title.setText(item.displayTitle());
+        title.setTextColor(0xFFFFFFFF);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.036f);
+        title.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+        title.setMaxLines(2);
+        head.addView(title);
+        android.widget.LinearLayout chips = new LinearLayout(this);
+        chips.setOrientation(LinearLayout.HORIZONTAL);
+        chips.setPadding(0, (int) (H * 0.012f), 0, 0);
+        List<TextView> badges = new ArrayList<>();
+        badges.add(badge(transcoding ? "Transcode" : "Direct play", transcoding ? 0xFFB26A00 : 0xFF248A3D));
+        if (vf != null) {
+            String c = codecName(vf.sampleMimeType);
+            if (!c.isEmpty()) badges.add(badge(c, 0x33FFFFFF));
+            if (vf.height >= 2000) badges.add(badge("4K", 0x33FFFFFF));
+            else if (vf.height >= 1000) badges.add(badge("1080p", 0x33FFFFFF));
+            else if (vf.height > 0) badges.add(badge(vf.height + "p", 0x33FFFFFF));
+            Object[] pic = pictureStatus(vf);
+            String ptxt = (String) pic[1];
+            if (ptxt.contains("Dolby Vision")) badges.add(badge("Dolby Vision", 0x33FFFFFF));
+            else if (ptxt.contains("HDR10")) badges.add(badge("HDR10", 0x33FFFFFF));
+            else if (ptxt.contains("HLG")) badges.add(badge("HLG", 0x33FFFFFF));
+        }
+        if (af != null) {
+            String an = audioName(af);
+            if (!an.isEmpty()) badges.add(badge(an, 0x33FFFFFF));
+        }
+        for (TextView b : badges) {
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.rightMargin = (int) (W * 0.004f);
+            chips.addView(b, lp);
+        }
+        android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
+        hs.setHorizontalScrollBarEnabled(false);
+        hs.setFocusable(false);
+        hs.addView(chips);
+        head.addView(hs);
+        list.addView(head);
+
+        // Will it play properly: the checklist
+        LinearLayout checks = infoCard("Playback check");
+        final TextView checkText = new TextView(this);
+        checkText.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.0245f);
+        checkText.setLineSpacing(0, 1.18f);
+        checkText.setTextColor(0xFFFFFFFF);
+        checks.addView(checkText);
+        final Runnable upChecks = () -> {
+            String[] lines = compatSummary().split("\n");
+            android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder();
+            for (String ln : lines) {
+                boolean ok = ln.startsWith("✓ ");
+                boolean bad = ln.startsWith("✗ ");
+                if (!ok && !bad) continue;
+                int start = sb.length();
+                sb.append(ok ? "✓  " : "✗  ");
+                sb.setSpan(new android.text.style.ForegroundColorSpan(ok ? 0xFF34C759 : 0xFFFFB340), start, sb.length(),
+                        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                sb.append(ln.substring(2)).append('\n');
+            }
+            if (sb.length() > 0) sb.delete(sb.length() - 1, sb.length());
+            checkText.setText(sb);
+        };
+        upChecks.run();
+        infoUpdaters.add(upChecks);
+
+        LinearLayout pic = infoCard("Picture");
+        infoRow(pic, "Format", () -> {
+            Format f = player.getVideoFormat();
+            return f == null ? "" : codecName(f.sampleMimeType);
+        });
+        infoRow(pic, "Size", () -> {
+            Format f = player.getVideoFormat();
+            return f == null || f.width <= 0 ? "" : f.width + " × " + f.height;
+        });
+        infoRow(pic, "Frame rate", () -> {
+            Format f = player.getVideoFormat();
+            return f == null || f.frameRate <= 0 ? "" : (Math.round(f.frameRate * 100) / 100f) + " fps";
+        });
+        infoRow(pic, "Range", () -> {
+            Format f = player.getVideoFormat();
+            if (f == null) return "";
+            String t = (String) pictureStatus(f)[1];
+            return t.startsWith("Playing in ") ? t.substring(11) : t;
+        });
+        infoRow(pic, "Decoder", () -> videoDecoder);
+
+        LinearLayout snd = infoCard("Sound");
+        infoRow(snd, "Format", () -> audioName(player.getAudioFormat()));
+        infoRow(snd, "Channels", () -> {
+            Format f = player.getAudioFormat();
+            return f == null ? "" : channelsName(f.channelCount);
+        });
+        infoRow(snd, "Sample rate", () -> {
+            Format f = player.getAudioFormat();
+            return f == null || f.sampleRate <= 0 ? "" : (f.sampleRate / 1000f) + " kHz";
+        });
+        infoRow(snd, "Bitrate", () -> {
+            Format f = player.getAudioFormat();
+            return f == null || f.averageBitrate <= 0 ? "" : (f.averageBitrate / 1000) + " kbps";
+        });
+        infoRow(snd, "Decoder", () -> audioDecoder);
+
+        LinearLayout pl = infoCard("Playback");
+        infoRow(pl, "Mode", () -> transcoding ? "Transcode (Plex converts)" : "Direct play");
+        infoRow(pl, "Download speed", () -> {
+            double mbps = androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.getSingletonInstance(this)
+                    .getBitrateEstimate() / 1_000_000.0;
+            return mbps > 0 ? String.format(Locale.US, "%.1f Mbit/s", mbps) : "measuring…";
+        });
+        infoRow(pl, "Buffered ahead", () -> aheadText(player.getTotalBufferedDuration() / 1000));
+        infoRow(pl, "Dropped frames", () -> String.valueOf(dropped));
+        infoRow(pl, "Underruns", () -> String.valueOf(underruns));
+
+        // Phone remote
         final String remoteUrl = PhoneRemote.url();
         if (remoteUrl != null) {
-            LinearLayout remoteRow = new LinearLayout(this);
-            remoteRow.setOrientation(LinearLayout.HORIZONTAL);
-            remoteRow.setGravity(Gravity.CENTER_VERTICAL);
-            remoteRow.setPadding((int) (W * 0.014f), (int) (H * 0.02f), 0, 0);
+            LinearLayout ph = infoCard("Phone remote");
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
             ImageView code = new ImageView(this);
-            int qs = (int) (H * 0.2f);
+            int qs = (int) (H * 0.19f);
             code.setImageBitmap(qr(remoteUrl, qs));
-            remoteRow.addView(code, new LinearLayout.LayoutParams(qs, qs));
+            row.addView(code, new LinearLayout.LayoutParams(qs, qs));
             TextView how = new TextView(this);
-            how.setText("Control this from your phone\nScan the code, or open\n" + remoteUrl.replace("?t=", "\n?t="));
-            how.setTextColor(UiUtil.TEXT2);
-            how.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.022f);
-            how.setPadding((int) (W * 0.016f), 0, 0, 0);
-            remoteRow.addView(how);
-            list.addView(remoteRow);
+            how.setText("Scan to control this from your phone. Bookmark the page and the link keeps working.\n\n"
+                    + remoteUrl.replace("?t=", "\n?t="));
+            how.setTextColor(0xAAFFFFFF);
+            how.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.021f);
+            how.setPadding((int) (W * 0.012f), 0, 0, 0);
+            row.addView(how, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            ph.addView(row);
         }
 
+        // The rest of the technical read-out, quietly
+        LinearLayout adv = infoCard("Advanced");
         infoText = new TextView(this);
-        infoText.setTextColor(0xFF9DFFB0);
+        infoText.setTextColor(0x99FFFFFF);
         infoText.setTypeface(Typeface.MONOSPACE);
-        infoText.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.021f);
-        infoText.setPadding((int) (W * 0.014f), (int) (H * 0.02f), 0, 0);
-        infoText.setText(debugText());
-        list.addView(infoText);
+        infoText.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.0195f);
+        infoText.setText(advancedText());
+        adv.addView(infoText);
 
-        list.getChildAt(0).requestFocus();
+        View pad = new View(this);
+        list.addView(pad, new LinearLayout.LayoutParams(1, (int) (H * 0.02f)));
+
+        toggle.requestFocus();
         handler.removeCallbacks(debugTick);
         handler.post(debugTick);
+    }
+
+    /** Details that are not shown on the cards above: errors, Plex's plan, memory. */
+    private String advancedText() {
+        StringBuilder sb = new StringBuilder();
+        if (player == null) return "";
+        if (!lastError.isEmpty()) sb.append("Last error  ").append(lastError).append('\n');
+        if (transcoding && !plan.isEmpty()) sb.append("Plex plan:\n").append(plan).append('\n');
+        if (bufferCapMb > 0) sb.append("Buffer cap  ").append(bufferCapMb).append(" MB\n");
+        long ramSec = player.getTotalBufferedDuration() / 1000;
+        Format vf = player.getVideoFormat();
+        Format af = player.getAudioFormat();
+        long rate = ((vf != null && vf.bitrate > 0 ? vf.bitrate : 0) + (af != null && af.bitrate > 0 ? af.bitrate : 0)) / 8;
+        sb.append("Buffer RAM  ").append(aheadText(ramSec));
+        if (rate > 0) sb.append("  (~").append(Math.min(ramSec * rate >> 20, 99999)).append(" MB)");
+        sb.append('\n');
+        String stuck = waitPiece;
+        long stuckSec = (android.os.SystemClock.elapsedRealtime() - waitSince) / 1000;
+        if (transcoding && stuck != null && stuckSec >= 5 && ramSec < 3) {
+            sb.append("Waiting for Plex: piece ").append(stuck).append(" for ").append(stuckSec).append(" s\n");
+        }
+        try {
+            Runtime rt = Runtime.getRuntime();
+            long heapUsed = rt.totalMemory() - rt.freeMemory();
+            long nativeUsed = android.os.Debug.getNativeHeapAllocatedSize();
+            android.app.ActivityManager.MemoryInfo mi = new android.app.ActivityManager.MemoryInfo();
+            ((android.app.ActivityManager) getSystemService(Context.ACTIVITY_SERVICE)).getMemoryInfo(mi);
+            sb.append("App memory  ").append((heapUsed + nativeUsed) >> 20).append(" MB\n");
+            sb.append("Device free ").append(mi.availMem >> 20).append(" of ").append(mi.totalMem >> 20).append(" MB");
+        } catch (RuntimeException ignored) {
+        }
+        return sb.toString();
     }
 
     // ----------------------------------------------------- Audio debug
