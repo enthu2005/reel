@@ -849,7 +849,11 @@ public class PlayerActivity extends Activity {
     private LinearLayout panel;
     private LinearLayout list;
     private ScrollView scroll;
-    private final TextView[] tabViews = new TextView[TAB_COUNT];
+    private TextView panelTitle;
+    // The three round buttons above the timeline (subtitles, audio, settings) and the popup they open
+    private final PlayerIcon[] iconViews = new PlayerIcon[3];
+    private LinearLayout iconRow;
+    private int openedFrom = 1; // which button opened the popup, so Back lands on it again
     private boolean panelOpen = false;
     private int tabIndex = TAB_AUDIO;
     private boolean inSubView = false; // inside the subtitle search screens
@@ -925,7 +929,7 @@ public class PlayerActivity extends Activity {
 
         // Small hint shown with the playback controls
         hint = new TextView(this);
-        hint.setText("\u25B2  Audio & subtitles");
+        hint.setText("\u25BC  Episodes");
         hint.setTextColor(0xFFFFFFFF);
         hint.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.026f);
         hint.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.NORMAL));
@@ -934,7 +938,7 @@ public class PlayerActivity extends Activity {
         hint.setFocusable(false);
         hint.setTypeface(UiUtil.font(UiUtil.MEDIUM));
         hint.setVisibility(View.GONE);
-        hint.setOnClickListener(v -> openPanel());
+        hint.setOnClickListener(v -> openEpisodes());
         hint.setOnFocusChangeListener((v, f) ->
                 hint.setBackground(UiUtil.rounded(f ? 0xFFFFFFFF : 0x99000000, H * 0.05f)));
         hint.setOnFocusChangeListener((v, f) -> {
@@ -1024,10 +1028,9 @@ public class PlayerActivity extends Activity {
             }
         });
         osd.setVisibilityListener(vis -> {
-            hint.setText(hasPanelList()
-                    ? "\u25B2  Audio & subtitles      \u25BC  " + (queueActive() ? "Queue" : "Episodes")
-                    : "\u25B2  Audio & subtitles");
-            hint.setVisibility(vis && !panelOpen && !epOpen ? View.VISIBLE : View.GONE);
+            hint.setText("\u25BC  " + (queueActive() ? "Queue" : "Episodes"));
+            hint.setVisibility(vis && hasPanelList() && !panelOpen && !epOpen ? View.VISIBLE : View.GONE);
+            updateIcons();
             titleBox.setVisibility(vis ? View.VISIBLE : View.GONE);
         });
 
@@ -1047,6 +1050,7 @@ public class PlayerActivity extends Activity {
         root.addView(overlay, ovLp);
 
         buildPanel();
+        buildIcons();
         buildEpisodePanel();
         buildSkipButton();
         buildUpNext();
@@ -1191,7 +1195,14 @@ public class PlayerActivity extends Activity {
         if (curAudio == null && !audios.isEmpty()) curAudio = audios.get(0);
         curAudio = betterDirectTrack(curAudio);
         for (Plex.Stream s : item.streamsOf(3)) if (s.selected) curSub = s;
-        if (curSub == null) pickPreferredSubtitle();
+        if (curSub == null) {
+            pickPreferredSubtitle();
+        } else {
+            // The track Plex has chosen is the one the menu ticks, so it has to be switched on too
+            subChosen = true;
+            if (curSub.isExternal()) externalSub = curSub;
+            else pendingSub = curSub;
+        }
     }
 
     // --------------------------------------------------------- Playback
@@ -1433,6 +1444,10 @@ public class PlayerActivity extends Activity {
     /** Tunnelled playback asks the Fire TV for a direct, hardware-synced sound output, which it refuses
      *  to open for 5.1 sound that the app has to decode itself (AAC, FLAC, PCM...). */
     private boolean tunnelBreaksSound() {
+        // Plex is converting the sound to Dolby Digital: the Fire TV would decode that to PCM when tunnelled, so play it
+        // untunnelled and send it as a raw Dolby Digital stream (when that setting is on)
+        if (ac3 && getSharedPreferences("reel_ui", MODE_PRIVATE).getBoolean("eac3Raw", false)
+                && !DtsCoreExtractors.stripToCore) return true;
         if (curAudio == null || curAudio.codec == null) return false;
         String c = curAudio.codec.toLowerCase(Locale.ROOT);
         // The Fire TV turns plain Dolby Digital and Dolby Digital Plus (not Atmos) into PCM on the tunnelled path,
@@ -2071,6 +2086,10 @@ public class PlayerActivity extends Activity {
         view.setShowSubtitleButton(false);
         view.setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS); // spinner while the picture catches up
         view.setUseController(false); // our own Plex-style controls (PlayerOsd)
+        // The picture itself holds focus while the timeline is "selected", so the round buttons only
+        // get it when you press Up onto them (and Down can hand it back)
+        view.setFocusable(true);
+        if (android.os.Build.VERSION.SDK_INT >= 26) view.setDefaultFocusHighlightEnabled(false);
         applySubStyle();
     }
 
@@ -2236,6 +2255,9 @@ public class PlayerActivity extends Activity {
 
     private void applySubDirect(Plex.Stream s) {
         Tracks.Group g = subGroupFor(s);
+        android.util.Log.i("ReelPlayer", "subtitle track " + s.id + " " + s.codec + " lang=" + s.langCode + " -> group "
+                + (g == null ? "none" : g.getTrackFormat(0).sampleMimeType + " " + g.getTrackFormat(0).language
+                + " supported " + g.isTrackSupported(0)) + " (text groups " + groupsOfType(C.TRACK_TYPE_TEXT).size() + ")");
         if (g == null) {
             Toast.makeText(this, "Couldn't find that subtitle track in the video", Toast.LENGTH_SHORT).show();
             return;
@@ -2292,60 +2314,170 @@ public class PlayerActivity extends Activity {
     // ----------------------------------------------------------- Panel
 
     private void buildPanel() {
+        // A small frosted popup that floats above the round buttons, at the right
         panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setBackgroundColor(0xF2101218);
-        int pad = (int) (W * 0.02f);
-        panel.setPadding(pad, pad, pad, pad);
+        android.graphics.drawable.GradientDrawable bg = UiUtil.rounded(0xE62A2A2D, H * 0.035f);
+        bg.setStroke(Math.max(1, (int) (H * 0.002f)), 0x26FFFFFF);
+        panel.setBackground(bg);
+        panel.setPadding((int) (W * 0.008f), (int) (H * 0.026f), (int) (W * 0.008f), (int) (H * 0.016f));
         panel.setVisibility(View.GONE);
+        panel.setElevation(H * 0.02f);
 
-        LinearLayout tabs = new LinearLayout(this);
-        tabs.setOrientation(LinearLayout.HORIZONTAL);
-        for (int i = 0; i < TAB_COUNT; i++) {
-            final int index = i;
-            final TextView t = new TextView(this);
-            t.setText(TAB_NAMES[i]);
-            t.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.03f);
-            t.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
-            t.setGravity(Gravity.CENTER);
-            t.setPadding((int) (W * 0.014f), (int) (H * 0.012f), (int) (W * 0.014f), (int) (H * 0.012f));
-            t.setFocusable(true);
-            t.setClickable(true);
-            t.setOnClickListener(v -> showTab(index));
-            t.setOnFocusChangeListener((v, f) -> styleTabs());
-            tabViews[i] = t;
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.rightMargin = (int) (W * 0.006f);
-            tabs.addView(t, lp);
-        }
-        panel.addView(tabs);
+        panelTitle = new TextView(this);
+        panelTitle.setTextColor(0xBBFFFFFF);
+        panelTitle.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.0235f);
+        panelTitle.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+        panelTitle.setPadding((int) (W * 0.008f), 0, 0, (int) (H * 0.012f));
+        panel.addView(panelTitle);
 
-        scroll = new ScrollView(this);
+        final int maxH = (int) (H * 0.56f);
+        scroll = new ScrollView(this) {
+            @Override
+            protected void onMeasure(int w, int h) {
+                super.onMeasure(w, View.MeasureSpec.makeMeasureSpec(maxH, View.MeasureSpec.AT_MOST));
+            }
+        };
         scroll.setVerticalScrollBarEnabled(false);
         list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(list, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        LinearLayout.LayoutParams sLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
-        sLp.topMargin = (int) (H * 0.02f);
-        panel.addView(scroll, sLp);
+        panel.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         FrameLayout.LayoutParams pLp = new FrameLayout.LayoutParams(
-                (int) (W * 0.42f), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END);
+                (int) (W * 0.27f), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.END);
+        pLp.rightMargin = (int) (W * 0.05f);
+        pLp.bottomMargin = (int) (H * 0.225f);
         root.addView(panel, pLp);
     }
 
-    private void styleTabs() {
-        for (int i = 0; i < TAB_COUNT; i++) {
-            TextView t = tabViews[i];
-            boolean focused = t.hasFocus();
-            boolean selected = i == tabIndex;
-            t.setBackground(UiUtil.rounded(focused ? 0xFFFFFFFF : (selected ? 0x44FFFFFF : 0x00000000),
-                    H * 0.04f));
-            t.setTextColor(focused ? 0xFF111111 : 0xFFFFFFFF);
-            t.setAlpha(selected || focused ? 1f : 0.7f);
+    /** Subtitles, audio and settings: three round buttons just above the timeline, at the right. */
+    private void buildIcons() {
+        iconRow = new LinearLayout(this);
+        iconRow.setOrientation(LinearLayout.HORIZONTAL);
+        iconRow.setVisibility(View.GONE);
+        iconRow.setAlpha(0f);
+        iconRow.setClipChildren(false);
+        iconRow.setClipToPadding(false);
+        int size = (int) (H * 0.07f);
+        final int room = (int) (size * 0.15f); // space around the buttons for the focused one to grow into
+        iconRow.setPadding(room, room, room, room);
+        for (int i = 0; i < 3; i++) {
+            final int index = i;
+            PlayerIcon b = new PlayerIcon(this, i);
+            b.setOnClickListener(v -> openPanel(index));
+            b.setOnFocusChangeListener((v, f) -> {
+                b.repaint();
+                if (f) {
+                    SoundFx.move();
+                    if (osd != null) osd.show(); // restarts the fade-away timer
+                }
+            });
+            iconViews[i] = b;
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(size, size);
+            lp.leftMargin = i == 0 ? 0 : (int) (W * 0.008f);
+            iconRow.addView(b, lp);
+        }
+        FrameLayout.LayoutParams ilp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM | Gravity.END);
+        ilp.rightMargin = (int) (W * 0.05f) - room;
+        ilp.bottomMargin = (int) (H * 0.145f) - room;
+        root.addView(iconRow, ilp);
+    }
+
+    private boolean iconHasFocus() {
+        for (PlayerIcon b : iconViews) if (b != null && b.hasFocus()) return true;
+        return false;
+    }
+
+    /** The buttons come and go with the timeline; they're hidden while the episode row or a card is up. */
+    private void updateIcons() {
+        if (iconRow == null) return;
+        boolean show = osd != null && osd.isVisible() && !epOpen && stillCard == null && chanCard == null
+                && item != null;
+        iconRow.animate().cancel();
+        if (show) {
+            iconRow.setVisibility(View.VISIBLE);
+            iconRow.animate().alpha(1f).setDuration(Motion.FOCUS_MS).setInterpolator(Motion.EASE).start();
+        } else {
+            if (iconHasFocus()) view.requestFocus();
+            iconRow.animate().alpha(0f).setDuration(Motion.MEDIUM_MS).setInterpolator(Motion.EASE)
+                    .withEndAction(() -> {
+                        if (osd == null || !osd.isVisible() || epOpen) iconRow.setVisibility(View.GONE);
+                    }).start();
+        }
+    }
+
+    /** A round, dark glass button with a white symbol; white with a dark symbol while focused. */
+    private final class PlayerIcon extends View {
+        private final int kind; // 0 subtitles, 1 audio, 2 settings
+        private final android.graphics.Paint fill = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final android.graphics.Paint line = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+
+        PlayerIcon(Context c, int kind) {
+            super(c);
+            this.kind = kind;
+            setFocusable(true);
+            setClickable(true);
+            line.setStyle(android.graphics.Paint.Style.STROKE);
+            line.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+        }
+
+        void repaint() {
+            invalidate();
+            float s = hasFocus() ? 1.1f : 1f;
+            animate().scaleX(s).scaleY(s).setDuration(Motion.FAST_MS).setInterpolator(Motion.EASE).start();
+        }
+
+        @Override
+        protected void onDraw(android.graphics.Canvas c) {
+            float w = getWidth();
+            float h = getHeight();
+            boolean f = hasFocus();
+            boolean on = panelOpen && openedFrom == kind;
+            fill.setColor(f ? 0xFFFFFFFF : on ? 0x66FFFFFF : 0x8C1C1C1E);
+            c.drawCircle(w / 2f, h / 2f, Math.min(w, h) / 2f, fill);
+            int ink = f ? 0xFF111111 : 0xFFFFFFFF;
+            line.setColor(ink);
+            fill.setColor(ink);
+            float sw = w * 0.055f;
+            line.setStrokeWidth(sw);
+            if (kind == 0) {
+                // Speech bubble with two lines of text
+                android.graphics.RectF r = new android.graphics.RectF(w * 0.25f, h * 0.30f, w * 0.75f, h * 0.64f);
+                c.drawRoundRect(r, w * 0.07f, w * 0.07f, line);
+                android.graphics.Path tail = new android.graphics.Path();
+                tail.moveTo(w * 0.40f, h * 0.64f);
+                tail.lineTo(w * 0.40f, h * 0.76f);
+                tail.lineTo(w * 0.52f, h * 0.64f);
+                c.drawPath(tail, line);
+                c.drawLine(w * 0.34f, h * 0.43f, w * 0.52f, h * 0.43f, line);
+                c.drawLine(w * 0.34f, h * 0.53f, w * 0.66f, h * 0.53f, line);
+            } else if (kind == 1) {
+                // Sound wave: bars of different heights
+                float[] bars = {0.14f, 0.30f, 0.44f, 0.26f, 0.36f, 0.18f, 0.10f};
+                line.setStrokeWidth(w * 0.045f);
+                for (int i = 0; i < bars.length; i++) {
+                    float x = w * (0.285f + i * 0.072f);
+                    c.drawLine(x, h * (0.5f - bars[i] / 2f), x, h * (0.5f + bars[i] / 2f), line);
+                }
+            } else {
+                // Gear: a ring with eight teeth
+                float cx = w / 2f;
+                float cy = h / 2f;
+                c.drawCircle(cx, cy, w * 0.13f, line);
+                line.setStrokeWidth(w * 0.07f);
+                for (int i = 0; i < 8; i++) {
+                    double a = Math.PI / 4 * i;
+                    c.drawLine(cx + (float) Math.cos(a) * w * 0.21f, cy + (float) Math.sin(a) * w * 0.21f,
+                            cx + (float) Math.cos(a) * w * 0.28f, cy + (float) Math.sin(a) * w * 0.28f, line);
+                }
+                line.setStrokeWidth(sw);
+                c.drawCircle(cx, cy, w * 0.21f, line);
+            }
         }
     }
 
@@ -2377,8 +2509,8 @@ public class PlayerActivity extends Activity {
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.BOTTOM | Gravity.END);
-        lp.bottomMargin = (int) (H * 0.22f);
-        lp.rightMargin = (int) (W * 0.04f);
+        lp.bottomMargin = (int) (H * 0.25f); // above the round buttons
+        lp.rightMargin = (int) (W * 0.05f);
         root.addView(skipBtn, lp);
     }
 
@@ -2554,6 +2686,7 @@ public class PlayerActivity extends Activity {
             osd.lift(H * 0.40f);
         }
         hint.setVisibility(View.GONE);
+        updateIcons();
         epPrev.setAlpha(neighbour(-1) == null ? 0.4f : 1f);
         epNext.setAlpha(neighbour(1) == null ? 0.4f : 1f);
         final boolean q = queueActive();
@@ -2675,15 +2808,25 @@ public class PlayerActivity extends Activity {
         epOpen = false;
         epPanel.setVisibility(View.GONE);
         view.requestFocus();
+        updateIcons();
+        if (osd != null && osd.isVisible() && hasPanelList()) hint.setVisibility(View.VISIBLE);
     }
 
     private void openPanel() {
+        openPanel(1);
+    }
+
+    /** [from] is the round button: 0 subtitles, 1 audio, 2 settings (quality, picture size, info). */
+    private void openPanel(int from) {
         if (item == null || player == null) return;
         panelOpen = true;
-        if (osd != null) osd.hide();
+        openedFrom = from;
+        gearSub = 0;
+        if (osd != null) osd.pin(true); // the timeline and buttons stay behind the popup
         hint.setVisibility(View.GONE);
         panel.setVisibility(View.VISIBLE);
-        showTab(TAB_AUDIO);
+        for (PlayerIcon b : iconViews) b.invalidate();
+        showTab(from == 0 ? TAB_SUBS : from == 2 ? TAB_VIDEO : TAB_AUDIO);
     }
 
     private void closePanel() {
@@ -2692,11 +2835,22 @@ public class PlayerActivity extends Activity {
         panel.setVisibility(View.GONE);
         handler.removeCallbacks(debugTick);
         if (overlayOn) handler.post(debugTick);
-        view.requestFocus();
+        // Back onto the button that opened it
+        if (iconRow != null && iconRow.getVisibility() == View.VISIBLE) iconViews[openedFrom].requestFocus();
+        else view.requestFocus();
+        for (PlayerIcon b : iconViews) b.invalidate();
+        if (osd != null) {
+            osd.pin(false); // the controls fade away again as usual
+            osd.show();
+        }
     }
 
     @Override
     public void onBackPressed() {
+        if (!panelOpen && iconHasFocus()) {
+            view.requestFocus(); // Back from the buttons returns to the picture first
+            return;
+        }
         if (!epOpen && !panelOpen && osd != null && osd.onBack()) return;
         if (epOpen) {
             closeEpisodes();
@@ -2705,6 +2859,9 @@ public class PlayerActivity extends Activity {
         if (panelOpen) {
             if (inSubView) {
                 showTab(TAB_SUBS);
+            } else if (tabIndex == TAB_INFO || (tabIndex == TAB_VIDEO && gearSub != 0)) {
+                gearSub = 0;
+                showTab(TAB_VIDEO);
             } else {
                 closePanel();
             }
@@ -2745,17 +2902,46 @@ public class PlayerActivity extends Activity {
             handleMoveKey(event);
             return true;
         }
-        if (panelOpen && !inSubView && kc == KeyEvent.KEYCODE_DPAD_UP && event.getAction() == KeyEvent.ACTION_DOWN) {
-            // Up from the list lands on the tab you are in, not whichever tab happens to be closest
-            View f = getCurrentFocus();
-            if (f != null && f.getParent() == list) {
-                View n = f.focusSearch(View.FOCUS_UP);
-                for (TextView tv : tabViews) {
-                    if (n == tv) {
-                        tabViews[tabIndex].requestFocus();
-                        return true;
-                    }
+        if (panelOpen && (kc == KeyEvent.KEYCODE_DPAD_UP || kc == KeyEvent.KEYCODE_DPAD_DOWN
+                || kc == KeyEvent.KEYCODE_DPAD_LEFT || kc == KeyEvent.KEYCODE_DPAD_RIGHT)) {
+            // Focus stays inside the popup: Up / Down move between its rows, and never fall out onto the buttons
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                View f = getCurrentFocus();
+                int dir = kc == KeyEvent.KEYCODE_DPAD_UP ? View.FOCUS_UP : kc == KeyEvent.KEYCODE_DPAD_DOWN
+                        ? View.FOCUS_DOWN : 0;
+                if (f != null && f.getParent() == list && dir != 0) {
+                    View n = f.focusSearch(dir);
+                    if (n != null && n.getParent() == list) n.requestFocus();
+                    else scroll.smoothScrollBy(0, dir == View.FOCUS_DOWN ? (int) (H * 0.2f) : -(int) (H * 0.2f));
+                } else if (dir != 0) {
+                    scroll.smoothScrollBy(0, dir == View.FOCUS_DOWN ? (int) (H * 0.2f) : -(int) (H * 0.2f));
                 }
+            }
+            return true;
+        }
+        if (!panelOpen && !epOpen && iconHasFocus()) {
+            // On the round buttons: Left / Right / OK work on them, Down goes back to the picture
+            if (event.getAction() == KeyEvent.ACTION_DOWN && osd != null) osd.show();
+            if (kc == KeyEvent.KEYCODE_DPAD_DOWN) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN) view.requestFocus();
+                return true;
+            }
+            if (kc == KeyEvent.KEYCODE_DPAD_UP) return true;
+            if (kc == KeyEvent.KEYCODE_DPAD_LEFT || kc == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    View f = getCurrentFocus();
+                    View n = f == null ? null : f.focusSearch(kc == KeyEvent.KEYCODE_DPAD_LEFT
+                            ? View.FOCUS_LEFT : View.FOCUS_RIGHT);
+                    if (n instanceof PlayerIcon) n.requestFocus();
+                }
+                return true;
+            }
+            if (kc == KeyEvent.KEYCODE_DPAD_CENTER || kc == KeyEvent.KEYCODE_ENTER) {
+                if (event.getAction() == KeyEvent.ACTION_UP) {
+                    View f = getCurrentFocus();
+                    if (f != null) f.performClick();
+                }
+                return true;
             }
         }
         if (!panelOpen && !epOpen && upNextShowing()) {
@@ -2806,9 +2992,10 @@ public class PlayerActivity extends Activity {
             }
             if (kc == KeyEvent.KEYCODE_DPAD_UP) {
                 if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
-                    // First press only brings up the controls; a second press opens settings
+                    // First press only brings up the controls; a second press moves up onto the round buttons
                     if (!osd.isVisible()) osd.show();
-                    else openPanel();
+                    else if (iconRow != null && iconRow.getVisibility() == View.VISIBLE) iconViews[0].requestFocus();
+                    else osd.show();
                 }
                 return true;
             }
@@ -2820,7 +3007,10 @@ public class PlayerActivity extends Activity {
         }
         if (event.getAction() == KeyEvent.ACTION_DOWN && !panelOpen) {
             if (!epOpen && event.getKeyCode() == KeyEvent.KEYCODE_DPAD_DOWN && hasPanelList()) {
-                openEpisodes();
+                // First Down only brings up the controls; from the timeline, Down again opens the episodes
+                if (event.getRepeatCount() > 0) return true;
+                if (osd != null && !osd.isVisible()) osd.show();
+                else openEpisodes();
                 return true;
             }
             if (epOpen && event.getKeyCode() == KeyEvent.KEYCODE_DPAD_UP) {
@@ -2864,13 +3054,15 @@ public class PlayerActivity extends Activity {
         r.setOrientation(LinearLayout.VERTICAL);
         r.setFocusable(true);
         r.setClickable(true);
-        int ph = (int) (W * 0.014f);
-        int pv = (int) (H * 0.014f);
+        int ph = (int) (W * 0.008f);
+        int pv = (int) (H * 0.0135f);
         r.setPadding(ph, pv, ph, pv);
 
+        // A tick column on the left (only the current choice has one), then the name
         final TextView t = new TextView(this);
-        t.setText((selected ? "✓  " : "     ") + title);
-        t.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.029f);
+        t.setText((selected ? "✓   " : "      ") + title);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.027f);
+        t.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
         t.setTextColor(0xFFFFFFFF);
         t.setSingleLine(true);
         t.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -2878,8 +3070,8 @@ public class PlayerActivity extends Activity {
 
         final TextView s = new TextView(this);
         if (sub != null && !sub.isEmpty()) {
-            s.setText("     " + sub);
-            s.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.022f);
+            s.setText("      " + sub);
+            s.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.0205f);
             s.setTextColor(0xAAFFFFFF);
             s.setSingleLine(true);
             s.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -2887,8 +3079,9 @@ public class PlayerActivity extends Activity {
         }
         r.setAlpha(dim ? 0.55f : 1f);
 
-        final float radius = H * 0.012f;
+        final float radius = H * 0.026f;
         r.setOnFocusChangeListener((v, f) -> {
+            if (f) SoundFx.move();
             r.setBackground(f ? UiUtil.rounded(0xFFFFFFFF, radius) : null);
             t.setTextColor(f ? 0xFF111111 : 0xFFFFFFFF);
             s.setTextColor(f ? 0xFF444444 : 0xAAFFFFFF);
@@ -2917,17 +3110,24 @@ public class PlayerActivity extends Activity {
                     return;
                 }
             }
-            tabViews[tabIndex].requestFocus();
+            if (iconRow != null) iconViews[openedFrom].requestFocus();
         }
     }
 
     private void showTab(int index) {
         tabIndex = index;
         inSubView = false;
-        styleTabs();
         list.removeAllViews();
         infoText = null;
         handler.removeCallbacks(debugTick);
+        panelTitle.setText(index == TAB_AUDIO ? "Audio" : index == TAB_SUBS ? "Subtitles"
+                : index == TAB_VIDEO ? "Settings" : "Info");
+        ViewGroup.LayoutParams plp = panel.getLayoutParams();
+        int wantW = (int) (W * (index == TAB_INFO ? 0.40f : 0.27f));
+        if (plp != null && plp.width != wantW) {
+            plp.width = wantW;
+            panel.setLayoutParams(plp);
+        }
 
         if (index == TAB_AUDIO) {
             showAudioTab();
@@ -2964,35 +3164,107 @@ public class PlayerActivity extends Activity {
         sv.setBottomPaddingFraction(subBase() + lift);
     }
 
+    private int gearSub = 0; // 0 the settings list, 1 the quality choices, 2 the picture size choices
+    private static final String[] FIT_NAMES = {"Fit", "Fill", "Stretch"};
+
+    /** The settings button: Quality, Info and Picture size, each opening its own list. */
     private void showVideoTab() {
-        addHeading("Picture size, for this film only. Fill zooms in to remove black bars (it crops the edges); "
-                + "Stretch pulls the picture to the screen's shape.");
-        String[] fitNames = {"Fit", "Fill", "Stretch"};
-        String[] fitNotes = {"The whole picture, black bars if the shapes differ", "Fills the screen, crops the edges",
-                "Fills the screen, squashes the picture"};
-        for (int i = 0; i < fitNames.length; i++) {
-            final int f = i;
-            list.addView(makeRow(fitNames[i], fitNotes[i], i == fitMode, false, v -> {
-                fitMode = f;
-                applyFit();
-                showTab(TAB_VIDEO);
-            }));
+        if (gearSub == 1) {
+            panelTitle.setText("Quality");
+            View selected = null;
+            for (int i = 0; i < QUALITIES.length; i++) {
+                final int q = i;
+                View row = makeRow((String) QUALITIES[i][0], null, i == quality, false, v -> {
+                    gearSub = 0;
+                    if (q == quality) {
+                        showTab(TAB_VIDEO);
+                        return;
+                    }
+                    quality = q;
+                    ac3 = needsAc3(curAudio);
+                    long pos = currentMs();
+                    begin(pos, q != 0);
+                    closePanel();
+                });
+                list.addView(row);
+                if (i == quality) selected = row;
+            }
+            focusFirstOrSelected(selected);
+            return;
         }
-        addHeading("");
-        addHeading("Pick a lower quality and Plex converts the picture to match. "
-                + "Original plays the file as it is.");
-        for (int i = 0; i < QUALITIES.length; i++) {
-            final int q = i;
-            list.addView(makeRow((String) QUALITIES[i][0], null, i == quality, false, v -> {
-                if (q == quality) return;
-                quality = q;
-                ac3 = needsAc3(curAudio);
-                long pos = currentMs();
-                begin(pos, q != 0);
-                showTab(TAB_VIDEO);
-            }));
+        if (gearSub == 2) {
+            panelTitle.setText("Picture size");
+            View selected = null;
+            String[] notes = {"Whole picture, may show black bars",
+                    "Fills the screen, crops the edges", "Fills the screen, squashes it"};
+            for (int i = 0; i < FIT_NAMES.length; i++) {
+                final int f = i;
+                View row = makeRow(FIT_NAMES[i], notes[i], i == fitMode, false, v -> {
+                    fitMode = f;
+                    applyFit();
+                    gearSub = 0;
+                    showTab(TAB_VIDEO);
+                });
+                list.addView(row);
+                if (i == fitMode) selected = row;
+            }
+            focusFirstOrSelected(selected);
+            return;
         }
+        View first = valueRow("Quality", (String) QUALITIES[quality][0], v -> {
+            gearSub = 1;
+            showTab(TAB_VIDEO);
+        });
+        list.addView(first);
+        list.addView(valueRow("Info", "", v -> showTab(TAB_INFO)));
+        list.addView(valueRow("Picture size", FIT_NAMES[Math.max(0, Math.min(2, fitMode))], v -> {
+            gearSub = 2;
+            showTab(TAB_VIDEO);
+        }));
+        focusFirstOrSelected(first);
     }
+
+    /** A line of the settings list: the name on the left, the current choice and an arrow on the right. */
+    private View valueRow(String name, String value, View.OnClickListener click) {
+        final LinearLayout r = new LinearLayout(this);
+        r.setOrientation(LinearLayout.HORIZONTAL);
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        r.setFocusable(true);
+        r.setClickable(true);
+        r.setPadding((int) (W * 0.008f), (int) (H * 0.0155f), (int) (W * 0.008f), (int) (H * 0.0155f));
+        final TextView n = new TextView(this);
+        n.setText("      " + name);
+        n.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.027f);
+        n.setTypeface(UiUtil.tf("sans-serif-medium", Typeface.BOLD));
+        n.setTextColor(0xFFFFFFFF);
+        n.setSingleLine(true);
+        r.addView(n, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        final TextView v = new TextView(this);
+        v.setText(value);
+        v.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.024f);
+        v.setTextColor(0xAAFFFFFF);
+        v.setSingleLine(true);
+        v.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        v.setMaxWidth((int) (W * 0.12f));
+        r.addView(v);
+        final TextView a = new TextView(this);
+        a.setText("\u203A");
+        a.setTextSize(TypedValue.COMPLEX_UNIT_PX, H * 0.036f);
+        a.setTextColor(0x88FFFFFF);
+        a.setPadding((int) (W * 0.006f), 0, (int) (W * 0.004f), 0);
+        r.addView(a);
+        final float radius = H * 0.026f;
+        r.setOnFocusChangeListener((view, f) -> {
+            if (f) SoundFx.move();
+            r.setBackground(f ? UiUtil.rounded(0xFFFFFFFF, radius) : null);
+            n.setTextColor(f ? 0xFF111111 : 0xFFFFFFFF);
+            v.setTextColor(f ? 0xFF444444 : 0xAAFFFFFF);
+            a.setTextColor(f ? 0xFF444444 : 0x88FFFFFF);
+        });
+        r.setOnClickListener(click);
+        return r;
+    }
+
 
     /** Plain track names: the language (plus Commentary / SDH / Forced when it applies), numbered if
      *  several tracks share one. The file's own track title, often a release-group tag, is dropped. */
@@ -3048,7 +3320,7 @@ public class PlayerActivity extends Activity {
             }
             View row = makeRow(names.get(s.id), sub, isCur, false, v -> {
                 selectAudio(s);
-                showTab(TAB_AUDIO);
+                closePanel();
             });
             list.addView(row);
             if (isCur) selected = row;
@@ -3065,7 +3337,7 @@ public class PlayerActivity extends Activity {
         final boolean subsActive = !transcoding || subChosen; // while converting, nothing is on until you pick
         View off = makeRow("Off", null, curSub == null || !subsActive, false, v -> {
             selectSub(null);
-            showTab(TAB_SUBS);
+            closePanel();
         });
         list.addView(off);
         if (curSub == null || !subsActive) selected = off;
@@ -3078,7 +3350,7 @@ public class PlayerActivity extends Activity {
                     + (transcoding && isPicture(s) ? "  ·  burns in, re-encodes the video" : "");
             View row = makeRow(subNames.get(s.id), sub, isCur, false, v -> {
                 selectSub(s);
-                showTab(TAB_SUBS);
+                closePanel();
             });
             list.addView(row);
             if (isCur) selected = row;

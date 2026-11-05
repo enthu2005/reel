@@ -113,6 +113,11 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     // Rest on a card and it grows into a wider card with the trailer playing inside it.
     // Pressing OK then opens the title with the trailer filling the screen behind it.
     private androidx.media3.exoplayer.ExoPlayer previewPlayer;
+    // Players are kept for the next preview instead of being released and rebuilt on every focus move: each of those
+    // blocked the main thread for 25-40 ms, which showed as a stutter moving between the bar, spotlight and rows.
+    private androidx.media3.exoplayer.ExoPlayer spareCardPlayer;
+    private androidx.media3.common.Player.Listener cardListener;
+    private boolean cardQuiet;
     private String previewSession;
     private boolean previewIsClip;
     private boolean previewShowing; // first frame is on screen
@@ -403,7 +408,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         pCard.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS); // the video must never take the remote
         pCard.setBackground(UiUtil.rounded(UiUtil.CARD, r));
         UiUtil.clipRounded(pCard, r);
-        pCard.setElevation(H * 0.03f);
+        // (No drop shadow: it was redrawn with every video frame, which cost the graphics chip a lot)
         ImageView still = new ImageView(this);
         still.setScaleType(ImageView.ScaleType.CENTER_CROP);
         String art = it.heroArt() != null ? it.heroArt() : it.thumb;
@@ -471,7 +476,8 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     private void dimBackdrop(boolean on) {
         if (bgBox == null) return;
         bgBox.animate().cancel();
-        bgBox.animate().alpha(on ? 0f : 1f).setDuration(on ? Motion.MEDIUM_MS : Motion.SLOW_MS).start();
+        // withLayer: the two big pictures are flattened once for the fade instead of being blended again every frame
+        bgBox.animate().alpha(on ? 0f : 1f).setDuration(on ? Motion.MEDIUM_MS : Motion.SLOW_MS).withLayer().start();
     }
 
     /** Fills the TextureView with the video, cropping the edges (like a centre-crop picture). */
@@ -496,9 +502,21 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         hdr.put("X-Plex-Product", "Reel");
         hdr.put("X-Plex-Client-Profile-Name", "Konvergo");
         // Sound decoded in the app (so it can be quiet) and levelled, same as every other preview.
-        previewPlayer = PreviewHandoff.newPlayer(this, hdr);
+        boolean quiet = previewVolume(this) <= 0f;
+        if (spareCardPlayer != null && cardQuiet == quiet) {
+            previewPlayer = spareCardPlayer;
+            spareCardPlayer = null;
+        } else {
+            if (spareCardPlayer != null) {
+                spareCardPlayer.release();
+                spareCardPlayer = null;
+            }
+            previewPlayer = PreviewHandoff.newPlayer(this, hdr);
+            cardQuiet = quiet;
+        }
+        cancelFade(previewPlayer);
         previewPlayer.setVolume(0f);
-        previewPlayer.addListener(new androidx.media3.common.Player.Listener() {
+        cardListener = new androidx.media3.common.Player.Listener() {
             @Override
             public void onVideoSizeChanged(androidx.media3.common.VideoSize vs) {
                 if (token == previewToken) cropVideo(vs.width, vs.height, vs.pixelWidthHeightRatio);
@@ -526,7 +544,8 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                     stopPreview();
                 }
             }
-        });
+        };
+        previewPlayer.addListener(cardListener);
         androidx.media3.common.MediaItem mi;
         if (directUrl != null) {
             mi = androidx.media3.common.MediaItem.fromUri(directUrl);
@@ -549,10 +568,32 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         return v == 0 ? 0f : v == 2 ? 0.5f : 0.3f;
     }
 
+    private static final java.util.Map<androidx.media3.exoplayer.ExoPlayer, android.animation.ValueAnimator> FADES = new java.util.WeakHashMap<>();
+
+    /** Stops a volume fade that is still running on this player (it is reused for the next preview). */
+    static void cancelFade(androidx.media3.exoplayer.ExoPlayer p) {
+        android.animation.ValueAnimator old = p == null ? null : FADES.remove(p);
+        if (old != null) old.cancel();
+    }
+
+    /** Really lets go of the kept players (when the page is left). */
+    private void releaseSpares() {
+        if (spareCardPlayer != null) {
+            spareCardPlayer.release();
+            spareCardPlayer = null;
+        }
+        if (spareHeroPlayer != null) {
+            spareHeroPlayer.release();
+            spareHeroPlayer = null;
+        }
+    }
+
     /** Eases the volume up (or down) so the sound doesn't jump in. */
     static void fadeVolume(final androidx.media3.exoplayer.ExoPlayer p, float to, long ms) {
         if (p == null) return;
+        cancelFade(p);
         android.animation.ValueAnimator a = android.animation.ValueAnimator.ofFloat(p.getVolume(), to);
+        FADES.put(p, a);
         a.setDuration(ms);
         a.addUpdateListener(an -> {
             try {
@@ -608,7 +649,15 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
 
     private void releasePreviewPlayer() {
         if (previewPlayer != null) {
-            previewPlayer.release();
+            // Stop it and keep it for the next preview (releasing it here froze the screen for a moment)
+            if (cardListener != null) previewPlayer.removeListener(cardListener);
+            cardListener = null;
+            cancelFade(previewPlayer);
+            previewPlayer.setVolume(0f);
+            previewPlayer.stop();
+            previewPlayer.clearMediaItems();
+            if (spareCardPlayer != null) spareCardPlayer.release();
+            spareCardPlayer = previewPlayer;
             previewPlayer = null;
         }
         if (previewSession != null) {
@@ -620,6 +669,9 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
     // ---- Spotlight preview: after 3 seconds the backdrop turns into the title's trailer / a scene.
     // The video is found and loaded during those 3 seconds, so it can start the moment they're up.
     private androidx.media3.exoplayer.ExoPlayer heroPlayer;
+    private androidx.media3.exoplayer.ExoPlayer spareHeroPlayer;
+    private androidx.media3.common.Player.Listener heroListener;
+    private boolean heroQuiet;
     private android.view.TextureView heroTex;
     private String heroSession;
     private int heroPrevToken;
@@ -781,9 +833,21 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
                     .setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8).build();
         }
         releaseHeroPlayer();
-        heroPlayer = PreviewHandoff.newPlayer(this, hdr);
+        boolean quiet = previewVolume(this) <= 0f;
+        if (spareHeroPlayer != null && heroQuiet == quiet) {
+            heroPlayer = spareHeroPlayer;
+            spareHeroPlayer = null;
+        } else {
+            if (spareHeroPlayer != null) {
+                spareHeroPlayer.release();
+                spareHeroPlayer = null;
+            }
+            heroPlayer = PreviewHandoff.newPlayer(this, hdr);
+            heroQuiet = quiet;
+        }
+        cancelFade(heroPlayer);
         heroPlayer.setVolume(0f);
-        heroPlayer.addListener(new androidx.media3.common.Player.Listener() {
+        heroListener = new androidx.media3.common.Player.Listener() {
             @Override
             public void onVideoSizeChanged(androidx.media3.common.VideoSize vs) {
                 if (token != heroPrevToken || heroTex == null || vs.width <= 0 || vs.height <= 0) return;
@@ -818,7 +882,8 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
             public void onPlayerError(androidx.media3.common.PlaybackException error) {
                 if (token == heroPrevToken) stopHeroPreview();
             }
-        });
+        };
+        heroPlayer.addListener(heroListener);
         heroPlayer.setVideoTextureView(heroTex);
         heroPlayer.setMediaItem(mi);
         heroPlayer.setPlayWhenReady(false); // load now; play once the 3 seconds are up
@@ -829,7 +894,14 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
 
     private void releaseHeroPlayer() {
         if (heroPlayer != null) {
-            heroPlayer.release();
+            if (heroListener != null) heroPlayer.removeListener(heroListener);
+            heroListener = null;
+            cancelFade(heroPlayer);
+            heroPlayer.setVolume(0f);
+            heroPlayer.stop();
+            heroPlayer.clearMediaItems();
+            if (spareHeroPlayer != null) spareHeroPlayer.release();
+            spareHeroPlayer = heroPlayer;
             heroPlayer = null;
         }
         if (heroSession != null) {
@@ -1048,6 +1120,7 @@ public class HomeActivity extends ReelActivity implements PosterAdapter.Listener
         handler.removeCallbacks(requestsTick);
         stopHeroPreview();
         stopPreview();
+        releaseSpares();
     }
 
     private void restartSpotlightTimer() {

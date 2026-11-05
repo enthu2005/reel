@@ -50,6 +50,14 @@ Plex connection (`lib/plex.dart`, `lib/net.dart`):
 Fire TV app: already uses the shared-server token. The on-disk "Extra large buffer" was removed on purpose (it stopped
 simple files from playing); do not bring it back. Playback uses ExoPlayer's normal memory buffer only.
 
+Fire TV UI (Apple-style, already worked out; do not redo): Settings is categories on the left + a frosted panel on the right
+(`SettingsActivity`; Right from a category must go to the panel's first row, because "Sign out" sits level with "Account").
+The player's audio / subtitles / gear menus are three round buttons above the timeline that open a small popup
+(`PlayerActivity.buildIcons/buildPanel`; the video view is focusable so Down from the buttons can hand focus back).
+On Home, the preview ExoPlayers (`HomeActivity` card + spotlight) are kept and reused (`spareCardPlayer`, `spareHeroPlayer`):
+releasing and rebuilding one on every focus move blocked the main thread for 25-40 ms each and made moving between the top bar,
+spotlight and rows stutter. Measure with `adb shell dumpsys gfxinfo com.enthu.reel framestats` (warm runs; the first run after an install is slow).
+
 Fire TV audio (Cube, Arcam AVR): on Surround Sound "Best Available" the Fire TV decodes plain Dolby Digital / Digital Plus to PCM
 when the picture can't be tunnelled (its H.264 decoder has no tunnelling), which drops out. Reel's setting "Dolby Digital /
 Digital Plus output" sends those raw (IecDtsHdSink) and skips tunnelling for those tracks. Atmos tracks keep the Fire TV's own

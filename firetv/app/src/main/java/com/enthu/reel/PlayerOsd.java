@@ -244,6 +244,11 @@ final class PlayerOsd {
     /** Slides the timeline up by [px] (out of the way of a row along the bottom), or back with 0. */
     void lift(float px) {
         bottom.animate().cancel();
+        // Cancelling also stops a fade-in that was under way, which would leave the timeline see-through
+        if (visible) {
+            bottom.setVisibility(View.VISIBLE);
+            bottom.setAlpha(1f);
+        }
         bottom.animate().translationY(-px).setDuration(Motion.FOCUS_MS).setInterpolator(Motion.EASE).start();
     }
 
