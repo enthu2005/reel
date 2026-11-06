@@ -95,7 +95,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _spotTimer;
   String? _spotShown;
   bool _spotAway = false;
-  bool get _spot => _rows.isNotEmpty && _rows.first.big;
+  bool get _spot =>
+      _rows.isNotEmpty && _rows.first.big && _rows.first.items.isNotEmpty;
   final Map<String, PlexItem?> _meta =
       {}; // full details: logo, picture and sound badges
 

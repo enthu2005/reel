@@ -112,6 +112,8 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
           _loading = false;
         });
       }
+    }, onError: (_) {
+      if (mounted) setState(() => _loading = false);
     });
   }
 
@@ -284,6 +286,8 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
           _loading = false;
         });
       }
+    }, onError: (_) {
+      if (mounted) setState(() => _loading = false);
     });
   }
 
@@ -433,7 +437,7 @@ class _LiveEditScreenState extends State<LiveEditScreen> {
             _changed = true;
             Live.load().then((_) {
               if (mounted) _refresh();
-            });
+            }, onError: (_) {});
           })
         else
           SizedBox(width: h * 0.075),

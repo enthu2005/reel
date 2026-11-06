@@ -337,7 +337,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 _next = i + 1 < e.length ? e[i + 1] : null;
               });
             }
-          });
+          }, onError: (_) {});
         }
       } catch (e) {
         if (mounted) setState(() => _status = "Couldn't start: $e");
@@ -360,7 +360,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       // Seek once the file is open and its length is known.
       _player.stream.duration.firstWhere((d) => d > Duration.zero).then((_) {
         if (mounted) _player.seek(Duration(milliseconds: widget.startMs));
-      });
+      }, onError: (_) {});
     }
     if (widget.channel > 0) {
       _watchChannelStart();
@@ -509,7 +509,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (at > const Duration(seconds: 3)) {
       _player.stream.duration.firstWhere((d) => d > Duration.zero).then((_) {
         if (mounted) _player.seek(at);
-      });
+      }, onError: (_) {});
     }
   }
 
@@ -617,6 +617,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     try {
       await _player.open(Media(url, start: at), play: true);
       if (mounted) setState(() => _status = '');
+      // a film that plays on for a while has earned a fresh set of retries
+      Future.delayed(const Duration(seconds: 30), () => _reconnects = 0);
     } catch (_) {
       if (mounted) setState(() => _status = 'The connection to the server was lost');
     }
