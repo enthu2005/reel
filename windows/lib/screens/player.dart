@@ -82,7 +82,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Duration? _mouseScrub;
   Timer? _commit;
   bool _panel = false;
-  int _panelTab = 0; // 0 audio, 1 subtitles, 2 picture
+  int _panelTab = 0; // 0 audio, 1 subtitles, 2 settings (the gear)
+  int _panelSub = 0; // 0 the list, 10 picture size, 11 / 12 / 13 subtitle size / colour / position
   int _fit =
       0; // 0 fit, 1 fill (crop black bars), 2 stretch - just for this film, not remembered
   Rect? _bars; // black bars found in the picture, for "fill"
@@ -1183,6 +1184,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     setState(() {
       _panel = true;
       _panelTab = tab;
+      _panelSub = 0;
+      _found = null;
     });
     _showOsd(stay: true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1427,9 +1430,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (e is KeyDownEvent &&
           (k == LogicalKeyboardKey.escape ||
               k == LogicalKeyboardKey.browserBack)) {
-        setState(() => _panel = false);
-        _focus.requestFocus();
-        _showOsd();
+        _panelBack();
         return KeyEventResult.handled;
       }
       return KeyEventResult.ignored; // arrows and Enter go to the panel
@@ -1722,36 +1723,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                     color: const Color(0xE6FFFFFF))),
                         ]),
                   ),
-                  if (!_panel && !_info)
-                  Positioned(
-                    right: w * 0.04,
-                    top: h * 0.055,
-                    child: Row(children: [
-                      _actionHint(h, Icons.keyboard_arrow_up_rounded,
-                          'Audio & subtitles', () => _openPanel(1)),
-                      SizedBox(width: h * 0.02),
-                      if (widget.channel > 0) ...[
-                        _actionHint(h, Icons.keyboard_arrow_down_rounded,
-                            'Channels', _openChannels),
-                        SizedBox(width: h * 0.02),
-                      ] else if (_episodes.isNotEmpty) ...[
-                        _actionHint(h, Icons.keyboard_arrow_down_rounded,
-                            'Episodes', () {
-                          setState(() => _queueOpen = true);
-                          _showOsd(stay: true);
-                        }),
-                        SizedBox(width: h * 0.02),
-                      ],
-                      _actionHint(h, Icons.picture_in_picture_alt_rounded,
-                          'Mini player (P)', _goMini),
-                      SizedBox(width: h * 0.02),
-                      _actionHint(h, Icons.show_chart_rounded, 'Stream graph (G)',
-                          () => setState(() => _graph = !_graph)),
-                      SizedBox(width: h * 0.02),
-                      _actionHint(
-                          h, Icons.info_outline_rounded, 'Info (I)', _toggleInfo),
-                    ]),
-                  ),
+                  if (!_panel && !_info && (widget.channel > 0 || _episodes.isNotEmpty))
+                    Positioned(
+                      right: w * 0.04,
+                      top: h * 0.055,
+                      child: widget.channel > 0
+                          ? _actionHint(h, Icons.keyboard_arrow_down_rounded,
+                              'Channels', _openChannels)
+                          : _actionHint(h, Icons.keyboard_arrow_down_rounded,
+                              'Episodes', () {
+                              setState(() => _queueOpen = true);
+                              _showOsd(stay: true);
+                            }),
+                    ),
                   Positioned.fill(
                     child: Align(
                       alignment: Alignment.center,
@@ -1781,21 +1765,41 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       ),
                     ),
                   ),
-                  if (_episodes.length > 1)
                   Positioned(
                     right: w * 0.05,
                     bottom: _queueOpen ? h * 0.34 : h * 0.15,
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        _videoNavAction(
-                            h,
-                            Icons.skip_previous_rounded,
-                            'Previous video',
-                            _previous == null ? null : _playPrevious),
-                        SizedBox(width: h * 0.012),
-                        _videoNavAction(h, Icons.skip_next_rounded,
-                            'Next video', _next == null ? null : _playNext),
+                        if (_episodes.length > 1) ...[
+                          _videoNavAction(
+                              h,
+                              Icons.skip_previous_rounded,
+                              'Previous video',
+                              _previous == null ? null : _playPrevious),
+                          SizedBox(width: h * 0.012),
+                          _videoNavAction(h, Icons.skip_next_rounded,
+                              'Next video', _next == null ? null : _playNext),
+                          SizedBox(width: h * 0.03),
+                        ],
+                        for (final b in const [
+                          [0, 1, 'Subtitles (S)'],
+                          [1, 0, 'Audio (A)'],
+                          [2, 2, 'Settings']
+                        ])
+                          Padding(
+                            padding: EdgeInsets.only(
+                                left: b[0] == 0 ? 0 : h * 0.012),
+                            child: _RoundButton(
+                              kind: b[0] as int,
+                              size: h * 0.07,
+                              active: _panel && _panelTab == b[1],
+                              tooltip: b[2] as String,
+                              onTap: () => _panel && _panelTab == b[1]
+                                  ? _closePanel()
+                                  : _openPanel(b[1] as int),
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -1933,8 +1937,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
             // Skip intro / credits
             if (skip != null && !_panel)
               Positioned(
-                right: w * 0.04,
-                bottom: h * 0.22,
+                right: w * 0.05,
+                bottom: h * 0.25,
                 child: GestureDetector(
                   onTap: _skip,
                   child: Container(
@@ -1952,7 +1956,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
             if (_upNextShowing && _next != null)
               Positioned(
-                  right: w * 0.04, bottom: h * 0.2, child: _upNextCard(h, w)),
+                  right: w * 0.05, bottom: h * 0.25, child: _upNextCard(h, w)),
             if (_queueOpen && _episodes.isNotEmpty)
               Positioned(
                   left: 0,
@@ -2221,16 +2225,61 @@ class _PlayerScreenState extends State<PlayerScreen> {
   List<SubtitleTrack> get _realSubs =>
       _tracks.subtitle.where((t) => t.id != 'auto' && t.id != 'no').toList();
 
+  void _closePanel() {
+    setState(() {
+      _panel = false;
+      _panelSub = 0;
+    });
+    _focus.requestFocus();
+    _showOsd();
+  }
+
+  /// Esc / Back inside the popup: one step back, then close.
+  void _panelBack() {
+    if (_found != null) {
+      setState(() => _found = null);
+      _refocusPanel();
+    } else if (_panelSub != 0) {
+      _setPanelSub(0);
+    } else {
+      _closePanel();
+    }
+  }
+
+  void _setPanelSub(int s) {
+    setState(() => _panelSub = s);
+    _refocusPanel();
+  }
+
+  /// The list was swapped for another: put the selection on its first line.
+  void _refocusPanel() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_panel) return;
+      _panelScope.requestFocus();
+      if (_panelScope.focusedChild == null) _panelScope.nextFocus();
+    });
+  }
+
+  static const _sizeNames = ['Small', 'Medium', 'Large', 'Extra large'];
+  static const _colorNames = ['White', 'Yellow', 'Cyan', 'Pink'];
+
+  /// Subtitles, audio and settings share one small frosted popup above the round buttons.
   Widget _trackPanel(double h, double w) {
     final rows = <Widget>[];
+    var title = _panelTab == 0
+        ? 'Audio'
+        : _panelTab == 1
+            ? 'Subtitles'
+            : 'Settings';
     if (_panelTab == 1 && _found != null) {
+      title = 'Find subtitles';
       rows.add(_panelRow(
           '← Back to subtitles', false, () => setState(() => _found = null), h,
           first: true));
-      rows.add(_panelRow('Language: ${_langs[_lang][1]}', false, () {
+      rows.add(_valueRow('Language', _langs[_lang][1], () {
         setState(() => _lang = (_lang + 1) % _langs.length);
         _findSubs();
-      }, h));
+      }, h, arrow: false));
       rows.add(SizedBox(height: h * 0.015));
       for (final f in _found!) {
         final sub = [f.provider, if (f.score > 0) '${f.score.round()}%']
@@ -2243,139 +2292,161 @@ class _PlayerScreenState extends State<PlayerScreen> {
       final list = _realAudio;
       for (var i = 0; i < list.length; i++) {
         final t = list[i];
-        rows.add(_panelRow(_audioLabel(t, i), _current.audio.id == t.id,
-            () => _player.setAudioTrack(t), h,
-            first: i == 0));
+        rows.add(_panelRow(_audioLabel(t, i), _current.audio.id == t.id, () {
+          _player.setAudioTrack(t);
+          _closePanel();
+        }, h, first: i == 0));
+      }
+    } else if (_panelTab == 2 && _panelSub == 10) {
+      title = 'Picture size';
+      const notes = [
+        'Whole picture, may show black bars',
+        'Fills the screen, crops the edges',
+        'Fills the screen, squashes it'
+      ];
+      for (var i = 0; i < 3; i++) {
+        rows.add(_panelRow('${_fitNames[i]}  ·  ${notes[i]}', _fit == i, () {
+          _setFit(i);
+          _setPanelSub(0);
+        }, h, first: i == 0));
       }
     } else if (_panelTab == 2) {
-      for (var i = 0; i < 3; i++) {
-        rows.add(_panelRow(
-            i == 1
-                ? 'Fill screen (crops black bars and edges)'
-                : (i == 0 ? 'Fit to screen (whole picture)' : 'Stretch'),
-            _fit == i,
-            () => _setFit(i),
-            h,
-            first: i == 0));
+      rows.add(_valueRow('Picture size', _fitNames[_fit].split(' ').first,
+          () => _setPanelSub(10), h,
+          first: true));
+      rows.add(_valueRow('Info', '', () {
+        _closePanel();
+        _toggleInfo();
+      }, h));
+      rows.add(_valueRow('Mini player', '', () {
+        _closePanel();
+        _goMini();
+      }, h, arrow: false));
+      rows.add(_valueRow('Stream graph', _graph ? 'On' : 'Off',
+          () => setState(() => _graph = !_graph), h,
+          arrow: false));
+    } else if (_panelSub >= 11) {
+      title = _panelSub == 11
+          ? 'Size'
+          : _panelSub == 12
+              ? 'Colour'
+              : 'Position';
+      final names = _panelSub == 11
+          ? _sizeNames
+          : _panelSub == 12
+              ? _colorNames
+              : const ['Top', 'Bottom'];
+      final cur = _panelSub == 11
+          ? Prefs.subSize
+          : _panelSub == 12
+              ? _subColor
+              : (_subPos < 50 ? 0 : 1);
+      for (var i = 0; i < names.length; i++) {
+        rows.add(_panelRow(names[i], cur == i, () {
+          if (_panelSub == 11) {
+            _setSubtitleSize(i);
+          } else if (_panelSub == 12) {
+            _setSubtitleColor(i);
+          } else {
+            _setSubtitlePosition(i == 0 ? 20 : 100);
+          }
+          _setPanelSub(0);
+        }, h, first: i == 0));
       }
     } else {
-      rows.add(_panelRow('Off', _current.subtitle.id == 'no',
-          () => _pickSub(SubtitleTrack.no()), h,
-          first: true));
+      rows.add(_panelRow('Off', _current.subtitle.id == 'no', () {
+        _pickSub(SubtitleTrack.no());
+        _closePanel();
+      }, h, first: true));
       final list = _realSubs;
       for (var i = 0; i < list.length; i++) {
         final t = list[i];
-        rows.add(_panelRow(_subLabel(t, i), _current.subtitle.id == t.id,
-            () => _pickSub(t), h));
+        rows.add(_panelRow(_subLabel(t, i), _current.subtitle.id == t.id, () {
+          _pickSub(t);
+          _closePanel();
+        }, h));
       }
       // Subtitle files that sit next to the video on the server
       for (final s in (_item?.streamsOf(3) ?? const <PlexStream>[])
           .where((s) => s.key != null)) {
         final url = Plex.raw(s.key);
         if (url == null) continue;
-        rows.add(_panelRow(
-            '${s.label} · file',
-            _current.subtitle.id == url,
-            () => _pickSub(SubtitleTrack.uri(url,
-                title: s.label, language: s.languageCode)),
-            h));
+        rows.add(
+            _panelRow('${s.label} · file', _current.subtitle.id == url, () {
+          _pickSub(SubtitleTrack.uri(url,
+              title: s.label, language: s.languageCode));
+          _closePanel();
+        }, h));
       }
-      rows.add(SizedBox(height: h * 0.02));
-      rows.add(_dropdownRow<String>(
-          'Subtitle size',
-          ['Small', 'Medium', 'Large', 'Extra large'][Prefs.subSize],
-          ['Small', 'Medium', 'Large', 'Extra large'], (value) {
-        if (value != null) {
-          _setSubtitleSize(
-              ['Small', 'Medium', 'Large', 'Extra large'].indexOf(value));
-        }
-      }, h));
-      rows.add(_dropdownRow<String>(
-          'Subtitle colour',
-          ['White', 'Yellow', 'Cyan', 'Pink'][_subColor],
-          ['White', 'Yellow', 'Cyan', 'Pink'], (value) {
-        if (value != null) {
-          _setSubtitleColor(['White', 'Yellow', 'Cyan', 'Pink'].indexOf(value));
-        }
-      }, h));
-      rows.add(_dropdownRow<String>(
-          'Subtitle position',
-          _subPos < 50 ? 'Top' : 'Bottom',
-          const ['Top', 'Bottom'],
-          (value) => _setSubtitlePosition(value == 'Top' ? 20 : 100),
-          h));
-      rows.add(_panelRow('Find subtitles online…', false, _findSubs, h));
+      rows.add(SizedBox(height: h * 0.012));
+      rows.add(_valueRow('Size', _sizeNames[Prefs.subSize.clamp(0, 3)],
+          () => _setPanelSub(11), h));
+      rows.add(_valueRow('Colour', _colorNames[_subColor.clamp(0, 3)],
+          () => _setPanelSub(12), h));
+      rows.add(_valueRow('Position', _subPos < 50 ? 'Top' : 'Bottom',
+          () => _setPanelSub(13), h));
+      rows.add(_valueRow('Find online…', '', _findSubs, h, arrow: false));
     }
+    final base = _queueOpen ? h * 0.34 : h * 0.15;
     return Positioned(
-      right: 0,
-      top: 0,
-      bottom: 0,
-      width: w * 0.32,
+      right: w * 0.05,
+      bottom: base + h * 0.07 + h * 0.015,
+      width: (w * 0.27).clamp(360.0, 560.0),
       child: FocusScope(
         node: _panelScope,
-        child: Container(
-          color: const Color(0xF2141414),
-          padding: EdgeInsets.fromLTRB(h * 0.03, h * 0.06, h * 0.03, h * 0.04),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Expanded(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Row(children: [
-                  for (var i = 0; i < 3; i++)
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(h * 0.035),
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+            child: Container(
+              padding: EdgeInsets.fromLTRB(
+                  h * 0.012, h * 0.026, h * 0.012, h * 0.016),
+              decoration: BoxDecoration(
+                color: const Color(0xE62A2A2D),
+                borderRadius: BorderRadius.circular(h * 0.035),
+                border: Border.all(color: const Color(0x26FFFFFF)),
+              ),
+              child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Padding(
-                      padding: EdgeInsets.only(right: h * 0.01),
-                      child: Pressable(
-                        onPressed: () => setState(() => _panelTab = i),
-                        scrollAlignment: 0,
-                        builder: (c, f) => AnimatedContainer(
-                          duration: const Duration(milliseconds: 150),
-                          padding: EdgeInsets.symmetric(
-                              horizontal: h * 0.022, vertical: h * 0.01),
-                          decoration: BoxDecoration(
-                            color: f
-                                ? Colors.white
-                                : (i == _panelTab
-                                    ? const Color(0x40FFFFFF)
-                                    : Colors.transparent),
-                            borderRadius: BorderRadius.circular(h),
-                          ),
-                          child: Text(
-                              i == 0
-                                  ? 'Audio'
-                                  : (i == 1 ? 'Subtitles' : 'Picture'),
-                              style: reelText(h * 0.024,
-                                  weight: FontWeight.w600,
-                                  color: f ? Colors.black : Colors.white)),
-                        ),
-                      ),
+                      padding:
+                          EdgeInsets.only(left: h * 0.014, bottom: h * 0.012),
+                      child: Text(title,
+                          style: reelText(h * 0.0235,
+                              weight: FontWeight.w700,
+                              color: const Color(0xBBFFFFFF))),
                     ),
-                ]),
-                ),
-              ),
-              SizedBox(width: h * 0.015),
-              _closeButton(h, () {
-                setState(() => _panel = false);
-                _focus.requestFocus();
-                _showOsd();
-              }),
-            ]),
-            SizedBox(height: h * 0.025),
-            Expanded(child: ListView(children: rows)),
-            if (_finding || _findNote.isNotEmpty)
-              Padding(
-                padding: EdgeInsets.only(bottom: h * 0.01),
-                child: Text(_finding ? _findNote : _findNote,
-                    style: reelText(h * 0.019, color: Reel.text2)),
-              ),
-            Text(
-                Prefs.passthrough
-                    ? 'Dolby / DTS go straight to your receiver (passthrough on)'
-                    : 'Sound decoded by the PC',
-                style: reelText(h * 0.017, color: Reel.text3)),
-          ]),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(maxHeight: h * 0.5),
+                      child: ListView(
+                          key: ValueKey(
+                              '$_panelTab-$_panelSub-${_found != null}'),
+                          shrinkWrap: true,
+                          padding: EdgeInsets.zero,
+                          children: rows),
+                    ),
+                    if (_finding || _findNote.isNotEmpty)
+                      Padding(
+                        padding:
+                            EdgeInsets.only(left: h * 0.014, top: h * 0.01),
+                        child: Text(_findNote,
+                            style: reelText(h * 0.019, color: Reel.text2)),
+                      ),
+                    if (_panelTab == 0)
+                      Padding(
+                        padding:
+                            EdgeInsets.only(left: h * 0.014, top: h * 0.01),
+                        child: Text(
+                            Prefs.passthrough
+                                ? 'Dolby / DTS go straight to your receiver'
+                                : 'Sound decoded by the PC',
+                            style: reelText(h * 0.017, color: Reel.text3)),
+                      ),
+                  ]),
+            ),
+          ),
         ),
       ),
     );
@@ -2569,39 +2640,148 @@ class _PlayerScreenState extends State<PlayerScreen> {
         ],
       if (it != null) ['Plex id', it.key],
     ];
+    // The lines, grouped into cards like the Fire TV's Info page
+    final byKey = {for (final r in rows) r[0]: r[1]};
+    const groups = <String, List<String>>{
+      'Picture': ['Quality', 'Video', 'Picture', 'Decoding', 'Frames'],
+      'Sound': ['Sound (file)', 'Sound (playing)', 'Why converted'],
+      'Playback': [
+        'Position',
+        'Buffered ahead',
+        'Download speed',
+        'File bandwidth',
+        'Playing now',
+        'Delivery',
+        'Connection',
+        'File size'
+      ],
+      'People': ['Director', 'Cast'],
+      'Advanced': ['Memory', 'Plex id'],
+    };
+    Widget chip(String t, Color c) => Container(
+          padding:
+              EdgeInsets.symmetric(horizontal: h * 0.014, vertical: h * 0.006),
+          decoration:
+              BoxDecoration(color: c, borderRadius: BorderRadius.circular(h)),
+          child: Text(t, style: reelText(h * 0.0185, weight: FontWeight.w700)),
+        );
+    Widget card(String title, List<Widget> kids) => Container(
+          margin: EdgeInsets.only(top: h * 0.014),
+          padding:
+              EdgeInsets.fromLTRB(h * 0.018, h * 0.016, h * 0.018, h * 0.01),
+          decoration: BoxDecoration(
+              color: const Color(0x1AFFFFFF),
+              borderRadius: BorderRadius.circular(h * 0.022)),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Padding(
+              padding: EdgeInsets.only(bottom: h * 0.008),
+              child: Text(title.toUpperCase(),
+                  style: TextStyle(
+                      fontFamily: 'Inter',
+                      fontSize: h * 0.0155,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1.2,
+                      color: const Color(0x99FFFFFF))),
+            ),
+            ...kids,
+          ]),
+        );
+    final cards = <Widget>[
+      card('Playback check', [
+        for (final c in checks)
+          Padding(
+            padding: EdgeInsets.symmetric(vertical: h * 0.005),
+            child: Text.rich(
+                TextSpan(children: [
+                  TextSpan(
+                      text: c.startsWith('✓') ? '✓  ' : '✗  ',
+                      style: TextStyle(
+                          color: c.startsWith('✓')
+                              ? const Color(0xFF34C759)
+                              : const Color(0xFFFFB340),
+                          fontWeight: FontWeight.w700)),
+                  TextSpan(text: c.substring(3)),
+                ]),
+                style: reelText(h * 0.0215)),
+          ),
+      ]),
+      for (final g in groups.entries)
+        if (g.value.any((k) => (byKey[k] ?? '').isNotEmpty))
+          card(g.key, [
+            for (final k in g.value)
+              if ((byKey[k] ?? '').isNotEmpty)
+                Padding(
+                  padding: EdgeInsets.symmetric(vertical: h * 0.0065),
+                  child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                            flex: 38,
+                            child: Text(k,
+                                style: reelText(h * 0.0205,
+                                    color: const Color(0xAAFFFFFF)))),
+                        Expanded(
+                            flex: 62,
+                            child: Text(byKey[k]!,
+                                textAlign: TextAlign.right,
+                                style: reelText(h * 0.0205,
+                                    weight: FontWeight.w600))),
+                      ]),
+                ),
+          ]),
+    ];
+    final panelW = (w * 0.4).clamp(480.0, 780.0);
     return Positioned.fill(
       child: Stack(children: [
-        Container(
-          color: const Color(0xB3000000),
-          alignment: Alignment.center,
-          child: SizedBox(
-            width: w * 0.55,
-            child: ListView(
-                controller: _infoScroll,
-                padding: EdgeInsets.symmetric(vertical: h * 0.08),
-                children: [
-                  Text('Info',
-                      style: reelText(h * 0.045, weight: FontWeight.w700)),
-                  SizedBox(height: h * 0.03),
-                  for (final r in rows)
-                    Padding(
-                      padding: EdgeInsets.only(bottom: h * 0.014),
-                      child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            SizedBox(
-                                width: w * 0.14,
-                                child: Text(r[0],
-                                    style: reelText(h * 0.024,
-                                        color: Reel.text2))),
-                            Expanded(
-                                child: Text(r[1], style: reelText(h * 0.024))),
-                          ]),
-                    ),
-                  SizedBox(height: h * 0.02),
-                  Text('Scroll with the mouse wheel or Up / Down.  Esc or Enter to close',
-                      style: reelText(h * 0.02, color: Reel.text3)),
-                ]),
+        Align(
+          alignment: Alignment.centerRight,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(0, h * 0.05, w * 0.05, h * 0.05),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(h * 0.035),
+              child: BackdropFilter(
+                filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                child: Container(
+                  width: panelW,
+                  decoration: BoxDecoration(
+                    color: const Color(0xE62A2A2D),
+                    borderRadius: BorderRadius.circular(h * 0.035),
+                    border: Border.all(color: const Color(0x26FFFFFF)),
+                  ),
+                  child: ListView(
+                      controller: _infoScroll,
+                      padding: EdgeInsets.fromLTRB(
+                          h * 0.026, h * 0.03, h * 0.026, h * 0.03),
+                      children: [
+                        Text(widget.title ?? it?.displayTitle ?? '',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style:
+                                reelText(h * 0.034, weight: FontWeight.w700)),
+                        SizedBox(height: h * 0.012),
+                        Wrap(
+                            spacing: h * 0.008,
+                            runSpacing: h * 0.008,
+                            children: [
+                              chip(
+                                  _stereo ? 'Converted' : 'Direct play',
+                                  _stereo
+                                      ? const Color(0xFFB26A00)
+                                      : const Color(0xFF248A3D)),
+                              if (it != null)
+                                for (final b in it.badges)
+                                  chip(b, const Color(0x33FFFFFF)),
+                            ]),
+                        ...cards,
+                        SizedBox(height: h * 0.02),
+                        Text(
+                            'Scroll with the mouse wheel or Up / Down.  Esc or Enter to close',
+                            style: reelText(h * 0.0175, color: Reel.text3)),
+                      ]),
+                ),
+              ),
+            ),
           ),
         ),
         Positioned(
@@ -2623,20 +2803,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
       autofocus: first,
       onPressed: () {
         onTap();
-        setState(() {});
+        if (mounted) setState(() {});
       },
       scrollAlignment: 0.3,
       builder: (c, f) => AnimatedContainer(
         duration: const Duration(milliseconds: 120),
-        margin: EdgeInsets.only(bottom: h * 0.006),
+        margin: EdgeInsets.only(bottom: h * 0.004),
         padding:
-            EdgeInsets.symmetric(horizontal: h * 0.018, vertical: h * 0.014),
+            EdgeInsets.symmetric(horizontal: h * 0.014, vertical: h * 0.0135),
         decoration: BoxDecoration(
             color: f ? Colors.white : Colors.transparent,
-            borderRadius: BorderRadius.circular(h * 0.012)),
+            borderRadius: BorderRadius.circular(h * 0.026)),
         child: Row(children: [
           SizedBox(
-            width: h * 0.035,
+            width: h * 0.04,
             child: selected
                 ? Icon(Icons.check_rounded,
                     size: h * 0.028, color: f ? Colors.black : Colors.white)
@@ -2646,36 +2826,57 @@ class _PlayerScreenState extends State<PlayerScreen> {
             child: Text(label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: reelText(h * 0.023,
-                    weight: FontWeight.w500,
-                    color: f ? Colors.black : Colors.white)),
+                style: reelText(h * 0.0225,
+                    weight: FontWeight.w600,
+                    color: f ? const Color(0xFF111111) : Colors.white)),
           ),
         ]),
       ),
     );
   }
 
-  Widget _dropdownRow<T>(String label, T value, List<T> values,
-      ValueChanged<T?> onChanged, double h) {
-    return Padding(
-      padding: EdgeInsets.only(bottom: h * 0.008),
-      child: Row(children: [
-        Expanded(
-          child:
-              Text(label, style: reelText(h * 0.023, weight: FontWeight.w500)),
-        ),
-        DropdownButton<T>(
-          value: value,
-          dropdownColor: const Color(0xFF2A2A2A),
-          style: reelText(h * 0.021),
-          underline: const SizedBox.shrink(),
-          items: [
-            for (final option in values)
-              DropdownMenuItem<T>(value: option, child: Text('$option')),
-          ],
-          onChanged: onChanged,
-        ),
-      ]),
+  /// A line with the current choice on the right and an arrow when it opens a list.
+  Widget _valueRow(String label, String value, VoidCallback onTap, double h,
+      {bool first = false, bool arrow = true}) {
+    return Pressable(
+      autofocus: first,
+      onPressed: () {
+        onTap();
+        if (mounted) setState(() {});
+      },
+      scrollAlignment: 0.3,
+      builder: (c, f) => AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        margin: EdgeInsets.only(bottom: h * 0.004),
+        padding:
+            EdgeInsets.symmetric(horizontal: h * 0.014, vertical: h * 0.0135),
+        decoration: BoxDecoration(
+            color: f ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(h * 0.026)),
+        child: Row(children: [
+          SizedBox(width: h * 0.04),
+          Expanded(
+            child: Text(label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: reelText(h * 0.0225,
+                    weight: FontWeight.w600,
+                    color: f ? const Color(0xFF111111) : Colors.white)),
+          ),
+          if (value.isNotEmpty)
+            Text(value,
+                style: reelText(h * 0.02,
+                    color:
+                        f ? const Color(0xFF444444) : const Color(0xAAFFFFFF))),
+          if (arrow)
+            Padding(
+              padding: EdgeInsets.only(left: h * 0.006),
+              child: Icon(Icons.chevron_right_rounded,
+                  size: h * 0.034,
+                  color: f ? const Color(0xFF444444) : const Color(0x88FFFFFF)),
+            ),
+        ]),
+      ),
     );
   }
 
@@ -2717,4 +2918,126 @@ class _HoverState extends State<_Hover> {
         onExit: (_) => setState(() => _on = false),
         child: widget.builder(_on),
       );
+}
+
+
+/// Subtitles, audio or settings: a round dark glass button with a white symbol; white with a dark
+/// symbol while the mouse is over it.
+class _RoundButton extends StatefulWidget {
+  final int kind; // 0 subtitles, 1 audio, 2 settings
+  final double size;
+  final bool active;
+  final String tooltip;
+  final VoidCallback onTap;
+  const _RoundButton(
+      {required this.kind,
+      required this.size,
+      required this.active,
+      required this.tooltip,
+      required this.onTap});
+
+  @override
+  State<_RoundButton> createState() => _RoundButtonState();
+}
+
+class _RoundButtonState extends State<_RoundButton> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: widget.tooltip,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: GestureDetector(
+          onTap: widget.onTap,
+          child: AnimatedScale(
+            scale: _hover ? 1.1 : 1,
+            duration: const Duration(milliseconds: 140),
+            curve: Curves.easeInOut,
+            child: SizedBox(
+              width: widget.size,
+              height: widget.size,
+              child: CustomPaint(
+                  painter:
+                      _RoundIconPainter(widget.kind, _hover, widget.active)),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RoundIconPainter extends CustomPainter {
+  final int kind;
+  final bool focused;
+  final bool on;
+  _RoundIconPainter(this.kind, this.focused, this.on);
+
+  @override
+  void paint(Canvas c, Size s) {
+    final w = s.width;
+    final h = s.height;
+    final fill = Paint()
+      ..isAntiAlias = true
+      ..color = focused
+          ? const Color(0xFFFFFFFF)
+          : on
+              ? const Color(0x66FFFFFF)
+              : const Color(0x8C1C1C1E);
+    c.drawCircle(Offset(w / 2, h / 2), math.min(w, h) / 2, fill);
+    final ink = focused ? const Color(0xFF111111) : const Color(0xFFFFFFFF);
+    final line = Paint()
+      ..isAntiAlias = true
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..color = ink
+      ..strokeWidth = w * 0.055;
+    if (kind == 0) {
+      // Speech bubble with two lines of text
+      c.drawRRect(
+          RRect.fromRectAndRadius(
+              Rect.fromLTRB(w * 0.25, h * 0.30, w * 0.75, h * 0.64),
+              Radius.circular(w * 0.07)),
+          line);
+      final tail = Path()
+        ..moveTo(w * 0.40, h * 0.64)
+        ..lineTo(w * 0.40, h * 0.76)
+        ..lineTo(w * 0.52, h * 0.64);
+      c.drawPath(tail, line);
+      c.drawLine(Offset(w * 0.34, h * 0.43), Offset(w * 0.52, h * 0.43), line);
+      c.drawLine(Offset(w * 0.34, h * 0.53), Offset(w * 0.66, h * 0.53), line);
+    } else if (kind == 1) {
+      // Sound wave: bars of different heights
+      const bars = [0.14, 0.30, 0.44, 0.26, 0.36, 0.18, 0.10];
+      line.strokeWidth = w * 0.045;
+      for (var i = 0; i < bars.length; i++) {
+        final x = w * (0.285 + i * 0.072);
+        c.drawLine(Offset(x, h * (0.5 - bars[i] / 2)),
+            Offset(x, h * (0.5 + bars[i] / 2)), line);
+      }
+    } else {
+      // Gear: a ring with eight teeth
+      final cx = w / 2;
+      final cy = h / 2;
+      c.drawCircle(Offset(cx, cy), w * 0.13, line);
+      line.strokeWidth = w * 0.07;
+      for (var i = 0; i < 8; i++) {
+        final a = math.pi / 4 * i;
+        c.drawLine(
+            Offset(cx + math.cos(a) * w * 0.21, cy + math.sin(a) * w * 0.21),
+            Offset(cx + math.cos(a) * w * 0.28, cy + math.sin(a) * w * 0.28),
+            line);
+      }
+      line.strokeWidth = w * 0.055;
+      c.drawCircle(Offset(cx, cy), w * 0.21, line);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_RoundIconPainter o) =>
+      o.kind != kind || o.focused != focused || o.on != on;
 }
