@@ -27,6 +27,18 @@ class Preview {
   static Timer? _timer;
   static String? _timerKey;
   static bool _keep = false;
+  static int _suspended = 0;
+
+  /// A film is playing full screen: Home's previews must not start (or restart) behind it.
+  static void suspend() {
+    _suspended++;
+    stop();
+  }
+
+  static void resume() {
+    if (_suspended > 0) _suspended--;
+  }
+
   static int _gen = 0;
   static final Map<String, String?> _trailers = {};
   static final Map<String, int> _offsets = {};
@@ -102,25 +114,13 @@ class Preview {
     p.stream.width.listen((_) => sizeTick.value++);
     p.stream.height.listen((_) => sizeTick.value++);
     p.setPlaylistMode(PlaylistMode.single); // loop a short trailer
-    // Even out the loudness as it plays, so one trailer isn't a shock after the last one, and none
-    // of them jump out against the film you were watching.
-    final np = p.platform;
-    if (np is NativePlayer) {
-      () async {
-        try {
-          await np.setProperty('af',
-              'loudnorm=I=-16:LRA=11:TP=-1.5,dynaudnorm=f=200:g=15:p=0.85:m=8:r=0.9');
-          await np.setProperty('volume-max', '200');
-        } catch (_) {}
-      }();
-    }
     return p;
   }
 
   /// A card got focus: start its preview after a short rest.
   static void focus(PlexItem it,
       {Duration delay = Motion.previewDelay}) {
-    if (!Prefs.previews) return;
+    if (!Prefs.previews || _suspended > 0) return;
     if (_want == it.key || _timerKey == it.key) {
       _keep = false; // back on the card it came from: carry on playing here
       return;
@@ -161,7 +161,7 @@ class Preview {
 
   static Future<void> _warm(PlexItem it) async {
     try {
-      if (it.type == 'movie' || it.type == 'show' || it.type == 'season') {
+      if (it.type == 'movie') {
         if (!_trailers.containsKey(it.key))
           _trailers[it.key] = await Plex.trailerUrl(it.key);
         if (_trailers[it.key] != null) return;
@@ -182,7 +182,7 @@ class Preview {
   static void applyQuiet() => _player?.setVolume(Prefs.quiet ? 0 : _level);
 
   static Future<void> start(PlexItem it) async {
-    if (!Prefs.previews) return;
+    if (!Prefs.previews || _suspended > 0) return;
     final gen = ++_gen;
     _want = it.key;
     crop.value = null;
@@ -196,10 +196,22 @@ class Preview {
       await p.open(Media(src), play: true);
       Log.w('PREVIEW opened  ${it.displayTitle}');
       // Only show it once frames are actually moving, so the card never goes black.
-      await p.stream.position
-          .firstWhere((d) => d > const Duration(milliseconds: 300))
-          .timeout(const Duration(seconds: 20));
+      // (checked by polling: waiting on the position stream missed frames that had already started)
+      final until = DateTime.now().add(const Duration(seconds: 20));
+      while (p.state.position <= const Duration(milliseconds: 300)) {
+        if (gen != _gen) return;
+        if (DateTime.now().isAfter(until)) throw TimeoutException('no frames');
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
       if (gen != _gen) return;
+      // make sure the sound is really on (unless quiet mode), whatever happened to the volume while loading
+      await p.setVolume(Prefs.quiet ? 0 : _level);
+      final np = p.platform;
+      if (np is NativePlayer) {
+        try {
+          await np.setProperty('mute', 'no');
+        } catch (_) {}
+      }
       Log.w('PREVIEW playing  ${it.displayTitle}');
       _show(it.key);
       if (_session != null)
@@ -212,7 +224,7 @@ class Preview {
   }
 
   static Future<String?> _source(PlexItem it) async {
-    if (it.type == 'movie' || it.type == 'show' || it.type == 'season') {
+    if (it.type == 'movie') {
       final t = _trailers.containsKey(it.key)
           ? _trailers[it.key]
           : (_trailers[it.key] = await Plex.trailerUrl(it.key));

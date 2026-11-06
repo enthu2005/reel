@@ -1096,7 +1096,6 @@ class Plex {
   static Future<String?> trailerUrl(String ratingKey) async {
     String? pick(List? a) {
       if (a == null) return null;
-      String? first;
       for (final o0 in a) {
         final o = o0 as Map;
         final media = o['Media'] as List?;
@@ -1108,9 +1107,8 @@ class Plex {
         final url = k.startsWith('http') ? k : raw(k);
         final trailer = o['subtype'] == 'trailer' || _int(o['extraType']) == 1;
         if (trailer) return url;
-        first ??= url;
       }
-      return first;
+      return null;
     }
 
     try {

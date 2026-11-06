@@ -28,6 +28,23 @@ final ValueNotifier<bool> canGoBack = ValueNotifier(false);
 /// Set while a film is playing: the player has its own controls, so the back button stays out of it.
 final ValueNotifier<bool> watching = ValueNotifier(false);
 
+/// Like [watching], but it lets go 600 ms late: leaving the player fades the page out, and the page's
+/// back button must not appear while the player's own is still on its way out (two back buttons).
+final ValueNotifier<bool> watchingLate = ValueNotifier(false);
+Timer? _lateTimer;
+
+void _linkWatchingLate() {
+  watching.addListener(() {
+    _lateTimer?.cancel();
+    if (watching.value) {
+      watchingLate.value = true;
+    } else {
+      _lateTimer = Timer(const Duration(milliseconds: 600),
+          () => watchingLate.value = false);
+    }
+  });
+}
+
 class _PageWatcher extends NavigatorObserver {
   void _check() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -56,6 +73,7 @@ class _PageWatcher extends NavigatorObserver {
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  _linkWatchingLate();
   Log.start();
   // anything that goes wrong is written to the log (%LOCALAPPDATA%\\Reel\\reel.log) instead of vanishing
   FlutterError.onError = (d) {
@@ -121,7 +139,7 @@ class _CloseHandler with WindowListener {
       await Preview.shutdown().timeout(const Duration(seconds: 2));
     } catch (_) {}
     try {
-      await Log.flush();
+      await Log.flush().timeout(const Duration(seconds: 1));
     } catch (_) {}
     exit(0);
   }
@@ -235,9 +253,9 @@ class ReelApp extends StatelessWidget {
             width: MediaQuery.sizeOf(c).height * 0.055,
             height: MediaQuery.sizeOf(c).height * 0.055,
             child: AnimatedBuilder(
-              animation: Listenable.merge([canGoBack, watching]),
+              animation: Listenable.merge([canGoBack, watching, watchingLate]),
               builder: (c2, _) {
-                final show = canGoBack.value && !watching.value;
+                final show = canGoBack.value && !watching.value && !watchingLate.value;
                 return AnimatedOpacity(
                   opacity: show ? 1 : 0,
                   // vanishes at once when a film starts, so it never doubles up with the player's own

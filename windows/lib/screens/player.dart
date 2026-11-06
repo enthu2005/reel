@@ -21,7 +21,6 @@ import '../ui/title_card.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 import 'live.dart' show tuneChannel;
-import 'trailer_break.dart';
 
 /// Plays a library item (direct play: the original file, no conversion) or any URL (trailers).
 /// Controls in the style of the new Plex player.
@@ -140,7 +139,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _touched();
     }
     _subPos = Prefs.subPosition;
-    Preview.stop();
+    Preview.suspend(); // nothing from Home may start playing behind the film
     _start();
   }
 
@@ -156,6 +155,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
       await np.setProperty('tls-verify',
           'no'); // your own server's certificate, by local address
       await np.setProperty('network-timeout', '60');
+      try {
+        // a dropped connection to the server is picked up again by itself
+        await np.setProperty('stream-lavf-o',
+            'reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=5');
+      } catch (_) {}
       // HDR / Dolby Vision shown on a normal (SDR) picture: squash the brightness range sensibly.
       await np.setProperty('tone-mapping', 'bt.2390');
       await np.setProperty('hdr-compute-peak', 'yes');
@@ -272,6 +276,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
         return;
       }
 
+      // The connection to the server dropped: say so plainly (not mpv's own text) and pick up where it was.
+      if (RegExp(r'ffurl|read returned|tls|connection|timed out|end of file|http error|i/o error',
+              caseSensitive: false)
+          .hasMatch(e)) {
+        _reconnect();
+        return;
+      }
       if (mounted) setState(() => _status = e);
     }));
 
@@ -382,6 +393,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _openWhenVideoReady(String url, {Duration? start}) async {
+    _openUrl = url;
     await _player.open(Media(url, start: start), play: false);
     if (!mounted) return;
     try {
@@ -514,6 +526,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   void dispose() {
+    Preview.resume();
     app.watching.value = false;
     app.exitMini(); // leaving the player always gives the window back
     final it = _item;
@@ -583,6 +596,30 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _chanOpen = false;
     });
     app.enterMini();
+  }
+
+  String? _openUrl;
+  int _reconnects = 0;
+
+  /// The stream broke off (a network hiccup): open it again where it stopped, a few times at most.
+  Future<void> _reconnect() async {
+    final url = _openUrl;
+    if (url == null || !mounted) return;
+    if (_reconnects >= 4) {
+      setState(() => _status = 'The connection to the server was lost');
+      return;
+    }
+    _reconnects++;
+    final at = _pos;
+    setState(() => _status = 'Connection dropped, reconnecting…');
+    await Future.delayed(Duration(seconds: _reconnects));
+    if (!mounted) return;
+    try {
+      await _player.open(Media(url, start: at), play: true);
+      if (mounted) setState(() => _status = '');
+    } catch (_) {
+      if (mounted) setState(() => _status = 'The connection to the server was lost');
+    }
   }
 
   void _exitPlayer() {
@@ -1080,7 +1117,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (c != null) {
         _transitioning = true;
         // after a short break of trailers (if they are on)
-        trailerBreakThenTune(context, c);
+        tuneChannel(context, c, replace: true);
         return;
       }
     }

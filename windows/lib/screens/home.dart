@@ -1238,9 +1238,11 @@ class _HomeScreenState extends State<HomeScreen> {
         // Glass tab bar
         Positioned(
           top: h * 0.035,
-          left: 0,
-          right: 0,
-          child: Center(child: _tabBar(h)),
+          // leaves room for the moon and full-screen buttons, and shrinks to fit instead of overlapping them
+          left: w * 0.03 + h * 0.2,
+          right: w * 0.03 + h * 0.2,
+          child: Center(
+              child: FittedBox(fit: BoxFit.scaleDown, child: _tabBar(h))),
         ),
 
         _elsewhereBanner(h),

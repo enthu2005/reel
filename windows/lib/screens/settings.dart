@@ -368,9 +368,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Prefs.previews = v;
           if (!v) Preview.stop();
         }, first: true),
-        _toggle(h, 'Trailers on Live TV', Prefs.liveTrailers,
-            'Between one programme and the next on a Live channel, show up to three trailers of what is coming up. Each one can be skipped, or skip them all.',
-            (v) => Prefs.liveTrailers = v),
         _line(h, 'Home & TV libraries', _libSummary(Prefs.homeLibraries),
             'Which libraries Home and the TV Shows tab draw from. Hidden libraries stay available elsewhere.',
             () => _pickLibraries('Home & TV libraries', home: true),
